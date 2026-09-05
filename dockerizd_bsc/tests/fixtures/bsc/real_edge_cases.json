@@ -1,0 +1,59 @@
+{
+  "network": "eip155:56",
+  "source": "https://bsc-dataseed.bnbchain.org",
+  "captured_at": "2026-09-04",
+  "cases": [
+    {
+      "kind": "failed",
+      "block": {
+        "number": "0x7264234",
+        "hash": "0x23330274e319e51a42fe05ba427892d68a23608c208565749e7142387f45bde7",
+        "parent_hash": "0x27089b704e22d5f3e958ca851d0b287802ceeadbac9e4a9be8d64cb1a461ce96",
+        "timestamp": "0x6a9aecb6",
+        "transaction_count": 93
+      },
+      "transaction": {
+        "hash": "0xe56ed3a77facfeeb95472443be5a08de202c3efe4ed15d383316d711ac0a0de3",
+        "transaction_index": "0x35",
+        "from": "0x3b9dbaeff691e05b4694bdff11b20ce8b56a99b0",
+        "to": "0x3b9dbaeff691e05b4694bdff11b20ce8b56a99b0",
+        "type": "0x2",
+        "input_prefix": "0x34fcd5be00000000",
+        "input_length": 8074
+      },
+      "receipt": {
+        "status": "0x0",
+        "contract_address": null,
+        "gas_used": "0x71dfe",
+        "effective_gas_price": "0x3e9bd50",
+        "log_count": 0
+      }
+    },
+    {
+      "kind": "contract_creation",
+      "block": {
+        "number": "0x7264193",
+        "hash": "0x4b99efed2f32807d847e058cd88df68181f18b894808940fe6bd95c3940b841a",
+        "parent_hash": "0x67fbb18d784db468267091283cd5ab4f2d251245c9f22d2b4a599ffe7ad1d356",
+        "timestamp": "0x6a9aec6e",
+        "transaction_count": 165
+      },
+      "transaction": {
+        "hash": "0xbc012f484982854592e27d2dc208d0ca61935c5b6f6b144ab9500061103a34c9",
+        "transaction_index": "0x6f",
+        "from": "0x127b884d536a920b27788385dd652ee301b02c13",
+        "to": null,
+        "type": "0x2",
+        "input_prefix": "0x60e0604052348015",
+        "input_length": 13054
+      },
+      "receipt": {
+        "status": "0x1",
+        "contract_address": "0x97c7686d4b86799dea318b2a727cef22445d5df5",
+        "gas_used": "0x12fe1d",
+        "effective_gas_price": "0x2faf080",
+        "log_count": 0
+      }
+    }
+  ]
+}

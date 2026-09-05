@@ -1,0 +1,131 @@
+openapi: 3.1.0
+info:
+  title: AML Chain Adapter API
+  version: 1.0.0
+  description: >-
+    Contract between the main AML gateway and an isolated blockchain VM. A chain VM owns its
+    node/RPC access, ingestion workers, ClickHouse and Neo4j. The gateway never connects to those
+    databases directly.
+servers:
+  - url: http://chain-api.internal
+security:
+  - ServiceKey: []
+paths:
+  /health:
+    get:
+      security: []
+      operationId: liveness
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /ready:
+    get:
+      security: []
+      operationId: readiness
+      responses:
+        "200":
+          description: Required chain-local dependencies are ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: One or more required dependencies are unavailable.
+  /api/{network}/wallet/{address}/investigation:
+    get:
+      operationId: investigateWallet
+      description: Read-only wallet investigation assembled from persisted chain-local evidence.
+      parameters:
+        - $ref: "#/components/parameters/Network"
+        - $ref: "#/components/parameters/Address"
+      responses:
+        "200":
+          description: Investigation result. Chain-specific evidence fields may be added.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Investigation"
+        "400": { description: Invalid network address or options. }
+        "401": { description: Missing or invalid service key. }
+  /api/{network}/wallet/{address}/neo4j/import:
+    post:
+      operationId: projectWalletGraph
+      description: Explicitly projects the selected persisted evidence into chain-local Neo4j.
+      parameters:
+        - $ref: "#/components/parameters/Network"
+        - $ref: "#/components/parameters/Address"
+      responses:
+        "200": { description: Projection result. }
+        "400": { description: Invalid network address or options. }
+        "401": { description: Missing or invalid service key. }
+  /api/{network}/wallet/{source}/paths/{target}:
+    get:
+      operationId: findWalletPaths
+      description: Read-only path search over persisted transfers, bounded to at most 10 hops.
+      parameters:
+        - $ref: "#/components/parameters/Network"
+        - name: source
+          in: path
+          required: true
+          schema: { type: string }
+        - name: target
+          in: path
+          required: true
+          schema: { type: string }
+        - name: max_hops
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 10, default: 6 }
+      responses:
+        "200": { description: Bounded path-search result. }
+        "400": { description: Invalid address or path options. }
+        "401": { description: Missing or invalid service key. }
+components:
+  securitySchemes:
+    ServiceKey:
+      type: apiKey
+      in: header
+      name: X-AML-Service-Key
+  parameters:
+    Network:
+      name: network
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [tron, ethereum]
+    Address:
+      name: address
+      in: path
+      required: true
+      schema: { type: string }
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string }
+      additionalProperties: true
+    Readiness:
+      type: object
+      required: [status, dependencies]
+      properties:
+        status: { type: string, enum: [ready, not_ready] }
+        dependencies:
+          type: object
+          additionalProperties: { type: string }
+      additionalProperties: true
+    Investigation:
+      type: object
+      required: [api_version, network_id, address, graph]
+      properties:
+        api_version: { type: string, const: "1.0" }
+        network_id: { type: string }
+        address: { type: string }
+        graph: { type: object, additionalProperties: true }
+        data_quality: { type: object, additionalProperties: true }
+        data_coverage: { type: object, additionalProperties: true }
+      additionalProperties: true

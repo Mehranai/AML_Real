@@ -1,0 +1,15 @@
+# Allowlist: never send node data, credentials, Git history or Rust build output.
+**
+!gateway/
+!gateway/Dockerfile
+!gateway/nginx.conf
+!gateway/default.conf.template
+!gateway/web/
+!gateway/web/**
+!dockerizd_tron/
+!dockerizd_tron/app/
+!dockerizd_tron/app/web/
+!dockerizd_tron/app/web/index.html
+!dockerizd_ethereum/
+!dockerizd_ethereum/web/
+!dockerizd_ethereum/web/index.html

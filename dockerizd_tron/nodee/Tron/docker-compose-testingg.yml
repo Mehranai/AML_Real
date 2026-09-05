@@ -1,0 +1,40 @@
+version: "3.8"
+
+services:
+  tron-fullnode:
+    image: tronprotocol/java-tron:latest
+    container_name: tron-fullnode
+    ports:
+      - "8090:8090"         # HTTP GRPC API (TronGrid-like)
+      - "50051:50051"       # gRPC port
+      - "18888:18888"       # P2P port
+      - "18888:18888/udp"
+    command:
+      - -c /tron/config/main_net_config.conf
+    volumes:
+      - ./tron/data:/tron/data
+      - ./tron/config:/tron/config
+    restart: unless-stopped
+    networks:
+      - blockchain-net
+
+  tron-solidity:
+    image: tronprotocol/java-tron:latest
+    container_name: tron-solidity
+    ports:
+      - "8091:8091"
+      - "50052:50052"
+    command:
+      - -c /tron/config/solidity_node_config.conf
+    volumes:
+      - ./tron/data:/tron/data
+      - ./tron/config:/tron/config
+    restart: unless-stopped
+    depends_on:
+      - tron-fullnode
+    networks:
+      - blockchain-net
+
+networks:
+  blockchain-net:
+    external: true

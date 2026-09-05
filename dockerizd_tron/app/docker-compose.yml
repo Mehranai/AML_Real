@@ -1,0 +1,168 @@
+x-json-logging: &json-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-tron-environment: &tron-environment
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in app/.env}
+  CLICKHOUSE_DB_TRON: tron_db
+  TRON_RPC_URL: ${TRON_RPC_URL:-https://api.trongrid.io}
+  TRON_API_KEY: ${TRON_API_KEY:-}
+  SYNC_MODE: ${SYNC_MODE:-auto}
+  TRON_START_BLOCK: ${TRON_START_BLOCK:-0}
+  TOTAL_TRON_TXS: ${TOTAL_TRON_TXS:-0}
+  TRON_POLL_INTERVAL_SECONDS: ${TRON_POLL_INTERVAL_SECONDS:-3}
+  TRON_METADATA_POLL_INTERVAL_SECONDS: ${TRON_METADATA_POLL_INTERVAL_SECONDS:-5}
+  TRON_METADATA_BATCH_SIZE: ${TRON_METADATA_BATCH_SIZE:-100}
+  TRON_METADATA_MAX_ATTEMPTS: ${TRON_METADATA_MAX_ATTEMPTS:-5}
+  TRON_PROTOCOL_REGISTRY_REFRESH_BLOCKS: ${TRON_PROTOCOL_REGISTRY_REFRESH_BLOCKS:-100}
+  TRON_INGESTION_BATCH_MAX_ROWS: ${TRON_INGESTION_BATCH_MAX_ROWS:-10000}
+  TRON_INGESTION_FLUSH_INTERVAL_SECONDS: ${TRON_INGESTION_FLUSH_INTERVAL_SECONDS:-120}
+  RPC_TIMEOUT_SECONDS: ${RPC_TIMEOUT_SECONDS:-120}
+  RPC_MAX_CONCURRENCY: ${RPC_MAX_CONCURRENCY:-10}
+  TX_WORKER_CONCURRENCY: ${TX_WORKER_CONCURRENCY:-10}
+  NEO4J_URI: neo4j:7687
+  NEO4J_USERNAME: neo4j
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in app/.env}
+  TRON_GRAPH_API_ADDR: 0.0.0.0:4001
+  TRON_EXPOSURE_MAX_HOPS: ${TRON_EXPOSURE_MAX_HOPS:-5}
+  RUST_BACKTRACE: ${RUST_BACKTRACE:-1}
+  TZ: ${TZ:-UTC}
+
+x-tron-service: &tron-service
+  image: tron-aml-service:${TRON_APP_IMAGE_TAG:-local}
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  environment: *tron-environment
+  networks:
+    - tron-backend
+  logging: *json-logging
+  stop_grace_period: 30s
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    restart: unless-stopped
+    ports:
+      - "${DATABASE_BIND_ADDRESS:-127.0.0.1}:${CLICKHOUSE_HTTP_PORT:-18123}:8123"
+      - "${DATABASE_BIND_ADDRESS:-127.0.0.1}:${CLICKHOUSE_NATIVE_PORT:-19000}:9000"
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in app/.env}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - ./sql/init_database_tron.sql:/docker-entrypoint-initdb.d/001_tron_schema.sql:ro
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test "$$(clickhouse-client
+          --user "$${CLICKHOUSE_USER}"
+          --password "$${CLICKHOUSE_PASSWORD}"
+          --query "EXISTS TABLE tron_db.transactions")" = "1"
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    networks:
+      - tron-backend
+    logging: *json-logging
+
+  neo4j:
+    image: neo4j:5.26-community
+    restart: unless-stopped
+    ports:
+      - "${DATABASE_BIND_ADDRESS:-127.0.0.1}:${NEO4J_HTTP_PORT:-18474}:7474"
+      - "${DATABASE_BIND_ADDRESS:-127.0.0.1}:${NEO4J_BOLT_PORT:-17687}:7687"
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in app/.env}
+      NEO4J_server_default__listen__address: 0.0.0.0
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          cypher-shell -a neo4j://127.0.0.1:7687
+          -u neo4j -p "$${NEO4J_AUTH#*/}"
+          "RETURN 1" >/dev/null
+      interval: 10s
+      timeout: 8s
+      retries: 15
+      start_period: 40s
+    networks:
+      - tron-backend
+    logging: *json-logging
+
+  tron-api:
+    <<: *tron-service
+    command: ["tron_graph_api"]
+    environment:
+      <<: *tron-environment
+      AML_SERVICE_AUTH_REQUIRED: ${AML_SERVICE_AUTH_REQUIRED:-false}
+      AML_SERVICE_KEY: ${AML_SERVICE_KEY:-}
+    ports:
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${TRON_API_PORT:-4001}:4001"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:4001/ready"]
+      interval: 15s
+      timeout: 8s
+      retries: 10
+      start_period: 20s
+
+  tron-ingestion:
+    <<: *tron-service
+    command: ["arz_axum_for_services"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  tron-token-metadata-worker:
+    <<: *tron-service
+    command: ["tron_token_metadata_worker"]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  clickhouse_data:
+  neo4j_data:
+
+networks:
+  tron-backend:
+    driver: bridge

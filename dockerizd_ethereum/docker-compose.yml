@@ -1,0 +1,197 @@
+x-json-logging: &json-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-ethereum-environment: &ethereum-environment
+  ETH_RPC_URL: ${ETH_RPC_URL:?Set ETH_RPC_URL in .env}
+  ETH_EXPECTED_CHAIN_ID: ${ETH_EXPECTED_CHAIN_ID:-1}
+  ETH_NETWORK_ID: ${ETH_NETWORK_ID:-eip155:1}
+  ETH_START_BLOCK: ${ETH_START_BLOCK:-0}
+  ETH_FINALITY_TAG: ${ETH_FINALITY_TAG:-finalized}
+  ETH_POLL_INTERVAL_SECONDS: ${ETH_POLL_INTERVAL_SECONDS:-12}
+  ETH_INGESTION_BATCH_MAX_ROWS: ${ETH_INGESTION_BATCH_MAX_ROWS:-10000}
+  ETH_RPC_PROVIDER: ${ETH_RPC_PROVIDER:-custom}
+  ETH_RPC_MAX_RETRIES: ${ETH_RPC_MAX_RETRIES:-5}
+  ETH_RPC_RETRY_BASE_DELAY_MS: ${ETH_RPC_RETRY_BASE_DELAY_MS:-500}
+  ETH_REQUEST_DELAY_MS: ${ETH_REQUEST_DELAY_MS:-100}
+  ETH_TRACE_MODE: ${ETH_TRACE_MODE:-auto}
+  ETH_PROTOCOL_REGISTRY_REFRESH_BLOCKS: ${ETH_PROTOCOL_REGISTRY_REFRESH_BLOCKS:-100}
+  ETH_TOKEN_METADATA_POLL_SECONDS: ${ETH_TOKEN_METADATA_POLL_SECONDS:-30}
+  ETH_TOKEN_METADATA_BATCH_SIZE: ${ETH_TOKEN_METADATA_BATCH_SIZE:-100}
+  ETH_TOKEN_METADATA_MAX_ATTEMPTS: ${ETH_TOKEN_METADATA_MAX_ATTEMPTS:-5}
+  ETH_RISK_ENGINE_ENABLED: ${ETH_RISK_ENGINE_ENABLED:-false}
+  ETH_RISK_POLICY_VERSION: ${ETH_RISK_POLICY_VERSION:-ethereum_evidence_policy_v1}
+  ETH_ANALYTICS_INTERVAL_SECONDS: ${ETH_ANALYTICS_INTERVAL_SECONDS:-86400}
+  ETH_EXPOSURE_MAX_HOPS: ${ETH_EXPOSURE_MAX_HOPS:-5}
+  ETH_EXPOSURE_HOP_DECAY: ${ETH_EXPOSURE_HOP_DECAY:-0.65}
+  ETH_EXPOSURE_TIME_HALF_LIFE_DAYS: ${ETH_EXPOSURE_TIME_HALF_LIFE_DAYS:-365}
+  ETH_EXPOSURE_MAX_PATHS_PER_SUBJECT: ${ETH_EXPOSURE_MAX_PATHS_PER_SUBJECT:-3}
+  RPC_TIMEOUT_SECONDS: ${RPC_TIMEOUT_SECONDS:-120}
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in .env}
+  CLICKHOUSE_DB_ETH: ethereum_aml
+  NEO4J_URI: neo4j:7687
+  NEO4J_USERNAME: neo4j
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
+  ETHEREUM_API_ADDR: 0.0.0.0:5001
+  ETH_GRAPH_MAX_EDGES: ${ETH_GRAPH_MAX_EDGES:-20000}
+  RUST_LOG: ${RUST_LOG:-info}
+  RUST_BACKTRACE: ${RUST_BACKTRACE:-1}
+  TZ: ${TZ:-UTC}
+
+x-ethereum-service: &ethereum-service
+  image: ethereum-aml-service:${ETHEREUM_APP_IMAGE_TAG:-local}
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  environment: *ethereum-environment
+  networks:
+    - ethereum-backend
+  logging: *json-logging
+  stop_grace_period: 30s
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    restart: unless-stopped
+    ports:
+      - "${DATABASE_BIND_ADDRESS:-127.0.0.1}:${CLICKHOUSE_HTTP_PORT:-28123}:8123"
+      - "${DATABASE_BIND_ADDRESS:-127.0.0.1}:${CLICKHOUSE_NATIVE_PORT:-29000}:9000"
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in .env}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          test "$$(clickhouse-client
+          --user "$${CLICKHOUSE_USER}"
+          --password "$${CLICKHOUSE_PASSWORD}"
+          --query "SELECT 1")" = "1"
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    networks:
+      - ethereum-backend
+    logging: *json-logging
+
+  neo4j:
+    image: neo4j:5.26-community
+    restart: unless-stopped
+    ports:
+      - "${DATABASE_BIND_ADDRESS:-127.0.0.1}:${NEO4J_HTTP_PORT:-28474}:7474"
+      - "${DATABASE_BIND_ADDRESS:-127.0.0.1}:${NEO4J_BOLT_PORT:-27687}:7687"
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?Set NEO4J_PASSWORD in .env}
+      NEO4J_server_default__listen__address: 0.0.0.0
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          cypher-shell -a neo4j://127.0.0.1:7687
+          -u neo4j -p "$${NEO4J_AUTH#*/}"
+          "RETURN 1" >/dev/null
+      interval: 10s
+      timeout: 8s
+      retries: 15
+      start_period: 40s
+    networks:
+      - ethereum-backend
+    logging: *json-logging
+
+  ethereum-schema:
+    <<: *ethereum-service
+    command: ["ethereum_init_schema"]
+    restart: "no"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  ethereum-api:
+    <<: *ethereum-service
+    command: ["ethereum_graph_api"]
+    environment:
+      <<: *ethereum-environment
+      AML_SERVICE_AUTH_REQUIRED: ${AML_SERVICE_AUTH_REQUIRED:-false}
+      AML_SERVICE_KEY: ${AML_SERVICE_KEY:-}
+    ports:
+      - "${API_BIND_ADDRESS:-127.0.0.1}:${ETHEREUM_API_PORT:-5001}:5001"
+    depends_on:
+      ethereum-schema:
+        condition: service_completed_successfully
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "ethereum_healthcheck"]
+      interval: 15s
+      timeout: 8s
+      retries: 10
+      start_period: 20s
+
+  ethereum-ingestion:
+    <<: *ethereum-service
+    command: ["ethereum_ingestor", "follow"]
+    depends_on:
+      ethereum-schema:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  ethereum-token-metadata:
+    <<: *ethereum-service
+    command: ["ethereum_token_metadata_worker"]
+    depends_on:
+      ethereum-schema:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  ethereum-analytics:
+    <<: *ethereum-service
+    command: ["ethereum_analytics_worker"]
+    depends_on:
+      ethereum-schema:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+volumes:
+  clickhouse_data:
+  neo4j_data:
+
+networks:
+  ethereum-backend:
+    driver: bridge

@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  tron-fullnode:
+    image: tronprotocol/java-tron:latest
+    container_name: tron-fullnode
+
+    restart: unless-stopped
+
+    ports:
+      - "8090:8090"      # HTTP API
+      - "50051:50051"    # gRPC
+      - "18888:18888"    # P2P
+      - "18888:18888/udp"
+
+    volumes:
+      - ./tron-data:/java-tron/output-directory
+      - ./tron-logs:/java-tron/logs
+
+    environment:
+      - JAVA_OPTS=-Xms8G -Xmx16G
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/wallet/getnodeinfo"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535

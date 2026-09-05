@@ -1,0 +1,81 @@
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    client_max_body_size 1m;
+    auth_basic ${AML_BASIC_AUTH_REALM};
+    auth_basic_user_file /etc/nginx/auth/htpasswd;
+
+    # Runtime DNS resolution keeps one offline chain from stopping the gateway.
+    resolver 127.0.0.11 valid=30s ipv6=off;
+    resolver_timeout 3s;
+    set $tron_upstream "${AML_TRON_UPSTREAM}";
+    set $ethereum_upstream "${AML_ETHEREUM_UPSTREAM}";
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 30s;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $proxy_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Request-ID $request_id;
+    proxy_set_header X-AML-Service-Key "${AML_SERVICE_KEY}";
+    proxy_ssl_server_name on;
+    proxy_ssl_verify on;
+    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+    proxy_buffering off;
+    proxy_redirect off;
+
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Request-ID $request_id always;
+    # Existing chain pages contain inline scripts/styles. No remote assets execute.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" always;
+
+    error_page 502 504 = @unavailable;
+    location @unavailable {
+        default_type application/json;
+        return 503 '{"error":"The selected network API is unavailable. Check its service and upstream configuration."}';
+    }
+    location = /health {
+        auth_basic off;
+        access_log off;
+        default_type application/json;
+        return 200 '{"status":"alive","service":"aml-whole-gateway"}';
+    }
+    location = / { try_files /index.html =404; }
+    location = /index.html { try_files $uri =404; }
+    location /assets/ { try_files $uri =404; }
+
+    location = /networks/tron { return 308 /networks/tron/$is_args$args; }
+    location = /networks/ethereum { return 308 /networks/ethereum/$is_args$args; }
+    location = /networks/tron/ { try_files /networks/tron/index.html =404; }
+    location = /networks/ethereum/ { try_files /networks/ethereum/index.html =404; }
+    location = /networks/tron/ready { proxy_pass $tron_upstream/ready; }
+    location = /networks/ethereum/ready { proxy_pass $ethereum_upstream/ready; }
+    location = /networks/tron/status { proxy_pass $tron_upstream/status; }
+    location = /networks/ethereum/status { proxy_pass $ethereum_upstream/status; }
+
+    # Preserve paths, queries, HTTP methods and response bodies, including Neo4j POSTs.
+    location /api/tron/ {
+        limit_req zone=aml_api burst=30 nodelay;
+        limit_conn aml_connections 20;
+        proxy_pass $tron_upstream$request_uri;
+    }
+    location /api/analysis/tron/ {
+        limit_req zone=aml_api burst=30 nodelay;
+        limit_conn aml_connections 20;
+        proxy_pass $tron_upstream$request_uri;
+    }
+    location /api/ethereum/ {
+        limit_req zone=aml_api burst=30 nodelay;
+        limit_conn aml_connections 20;
+        proxy_pass $ethereum_upstream$request_uri;
+    }
+    location / { return 404; }
+}

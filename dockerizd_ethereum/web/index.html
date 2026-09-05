@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ethereum AML Console</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f5;
+      --surface: #ffffff;
+      --surface-alt: #eef2f0;
+      --ink: #17201c;
+      --muted: #64706a;
+      --line: #d7ded9;
+      --primary: #16734a;
+      --primary-dark: #0e5234;
+      --accent: #176b87;
+      --warning: #a15c09;
+      --danger: #b52d36;
+      --focus: #0f766e;
+      --radius: 6px;
+      --header-height: 58px;
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      overflow: hidden;
+    }
+
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 3px solid rgba(15, 118, 110, .28);
+      outline-offset: 1px;
+    }
+
+    .topbar {
+      height: var(--header-height);
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 0 18px;
+      background: #17201c;
+      color: #fff;
+      border-bottom: 3px solid var(--primary);
+    }
+
+    .brand { display: flex; align-items: baseline; gap: 10px; min-width: 220px; }
+    .brand strong { font-size: 17px; letter-spacing: 0; }
+    .brand span { color: #a9b8b0; font-size: 12px; }
+    .network-chip {
+      padding: 4px 7px;
+      border: 1px solid #58665f;
+      border-radius: 4px;
+      color: #d9e2dd;
+      font: 12px Consolas, monospace;
+    }
+    .service-status {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 12px;
+      color: #c4cec9;
+    }
+    .status-dot { width: 9px; height: 9px; border-radius: 50%; background: #d29a3a; }
+    .status-dot.ready { background: #39b872; }
+    .status-dot.failed { background: #df5962; }
+
+    .app-shell {
+      height: calc(100vh - var(--header-height));
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      min-height: 0;
+    }
+
+    .main-pane { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
+    .modebar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+    }
+    .mode-button {
+      min-height: 36px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--surface);
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .mode-button.active { border-color: var(--primary); background: #e8f4ed; color: var(--primary-dark); }
+
+    .querybar {
+      padding: 10px 14px;
+      background: var(--surface-alt);
+      border-bottom: 1px solid var(--line);
+    }
+    .query-form { display: grid; grid-template-columns: minmax(240px, 1fr) auto auto; gap: 8px; align-items: end; }
+    .query-form.path { grid-template-columns: minmax(200px, 1fr) minmax(200px, 1fr) 92px 112px auto; }
+    .field { min-width: 0; }
+    .field label { display: block; margin-bottom: 4px; color: #46524c; font-size: 11px; font-weight: 700; }
+    input, select {
+      width: 100%;
+      height: 38px;
+      border: 1px solid #bdc8c1;
+      border-radius: 4px;
+      background: #fff;
+      color: var(--ink);
+      padding: 0 10px;
+    }
+    .address-input { font-family: Consolas, monospace; font-size: 13px; }
+    .run-button {
+      height: 38px;
+      min-width: 104px;
+      border: 1px solid var(--primary-dark);
+      border-radius: 4px;
+      background: var(--primary);
+      color: #fff;
+      font-weight: 700;
+    }
+    .run-button:hover { background: var(--primary-dark); }
+    .run-button:disabled { cursor: wait; opacity: .65; }
+    .form-error { min-height: 18px; margin-top: 5px; color: var(--danger); font-size: 12px; }
+
+    .graph-region { position: relative; min-height: 0; background: #f9fbfa; overflow: hidden; }
+    #graph-canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    .graph-placeholder {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      pointer-events: none;
+      color: var(--muted);
+      text-align: center;
+      padding: 24px;
+    }
+    .graph-placeholder strong { display: block; margin-bottom: 5px; color: #38443e; font-size: 15px; }
+    .graph-legend {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, .92);
+      color: var(--muted);
+      font-size: 11px;
+      pointer-events: none;
+    }
+    .legend-item { display: inline-flex; align-items: center; gap: 5px; }
+    .legend-dot { width: 9px; height: 9px; border-radius: 50%; background: #66736c; }
+    .legend-dot.focus { background: var(--primary); }
+    .legend-line { width: 16px; height: 2px; background: var(--accent); }
+
+    .evidence-pane {
+      min-width: 0;
+      min-height: 0;
+      background: var(--surface);
+      border-left: 1px solid var(--line);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+    .evidence-header { padding: 13px 14px; border-bottom: 1px solid var(--line); }
+    .evidence-header h2 { margin: 0; font-size: 14px; }
+    .evidence-header p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+    .evidence-scroll { min-height: 0; overflow-y: auto; padding-bottom: 24px; }
+    .evidence-section { padding: 13px 14px; border-bottom: 1px solid var(--line); }
+    .section-title {
+      margin: 0 0 9px;
+      color: #46524c;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+    .metric { padding: 8px; border: 1px solid var(--line); border-radius: 4px; background: #fafcfb; }
+    .metric span { display: block; color: var(--muted); font-size: 10px; }
+    .metric strong { display: block; margin-top: 3px; font: 600 15px Consolas, monospace; }
+    .data-list { display: grid; gap: 7px; }
+    .data-row { min-width: 0; padding-bottom: 7px; border-bottom: 1px solid #edf0ee; }
+    .data-row:last-child { padding-bottom: 0; border-bottom: 0; }
+    .row-title { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+    .row-title code { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: #26332c; }
+    .row-meta { margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+    .badge { flex: 0 0 auto; padding: 2px 5px; border-radius: 3px; background: #e5ece8; color: #425149; font-size: 10px; }
+    .badge.warning { background: #fff1d8; color: #7b4605; }
+    .badge.info { background: #e2f0f5; color: #15566c; }
+    .coverage-note { padding: 9px; border-left: 3px solid var(--warning); background: #fff8eb; color: #67420e; font-size: 11px; line-height: 1.5; }
+    .empty { color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .mono { font-family: Consolas, monospace; }
+
+    @media (max-width: 1050px) {
+      .app-shell { grid-template-columns: minmax(0, 1fr) 310px; }
+      .query-form.path { grid-template-columns: 1fr 1fr 88px; }
+      .query-form.path .direction-field, .query-form.path .run-button { grid-row: 2; }
+    }
+    @media (max-width: 760px) {
+      body { overflow: auto; }
+      .topbar { position: sticky; top: 0; z-index: 4; }
+      .brand span, .network-chip { display: none; }
+      .app-shell { height: auto; min-height: calc(100vh - var(--header-height)); grid-template-columns: 1fr; }
+      .main-pane { min-height: 650px; grid-template-rows: auto auto 460px; }
+      .evidence-pane { border-left: 0; border-top: 1px solid var(--line); min-height: 500px; }
+      .evidence-scroll { overflow: visible; }
+      .query-form, .query-form.path { grid-template-columns: 1fr; }
+      .query-form.path .direction-field, .query-form.path .run-button { grid-row: auto; }
+      .run-button { width: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+    [hidden] { display: none !important; }
+    .network-home { color: #fff; font-size: 13px; padding: 10px 0; text-underline-offset: 4px; }
+    @media (max-width: 760px) {
+      .topbar { height: auto; min-height: var(--header-height); flex-wrap: wrap; gap: 6px 14px; padding: 10px 18px; }
+      .brand { min-width: 0; flex: 1; }
+      .service-status { flex-basis: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><strong>Ethereum AML</strong><span>Investigation Console</span></div>
+    <a id="network-home" class="network-home" href="/?network=ethereum" hidden>Networks</a>
+    <div class="network-chip">eip155:1</div>
+    <div class="service-status"><span id="status-dot" class="status-dot"></span><span id="status-text">Checking services</span></div>
+  </header>
+
+  <main class="app-shell">
+    <section class="main-pane" aria-label="Graph investigation workspace">
+      <nav class="modebar" aria-label="Investigation mode">
+        <button id="wallet-tab" class="mode-button active" type="button">Wallet Investigation</button>
+        <button id="path-tab" class="mode-button" type="button">Path Search</button>
+      </nav>
+
+      <div class="querybar">
+        <form id="wallet-form" class="query-form">
+          <div class="field">
+            <label for="wallet-address">Ethereum wallet address</label>
+            <input id="wallet-address" class="address-input" required autocomplete="off" spellcheck="false" placeholder="0x...">
+          </div>
+          <div class="field">
+            <label for="edge-limit">Maximum edges</label>
+            <select id="edge-limit"><option>250</option><option selected>750</option><option>1500</option><option>3000</option></select>
+          </div>
+          <button class="run-button" type="submit">Investigate</button>
+        </form>
+
+        <form id="path-form" class="query-form path" hidden>
+          <div class="field">
+            <label for="source-address">Source wallet</label>
+            <input id="source-address" class="address-input" required autocomplete="off" spellcheck="false" placeholder="0x...">
+          </div>
+          <div class="field">
+            <label for="target-address">Target wallet</label>
+            <input id="target-address" class="address-input" required autocomplete="off" spellcheck="false" placeholder="0x...">
+          </div>
+          <div class="field">
+            <label for="max-hops">Max hops</label>
+            <input id="max-hops" type="number" min="1" max="10" value="6">
+          </div>
+          <div class="field direction-field">
+            <label for="path-direction">Direction</label>
+            <select id="path-direction"><option value="outbound" selected>Outbound</option><option value="both">Both</option></select>
+          </div>
+          <button class="run-button" type="submit">Find paths</button>
+        </form>
+        <div id="form-error" class="form-error" role="alert"></div>
+      </div>
+
+      <div class="graph-region">
+        <canvas id="graph-canvas" aria-label="Wallet money-flow graph"></canvas>
+        <div id="graph-placeholder" class="graph-placeholder"><div><strong>No investigation loaded</strong>Search a wallet or a source-to-target path to build the graph.</div></div>
+        <div class="graph-legend"><span class="legend-item"><span class="legend-dot focus"></span>Focus</span><span class="legend-item"><span class="legend-dot"></span>Counterparty</span><span class="legend-item"><span class="legend-line"></span>Fund flow</span></div>
+      </div>
+    </section>
+
+    <aside class="evidence-pane" aria-label="Investigation evidence">
+      <header class="evidence-header"><h2>Evidence</h2><p id="evidence-subtitle">Select a wallet to inspect stored evidence.</p></header>
+      <div id="evidence-content" class="evidence-scroll"><section class="evidence-section"><p class="empty">The panel remains tied to the graph selection and is independently scrollable.</p></section></div>
+    </aside>
+  </main>
+
+  <script>
+    const canvas = document.getElementById('graph-canvas');
+    const placeholder = document.getElementById('graph-placeholder');
+    const evidence = document.getElementById('evidence-content');
+    const errorBox = document.getElementById('form-error');
+    const walletForm = document.getElementById('wallet-form');
+    const pathForm = document.getElementById('path-form');
+    const walletTab = document.getElementById('wallet-tab');
+    const pathTab = document.getElementById('path-tab');
+
+    const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]));
+    const short = value => value && value.length > 18 ? `${value.slice(0, 9)}...${value.slice(-7)}` : (value || 'system');
+    const number = value => new Intl.NumberFormat().format(Number(value || 0));
+    const time = value => value ? new Date(Number(value)).toLocaleString() : 'Not observed';
+    const amount = value => {
+      const text = String(value ?? '0');
+      return text.length > 28 ? `${text.slice(0, 16)}...${text.slice(-8)}` : text;
+    };
+
+    function setMode(mode) {
+      const wallet = mode === 'wallet';
+      walletForm.hidden = !wallet;
+      pathForm.hidden = wallet;
+      walletTab.classList.toggle('active', wallet);
+      pathTab.classList.toggle('active', !wallet);
+      errorBox.textContent = '';
+    }
+    walletTab.addEventListener('click', () => setMode('wallet'));
+    pathTab.addEventListener('click', () => setMode('path'));
+
+    class GraphRenderer {
+      constructor(canvas) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d');
+        this.nodes = [];
+        this.edges = [];
+        this.dragged = null;
+        this.hovered = null;
+        this.ticks = 0;
+        this.scale = 1;
+        this.bind();
+        new ResizeObserver(() => this.resize()).observe(canvas.parentElement);
+      }
+
+      bind() {
+        this.canvas.addEventListener('pointerdown', event => {
+          const point = this.pointer(event);
+          this.dragged = this.hit(point.x, point.y);
+          if (this.dragged) this.canvas.setPointerCapture(event.pointerId);
+        });
+        this.canvas.addEventListener('pointermove', event => {
+          const point = this.pointer(event);
+          if (this.dragged) {
+            this.dragged.x = point.x;
+            this.dragged.y = point.y;
+            this.dragged.fixed = true;
+            this.draw();
+          } else {
+            this.hovered = this.hit(point.x, point.y);
+            this.canvas.style.cursor = this.hovered ? 'pointer' : 'default';
+            this.draw();
+          }
+        });
+        this.canvas.addEventListener('pointerup', event => {
+          if (this.dragged) this.canvas.releasePointerCapture(event.pointerId);
+          this.dragged = null;
+        });
+      }
+
+      pointer(event) {
+        const rect = this.canvas.getBoundingClientRect();
+        return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      }
+
+      hit(x, y) {
+        return this.nodes.find(node => Math.hypot(node.x - x, node.y - y) <= node.radius + 4) || null;
+      }
+
+      resize() {
+        const rect = this.canvas.getBoundingClientRect();
+        const ratio = Math.min(window.devicePixelRatio || 1, 2);
+        this.canvas.width = Math.max(1, Math.floor(rect.width * ratio));
+        this.canvas.height = Math.max(1, Math.floor(rect.height * ratio));
+        this.ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        this.width = rect.width;
+        this.height = rect.height;
+        this.draw();
+      }
+
+      setData(nodes, edges, focus) {
+        const width = this.canvas.clientWidth || 700;
+        const height = this.canvas.clientHeight || 500;
+        const count = Math.max(nodes.length, 1);
+        const prior = new Map(this.nodes.map(node => [node.id, node]));
+        this.nodes = nodes.map((node, index) => {
+          const angle = (Math.PI * 2 * index) / count;
+          const existing = prior.get(node.id);
+          const degree = Number(node.inbound_edges || 0) + Number(node.outbound_edges || 0);
+          return {
+            ...node,
+            x: existing?.x ?? width / 2 + Math.cos(angle) * Math.min(width, height) * .32,
+            y: existing?.y ?? height / 2 + Math.sin(angle) * Math.min(width, height) * .32,
+            vx: 0,
+            vy: 0,
+            radius: node.address === focus || node.is_focus ? 13 : Math.min(11, 6 + Math.log2(degree + 1)),
+            fixed: false
+          };
+        });
+        const byId = new Map(this.nodes.map(node => [node.id, node]));
+        this.edges = edges.map(edge => ({...edge, source: byId.get(edge.from_address), target: byId.get(edge.to_address)})).filter(edge => edge.source && edge.target);
+        this.ticks = 0;
+        placeholder.hidden = this.nodes.length > 0;
+        this.simulate();
+      }
+
+      simulate() {
+        if (this.ticks++ > 220 || !this.nodes.length) return this.draw();
+        const centerX = this.width / 2;
+        const centerY = this.height / 2;
+        for (let i = 0; i < this.nodes.length; i++) {
+          for (let j = i + 1; j < this.nodes.length; j++) {
+            const a = this.nodes[i], b = this.nodes[j];
+            let dx = b.x - a.x, dy = b.y - a.y;
+            const distance = Math.max(18, Math.hypot(dx, dy));
+            const force = Math.min(2.2, 1300 / (distance * distance));
+            dx /= distance; dy /= distance;
+            if (!a.fixed) { a.vx -= dx * force; a.vy -= dy * force; }
+            if (!b.fixed) { b.vx += dx * force; b.vy += dy * force; }
+          }
+        }
+        for (const edge of this.edges) {
+          const dx = edge.target.x - edge.source.x;
+          const dy = edge.target.y - edge.source.y;
+          const distance = Math.max(1, Math.hypot(dx, dy));
+          const force = (distance - 105) * .003;
+          if (!edge.source.fixed) { edge.source.vx += dx / distance * force; edge.source.vy += dy / distance * force; }
+          if (!edge.target.fixed) { edge.target.vx -= dx / distance * force; edge.target.vy -= dy / distance * force; }
+        }
+        for (const node of this.nodes) {
+          if (node.fixed) continue;
+          node.vx += (centerX - node.x) * .0008;
+          node.vy += (centerY - node.y) * .0008;
+          node.vx *= .86; node.vy *= .86;
+          node.x = Math.max(28, Math.min(this.width - 28, node.x + node.vx));
+          node.y = Math.max(28, Math.min(this.height - 28, node.y + node.vy));
+        }
+        this.draw();
+        requestAnimationFrame(() => this.simulate());
+      }
+
+      draw() {
+        if (!this.width || !this.height) return;
+        const ctx = this.ctx;
+        ctx.clearRect(0, 0, this.width, this.height);
+        for (const edge of this.edges) this.drawEdge(edge);
+        for (const node of this.nodes) this.drawNode(node);
+      }
+
+      drawEdge(edge) {
+        const ctx = this.ctx;
+        const dx = edge.target.x - edge.source.x;
+        const dy = edge.target.y - edge.source.y;
+        const length = Math.max(1, Math.hypot(dx, dy));
+        const ux = dx / length, uy = dy / length;
+        const endX = edge.target.x - ux * (edge.target.radius + 3);
+        const endY = edge.target.y - uy * (edge.target.radius + 3);
+        ctx.beginPath(); ctx.moveTo(edge.source.x, edge.source.y); ctx.lineTo(endX, endY);
+        ctx.strokeStyle = edge.transfer_type.includes('native') ? '#176b87' : '#708078';
+        ctx.globalAlpha = .55; ctx.lineWidth = 1.2; ctx.stroke(); ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.moveTo(endX, endY);
+        ctx.lineTo(endX - ux * 8 - uy * 4, endY - uy * 8 + ux * 4);
+        ctx.lineTo(endX - ux * 8 + uy * 4, endY - uy * 8 - ux * 4);
+        ctx.closePath(); ctx.fillStyle = '#47705d'; ctx.fill();
+      }
+
+      drawNode(node) {
+        const ctx = this.ctx;
+        const focus = node.is_focus;
+        ctx.beginPath(); ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+        ctx.fillStyle = focus ? '#16734a' : (node === this.hovered ? '#176b87' : '#66736c');
+        ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+        ctx.font = '11px Consolas, monospace'; ctx.textAlign = 'center';
+        ctx.fillStyle = '#27332d'; ctx.fillText(short(node.address), node.x, node.y + node.radius + 15);
+      }
+    }
+
+    const renderer = new GraphRenderer(canvas);
+
+    async function request(url, button) {
+      errorBox.textContent = '';
+      const label = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Loading';
+      try {
+        const response = await fetch(url);
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || `Request failed with ${response.status}`);
+        return body;
+      } finally {
+        button.disabled = false;
+        button.textContent = label;
+      }
+    }
+
+    walletForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = walletForm.querySelector('button');
+      try {
+        const address = document.getElementById('wallet-address').value.trim();
+        const limit = document.getElementById('edge-limit').value;
+        const data = await request(`/api/ethereum/wallet/${encodeURIComponent(address)}/investigation?limit=${limit}`, button);
+        renderer.setData(data.graph.nodes, data.graph.edges, data.address);
+        renderInvestigation(data);
+      } catch (error) { errorBox.textContent = error.message; }
+    });
+
+    pathForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = pathForm.querySelector('button');
+      try {
+        const source = document.getElementById('source-address').value.trim();
+        const target = document.getElementById('target-address').value.trim();
+        const hops = document.getElementById('max-hops').value;
+        const direction = document.getElementById('path-direction').value;
+        const data = await request(`/api/ethereum/wallet/${encodeURIComponent(source)}/paths/${encodeURIComponent(target)}?max_hops=${hops}&direction=${direction}`, button);
+        renderer.setData(data.nodes, data.edges, data.source);
+        renderPaths(data);
+      } catch (error) { errorBox.textContent = error.message; }
+    });
+
+    function renderInvestigation(data) {
+      document.getElementById('evidence-subtitle').textContent = short(data.address);
+      const f = data.fingerprint;
+      const assets = data.asset_flows.map(item => `<div class="data-row"><div class="row-title"><code title="${escapeHtml(item.asset_id)}">${escapeHtml(short(item.asset_id))}</code><span class="badge">${number(item.transfer_count)} flows</span></div><div class="row-meta">In ${escapeHtml(amount(item.inbound_amount))} � Out ${escapeHtml(amount(item.outbound_amount))}</div></div>`).join('');
+      const counterparties = data.top_counterparties.map(item => `<div class="data-row"><div class="row-title"><code title="${escapeHtml(item.address)}">${escapeHtml(short(item.address))}</code><span class="badge info">${number(item.total_transfers)}</span></div><div class="row-meta">Received ${number(item.inbound_transfers)} � Sent ${number(item.outbound_transfers)} � ${escapeHtml(time(item.last_seen_unix_ms))}</div></div>`).join('');
+      const events = data.semantic_events.map(item => `<div class="data-row"><div class="row-title"><code>${escapeHtml(item.event_type)}</code><span class="badge">${Math.round(item.confidence * 100)}%</span></div><div class="row-meta">${escapeHtml(item.protocol || 'unclassified protocol')} � block ${number(item.block_number)}<br>${escapeHtml(short(item.tx_hash))}${item.remote_network_id ? ` � remote ${escapeHtml(item.remote_network_id)}` : ''}</div></div>`).join('');
+      const entities = data.entities.map(item => `<div class="data-row"><div class="row-title"><strong>${escapeHtml(item.entity_name)}</strong><span class="badge ${item.is_exposure_seed ? 'warning' : 'info'}">${escapeHtml(item.entity_type)}</span></div><div class="row-meta">${escapeHtml(item.address_role)} � confidence ${Math.round(item.confidence * 100)}% � risk ${number(item.risk_level)}${item.seed_category ? ` � ${escapeHtml(item.seed_category)}` : ''}</div></div>`).join('');
+      const clusters = data.clusters.map(item => `<div class="data-row"><div class="row-title"><code title="${escapeHtml(item.cluster_id)}">${escapeHtml(short(item.cluster_id))}</code><span class="badge info">${escapeHtml(item.membership_type)}</span></div><div class="row-meta">Entity ${escapeHtml(short(item.entity_id))} � confidence ${Math.round(item.confidence * 100)}%</div></div>`).join('');
+      const exposures = data.exposure_paths.map(item => `<div class="data-row"><div class="row-title"><strong>${escapeHtml(item.direction)}</strong><span class="badge warning">${item.hop_count} hops � ${Math.round(item.exposure_score * 100)}%</span></div><div class="row-meta">Seed ${escapeHtml(short(item.seed_address))} � ${escapeHtml(short(item.asset_id))}${item.service_mediated ? ' � service boundary' : ''}<br><span class="mono">${item.path_addresses.map(short).map(escapeHtml).join(' �w^~)�v ')}</span></div></div>`).join('');
+      const risk = data.risk_engine;
+      const signals = (risk.signals || []).map(item => `<div class="data-row"><div class="row-title"><strong>${escapeHtml(item.signal_type)}</strong><span class="badge warning">+${Number(item.contribution).toFixed(1)}</span></div><div class="row-meta">${escapeHtml(item.summary)} � strength ${Math.round(item.signal_strength * 100)}%</div></div>`).join('');
+      const riskPanel = risk.enabled && risk.status === 'available'
+        ? `<div class="metrics">${metric('Risk score', Number(risk.risk_score).toFixed(1))}${metric('Risk level', risk.risk_level)}${metric('Signals', risk.signals.length)}</div><div class="coverage-note">Versioned evidence score using ${escapeHtml(risk.policy_version)}. This is not a statistical probability or a legal conclusion.</div><div class="data-list">${signals || '<p class="empty">No policy signal was activated.</p>'}</div>`
+        : `<span class="badge info">Disabled</span><p class="row-meta">Evidence scoring is disabled by configuration.</p>`;
+      evidence.innerHTML = `
+        <section class="evidence-section"><h3 class="section-title">Behavioral fingerprint</h3><div class="metrics">
+          ${metric('Transactions', f.transaction_count)}${metric('Fund flows', f.transfer_count)}${metric('Counterparties', f.unique_counterparties)}${metric('Contract calls', f.contract_calls)}${metric('Inbound', f.inbound_transfers)}${metric('Outbound', f.outbound_transfers)}${metric('Swaps', f.swap_events)}${metric('Bridges', f.bridge_events)}${metric('Mixer', f.mixer_events)}${metric('Liquidity', f.liquidity_events)}
+        </div></section>
+        <section class="evidence-section"><h3 class="section-title">Evidence risk</h3>${riskPanel}</section>
+        <section class="evidence-section"><h3 class="section-title">Entity intelligence</h3><div class="data-list">${entities || '<p class="empty">No approved entity label is attached to this address.</p>'}</div></section>
+        <section class="evidence-section"><h3 class="section-title">Address clusters</h3><div class="data-list">${clusters || '<p class="empty">No reviewed entity cluster membership is available.</p>'}</div></section>
+        <section class="evidence-section"><h3 class="section-title">Exposure paths</h3><div class="data-list">${exposures || '<p class="empty">No path to an approved exposure seed exists in the latest propagation run.</p>'}</div></section>
+        <section class="evidence-section"><h3 class="section-title">Data coverage</h3><div class="coverage-note">Last synced block: <span class="mono">${number(data.data_coverage.last_synced_block)}</span><br>Receipt-complete blocks: ${number(data.data_coverage.receipt_complete_blocks)} / ${number(data.data_coverage.complete_blocks)}<br>Internal EVM traces: ${data.data_coverage.internal_transfer_coverage ? 'complete' : 'not available from the current RPC'}</div></section>
+        <section class="evidence-section"><h3 class="section-title">Asset flows</h3><div class="data-list">${assets || '<p class="empty">No stored asset flow was found.</p>'}</div></section>
+        <section class="evidence-section"><h3 class="section-title">Top counterparties</h3><div class="data-list">${counterparties || '<p class="empty">No counterparty was found in the stored range.</p>'}</div></section>
+        <section class="evidence-section"><h3 class="section-title">Semantic events</h3><div class="data-list">${events || '<p class="empty">No decoded swap, bridge, mixer, or liquidity event is stored for this wallet yet.</p>'}</div></section>
+        <section class="evidence-section"><h3 class="section-title">Graph projection</h3><div class="row-meta">${data.neo4j_projection.projected ? `${number(data.neo4j_projection.node_count)} wallets and ${number(data.neo4j_projection.edge_count)} transfer edges synchronized to Neo4j.` : 'Read-only result. Use the Neo4j import endpoint when a persisted projection is required.'}</div></section>`;
+    }
+
+    function renderPaths(data) {
+      document.getElementById('evidence-subtitle').textContent = `${short(data.source)} to ${short(data.target)}`;
+      const paths = data.paths.map((path, index) => `<div class="data-row"><div class="row-title"><strong>Path ${index + 1}</strong><span class="badge info">${path.hop_count} hops</span></div><div class="row-meta mono">${path.addresses.map(short).map(escapeHtml).join(' → ')}</div></div>`).join('');
+      const edges = data.edges.slice(0, 100).map(edge => `<div class="data-row"><div class="row-title"><code>${escapeHtml(short(edge.from_address))} → ${escapeHtml(short(edge.to_address))}</code><span class="badge">${escapeHtml(edge.transfer_type)}</span></div><div class="row-meta">${escapeHtml(short(edge.asset_id))} · ${escapeHtml(amount(edge.amount))}<br>block ${number(edge.block_number)} · ${escapeHtml(short(edge.tx_hash))}</div></div>`).join('');
+      evidence.innerHTML = `
+        <section class="evidence-section"><h3 class="section-title">Path result</h3><div class="metrics">${metric('Paths', data.paths.length)}${metric('Max hops', data.max_hops)}${metric('Expanded wallets', data.expanded_addresses)}${metric(data.neo4j_projection.projected ? 'Projected edges' : 'Read-only edges', data.neo4j_projection.edge_count)}</div></section>
+        <section class="evidence-section"><h3 class="section-title">Discovered paths</h3><div class="data-list">${paths || '<p class="empty">No connection was found within the selected hop limit and stored evidence.</p>'}</div></section>
+        <section class="evidence-section"><h3 class="section-title">Transfer evidence</h3><div class="data-list">${edges || '<p class="empty">No transfer evidence belongs to a discovered path.</p>'}</div></section>
+        ${data.truncated ? '<section class="evidence-section"><div class="coverage-note">Search safety limits were reached. Narrow the direction or increase per-address coverage deliberately.</div></section>' : ''}`;
+    }
+
+    function metric(label, value) { return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${number(value)}</strong></div>`; }
+
+    async function checkReady() {
+      const dot = document.getElementById('status-dot');
+      const text = document.getElementById('status-text');
+      try {
+        const response = await fetch(location.pathname === '/networks/ethereum/' ? '/networks/ethereum/ready' : '/ready');
+        const body = await response.json();
+        if (!response.ok) throw new Error();
+        dot.className = 'status-dot ready';
+        text.textContent = `ClickHouse ${body.dependencies.clickhouse} · Neo4j ${body.dependencies.neo4j}`;
+      } catch (_) {
+        dot.className = 'status-dot failed';
+        text.textContent = 'Dependencies unavailable';
+      }
+    }
+    checkReady();
+    document.getElementById('network-home').hidden = location.pathname !== '/networks/ethereum/';
+    const initialAddress = new URLSearchParams(location.search).get('address');
+    if (initialAddress) {
+      document.getElementById('wallet-address').value = initialAddress;
+      document.getElementById('source-address').value = initialAddress;
+      queueMicrotask(() => walletForm.requestSubmit());
+    }
+  </script>
+</body>
+</html>

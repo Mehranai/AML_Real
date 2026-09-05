@@ -1,0 +1,45 @@
+/* تنظیمات اصلی برای راست‌چین */
+body {
+    direction: rtl;
+    text-align: right;
+    font-family: 'Vazir', 'IRANSans', 'Tahoma', 'Arial', sans-serif;
+}
+
+/* برای پشتیبانی بهتر از متن‌های راست‌چین */
+.markdown-preview {
+    direction: rtl;
+    unicode-bidi: embed;
+    font-family: 'Vazir', 'IRANSans', 'Tahoma', 'Arial', sans-serif;
+}
+
+/* تنظیمات برای عناصر خاص */
+h1, h2, h3, h4, h5, h6 {
+    text-align: right;
+    font-family: 'Vazir', 'IRANSans', 'Tahoma', 'Arial', sans-serif;
+    font-weight: bold;
+}
+
+p, li, div, span {
+    text-align: right;
+    font-family: 'Vazir', 'IRANSans', 'Tahoma', 'Arial', sans-serif;
+}
+
+/* تنظیمات برای کدها (که معمولاً باید چپ‌چین باشند) */
+code, pre {
+    direction: ltr;
+    text-align: left;
+    font-family: 'Fira Code', 'Consolas', monospace;
+}
+
+/* تنظیمات برای جداول */
+table {
+    direction: rtl;
+}
+
+/* تنظیمات برای نقل قول‌ها */
+blockquote {
+    border-right: 4px solid #ccc;
+    border-left: none;
+    padding-right: 1em;
+    padding-left: 0;
+}

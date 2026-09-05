@@ -1,0 +1,13 @@
+services:
+  ethereum-schema:
+    build: &offline-build
+      context: .
+      dockerfile: Dockerfile.offline
+  ethereum-api:
+    build: *offline-build
+  ethereum-ingestion:
+    build: *offline-build
+  ethereum-token-metadata:
+    build: *offline-build
+  ethereum-analytics:
+    build: *offline-build

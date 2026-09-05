@@ -1,0 +1,9 @@
+address,label,total_transfers_log,unique_transactions_log,incoming_transfers_log,outgoing_transfers_log,unique_senders_log,unique_receivers_log,fan_in_score,fan_out_score,flow_imbalance_score,burst_score,swap_ratio,bridge_ratio,exchange_interaction_ratio,contract_call_ratio,counterparty_concentration,token_diversity_score,exposure_score,exposure_source_count_score,exposure_path_count_score,exposure_min_hop_score,identity_confidence,exchange_service_wallet_score,truncated_sample_score,data_volume_score
+TBadLayeringWallet001,1,5.20,5.01,4.90,4.45,4.30,2.10,0.82,0.18,0.23,0.74,0.46,0.28,0.38,0.66,0.77,0.42,0.86,0.55,0.61,0.75,0.62,0.00,0.00,0.72
+TBadCashoutWallet002,1,4.85,4.70,4.65,3.10,4.10,1.70,0.79,0.21,0.46,0.68,0.32,0.18,0.57,0.49,0.81,0.35,0.72,0.44,0.52,0.50,0.58,0.00,0.00,0.68
+TBadBridgeWallet003,1,5.65,5.48,4.70,5.30,2.40,4.20,0.36,0.64,0.18,0.59,0.51,0.41,0.22,0.74,0.45,0.57,0.79,0.61,0.72,0.75,0.66,0.00,0.00,0.80
+TBadExposureWallet004,1,4.10,3.95,3.80,3.62,3.40,2.90,0.54,0.46,0.08,0.44,0.20,0.10,0.31,0.39,0.69,0.24,0.91,0.66,0.70,1.00,0.70,0.00,0.00,0.55
+TCleanUserWallet001,0,2.20,2.08,1.80,1.95,1.50,1.70,0.47,0.53,0.05,0.08,0.02,0.00,0.00,0.08,0.20,0.08,0.00,0.00,0.00,0.00,0.64,0.00,0.00,0.24
+TCleanUserWallet002,0,2.80,2.70,2.40,2.10,1.95,1.60,0.55,0.45,0.13,0.12,0.05,0.00,0.04,0.14,0.24,0.12,0.03,0.00,0.00,0.00,0.61,0.00,0.00,0.31
+TExchangeHotWallet001,0,6.40,6.25,6.05,6.10,5.80,5.75,0.50,0.50,0.01,0.22,0.04,0.00,0.91,0.19,0.14,0.66,0.00,0.00,0.00,0.00,0.95,1.00,0.00,0.91
+TCleanDexUser001,0,3.35,3.20,2.95,3.05,2.30,2.45,0.48,0.52,0.03,0.18,0.18,0.00,0.06,0.42,0.27,0.20,0.00,0.00,0.00,0.00,0.56,0.00,0.00,0.38

@@ -1,0 +1,2136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TRON AML Console</title>
+  <style>
+    :root {
+      --bg: #f4f6f4;
+      --panel: #ffffff;
+      --panel-2: #eef2ee;
+      --ink: #17211c;
+      --muted: #66736b;
+      --line: #d9ded9;
+      --teal: #087f77;
+      --green: #2f7d48;
+      --amber: #b76e00;
+      --red: #b12a34;
+      --violet: #6750a4;
+      --shadow: 0 12px 30px rgba(23, 33, 28, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      letter-spacing: 0;
+    }
+
+    body {
+      overflow: hidden;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+      cursor: pointer;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      height: 100vh;
+      min-height: 680px;
+    }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      padding: 22px 18px;
+      color: #f4f7f5;
+      background: #18231e;
+      border-right: 1px solid #26342d;
+    }
+
+    .brand {
+      display: grid;
+      gap: 4px;
+      padding: 4px 4px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .brand strong {
+      font-size: 18px;
+      font-weight: 760;
+    }
+
+    .brand span {
+      color: #aebbb4;
+      font-size: 12px;
+    }
+
+    .nav {
+      display: grid;
+      gap: 6px;
+    }
+
+    .nav button {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 10px;
+      width: 100%;
+      min-height: 38px;
+      padding: 0 10px;
+      color: #d8e2dc;
+      background: transparent;
+      border-radius: 6px;
+      text-align: left;
+    }
+
+    .nav button.active {
+      color: #ffffff;
+      background: #25362e;
+    }
+
+    .nav-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--teal);
+    }
+
+    .sidebar-foot {
+      margin-top: auto;
+      display: grid;
+      gap: 8px;
+      color: #aebbb4;
+      font-size: 12px;
+    }
+
+    .main {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-width: 0;
+      height: 100vh;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.84);
+      backdrop-filter: blur(10px);
+    }
+
+    .search {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) 100px 124px 132px 104px;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .input,
+    .select {
+      min-height: 40px;
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--ink);
+      padding: 0 12px;
+      outline: none;
+    }
+
+    .input:focus,
+    .select:focus {
+      border-color: var(--teal);
+      box-shadow: 0 0 0 3px rgba(8, 127, 119, 0.12);
+    }
+
+    .primary {
+      min-height: 40px;
+      border-radius: 6px;
+      background: var(--teal);
+      color: #ffffff;
+      font-weight: 680;
+    }
+
+    .secondary {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: #ffffff;
+    }
+
+    .path-form {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .path-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    .path-actions {
+      display: grid;
+      grid-template-columns: 92px 112px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+    }
+
+    .path-summary {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      margin: 0 0 10px;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .pulse {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--green);
+    }
+
+    .content {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 16px;
+      min-height: 0;
+      overflow: hidden;
+      padding: 16px;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 12px;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric,
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .metric {
+      min-height: 78px;
+      padding: 12px;
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 24px;
+      font-weight: 760;
+      line-height: 1;
+    }
+
+    .graph-panel {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .graph-toolbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .graph-title {
+      min-width: 0;
+    }
+
+    .graph-title strong {
+      display: block;
+      font-size: 15px;
+    }
+
+    .graph-title span {
+      display: block;
+      margin-top: 3px;
+      overflow: hidden;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .range {
+      width: 92px;
+      accent-color: var(--teal);
+    }
+
+    .graph-wrap {
+      position: relative;
+      min-height: 0;
+      overflow: hidden;
+      background:
+        linear-gradient(rgba(23, 33, 28, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(23, 33, 28, 0.04) 1px, transparent 1px),
+        #fbfcfb;
+      background-size: 28px 28px;
+    }
+
+    .empty {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .flow-svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .edge {
+      fill: none;
+      stroke: rgba(23, 33, 28, 0.28);
+      stroke-width: 1.8;
+    }
+
+    .edge.exchange {
+      stroke: var(--teal);
+      stroke-width: 2.4;
+    }
+
+    .edge.dense {
+      stroke-width: 0.9;
+      opacity: 0.56;
+    }
+
+    .edge.exchange.dense {
+      stroke-width: 1.25;
+      opacity: 0.72;
+    }
+
+    .edge-label {
+      pointer-events: none;
+      fill: #37443d;
+      font-size: 10px;
+      paint-order: stroke;
+      stroke: #ffffff;
+      stroke-width: 4px;
+      stroke-linejoin: round;
+    }
+
+    .node {
+      cursor: pointer;
+    }
+
+    .node circle {
+      stroke: #ffffff;
+      stroke-width: 3;
+      filter: drop-shadow(0 4px 8px rgba(23, 33, 28, 0.16));
+    }
+
+    .node.root circle {
+      stroke: #111a16;
+      stroke-width: 4;
+    }
+
+    .node.selected circle {
+      stroke: var(--amber);
+      stroke-width: 5;
+    }
+
+    .node-label {
+      pointer-events: none;
+      fill: #17211c;
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: 10px;
+      paint-order: stroke;
+      stroke: #ffffff;
+      stroke-width: 5px;
+      stroke-linejoin: round;
+      text-anchor: middle;
+    }
+
+    .aside {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 10px;
+      height: 100%;
+      max-height: 100%;
+      min-height: 0;
+      min-width: 0;
+      overflow: hidden;
+      overscroll-behavior: contain;
+      position: relative;
+      z-index: 2;
+      background: var(--bg);
+    }
+
+    .inspector-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .inspector-tab {
+      min-height: 34px;
+      padding: 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 680;
+      line-height: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .inspector-tab.active {
+      border-color: rgba(8, 127, 119, 0.45);
+      background: #e7f5f3;
+      color: var(--teal);
+    }
+
+    .inspector-body {
+      min-height: 0;
+      overflow: hidden;
+      display: grid;
+    }
+
+    .inspector-panel {
+      display: none;
+      min-height: 0;
+      height: 100%;
+    }
+
+    .inspector-panel.active {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .inspector-panel .panel-body,
+    .inspector-panel .table-wrap {
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .inspector-panel .table-wrap {
+      max-height: none;
+    }
+
+    .inspector-panel .panel-body::-webkit-scrollbar,
+    .table-wrap::-webkit-scrollbar,
+    .drawer::-webkit-scrollbar,
+    .cypher::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    .inspector-panel .panel-body::-webkit-scrollbar-track,
+    .table-wrap::-webkit-scrollbar-track,
+    .drawer::-webkit-scrollbar-track,
+    .cypher::-webkit-scrollbar-track {
+      background: #edf1ed;
+      border-radius: 999px;
+    }
+
+    .inspector-panel .panel-body::-webkit-scrollbar-thumb,
+    .table-wrap::-webkit-scrollbar-thumb,
+    .drawer::-webkit-scrollbar-thumb,
+    .cypher::-webkit-scrollbar-thumb {
+      background: #b8c3bd;
+      border-radius: 999px;
+    }
+
+    .panel {
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 44px;
+      padding: 0 13px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-2);
+    }
+
+    .panel-head strong {
+      font-size: 14px;
+    }
+
+    .panel-body {
+      padding: 12px;
+    }
+
+    .kv {
+      display: grid;
+      gap: 8px;
+    }
+
+    .kv-row {
+      display: grid;
+      grid-template-columns: 104px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      min-height: 24px;
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    .kv-row span:first-child {
+      color: var(--muted);
+    }
+
+    .kv-row strong {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      text-align: right;
+      line-height: 1.35;
+    }
+
+    .mono {
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: #edf6f4;
+      color: var(--teal);
+      font-size: 12px;
+      font-weight: 680;
+      white-space: nowrap;
+    }
+
+    .badge.warn {
+      background: #fff4df;
+      color: var(--amber);
+    }
+
+    .badge.risk {
+      background: #ffe9eb;
+      color: var(--red);
+    }
+
+    .badge.ok {
+      background: #edf7ef;
+      color: var(--green);
+    }
+
+    .list {
+      display: grid;
+      gap: 7px;
+      margin-top: 10px;
+    }
+
+    .list-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fbfcfb;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .list-item span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .list-item small {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .list-item strong {
+      flex: 0 0 auto;
+      color: var(--ink);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .section-label {
+      margin: 16px 0 6px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 760;
+      text-transform: uppercase;
+    }
+
+    .trend-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .trend-row {
+      display: grid;
+      grid-template-columns: 76px minmax(0, 1fr) 54px;
+      gap: 8px;
+      align-items: center;
+      font-size: 11px;
+    }
+
+    .trend-row time,
+    .trend-row strong {
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .trend-row strong {
+      color: var(--ink);
+      text-align: right;
+    }
+
+    .trend-bars {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .trend-bar {
+      display: block;
+      width: 0;
+      min-width: 2px;
+      height: 5px;
+      border-radius: 2px;
+      background: var(--teal);
+    }
+
+    .trend-bar.outgoing {
+      background: #b76e00;
+    }
+
+    .table-wrap {
+      max-height: 260px;
+      overflow: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    th,
+    td {
+      padding: 9px 8px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #ffffff;
+      color: var(--muted);
+      font-weight: 680;
+    }
+
+    .drawer {
+      min-height: 0;
+      overflow: auto;
+    }
+
+    .cypher {
+      min-height: 106px;
+      max-height: 180px;
+      overflow: auto;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #111a16;
+      color: #d9efe5;
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      display: none;
+      max-width: min(520px, calc(100vw - 36px));
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #17211c;
+      color: #ffffff;
+      box-shadow: var(--shadow);
+      font-size: 13px;
+    }
+
+    .toast.show {
+      display: block;
+    }
+
+    @media (max-width: 1180px) {
+      body {
+        overflow: auto;
+      }
+
+      .shell {
+        grid-template-columns: 1fr;
+        height: auto;
+        min-height: 100vh;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .main {
+        height: auto;
+      }
+
+      .content {
+        grid-template-columns: 1fr;
+        overflow: visible;
+      }
+
+      .aside {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        padding-right: 0;
+      }
+
+      .inspector-body {
+        min-height: 520px;
+      }
+
+      .graph-panel {
+        min-height: 620px;
+      }
+    }
+
+    @media (min-width: 761px) and (max-width: 1100px) {
+      .search { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      #walletInput { grid-column: 1 / -1; }
+    }
+
+    @media (max-width: 760px) {
+      .topbar,
+      .search,
+      .graph-toolbar,
+      .metrics {
+        grid-template-columns: 1fr;
+      }
+
+      .content {
+        padding: 10px;
+      }
+
+      .graph-panel {
+        min-height: 540px;
+      }
+
+      .kv-row {
+        grid-template-columns: 1fr;
+      }
+    }
+    .topbar-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+    .network-home { color: var(--ink); font-size: 13px; text-underline-offset: 4px; padding: 8px 0; }
+    @media (max-width: 760px) { .topbar-actions { align-items: flex-start; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <strong>TRON AML Console</strong>
+        <span>Investigation workspace</span>
+      </div>
+      <nav class="nav" aria-label="Primary">
+        <button class="active" type="button"><span class="nav-dot"></span>Flow Graph</button>
+        <button type="button"><span class="nav-dot" style="background:#b76e00"></span>Exchange Intel</button>
+        <button type="button"><span class="nav-dot" style="background:#6750a4"></span>Wallet Paths</button>
+      </nav>
+      <div class="sidebar-foot">
+        <span>ClickHouse: source of truth</span>
+        <span>Neo4j: visual graph layer</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <form class="search" id="searchForm">
+          <input class="input" id="walletInput" name="address" autocomplete="off" placeholder="TRON wallet address" spellcheck="false">
+          <select class="select" id="depthInput" name="depth" aria-label="Depth">
+            <option value="1">Depth 1</option>
+            <option value="2">Depth 2</option>
+            <option value="3" selected>Depth 3</option>
+            <option value="4">Depth 4</option>
+            <option value="5">Depth 5</option>
+          </select>
+          <select class="select" id="limitInput" name="limit" aria-label="Limit">
+            <option value="100">100 edges</option>
+            <option value="250">250 edges</option>
+            <option value="500" selected>500 edges</option>
+            <option value="1000">1000 edges</option>
+          </select>
+          <select class="select" id="windowInput" name="window" aria-label="Activity window">
+            <option value="0" selected>All indexed</option>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+            <option value="365">1 year</option>
+            <option value="1825">5 years</option>
+            <option value="3650">10 years</option>
+          </select>
+          <button class="primary" id="searchButton" type="submit">Trace</button>
+        </form>
+        <div class="topbar-actions">
+          <a id="networkHome" class="network-home" href="/?network=tron" hidden>Networks</a>
+          <div class="status" id="statusText"><span class="pulse"></span>Ready</div>
+        </div>
+      </header>
+
+      <section class="content">
+        <div class="workspace">
+          <section class="metrics" aria-label="Wallet metrics">
+            <div class="metric"><span>Nodes</span><strong id="metricNodes">0</strong></div>
+            <div class="metric"><span>Edges</span><strong id="metricEdges">0</strong></div>
+            <div class="metric"><span>Exchanges</span><strong id="metricExchanges">0</strong></div>
+            <div class="metric"><span>AML events</span><strong id="metricAmlEvents">0</strong></div>
+            <div class="metric"><span>Assets</span><strong id="metricAssets">0</strong></div>
+            <div class="metric"><span>Projected edges</span><strong id="metricNeo4j">0</strong></div>
+          </section>
+
+          <section class="panel graph-panel">
+            <div class="graph-toolbar">
+              <div class="graph-title">
+                <strong>Money Flow</strong>
+                <span id="activeAddress">No wallet loaded</span>
+              </div>
+              <label class="control">
+                Operation
+                <select class="select" id="operationFilter">
+                  <option value="all">All</option>
+                </select>
+              </label>
+              <label class="control">
+                <input id="exchangeOnly" type="checkbox">
+                Exchange only
+              </label>
+            </div>
+            <div class="graph-wrap" id="graphWrap">
+              <svg class="flow-svg" id="flowSvg" role="img" aria-label="Wallet flow graph"></svg>
+              <div class="empty" id="emptyState">Enter a wallet address to load the flow graph.</div>
+            </div>
+          </section>
+        </div>
+
+        <aside class="aside">
+          <div class="inspector-tabs" role="tablist" aria-label="Investigation panels">
+            <button class="inspector-tab" type="button" role="tab" data-inspector-tab="fingerprint">Fingerprint</button>
+            <button class="inspector-tab" type="button" role="tab" data-inspector-tab="flows">Flows</button>
+            <button class="inspector-tab" type="button" role="tab" data-inspector-tab="identity">Identity</button>
+            <button class="inspector-tab active" type="button" role="tab" data-inspector-tab="holdings" aria-selected="true">Holdings</button>
+            <button class="inspector-tab" type="button" role="tab" data-inspector-tab="quality">Quality</button>
+            <button class="inspector-tab" type="button" role="tab" data-inspector-tab="node">Node</button>
+            <button class="inspector-tab" type="button" role="tab" data-inspector-tab="exchanges">Exchanges</button>
+            <button class="inspector-tab" type="button" role="tab" data-inspector-tab="paths">Paths</button>
+          </div>
+
+          <div class="inspector-body">
+          <section class="panel inspector-panel" data-inspector-panel="fingerprint" role="tabpanel">
+            <div class="panel-head">
+              <strong>Fingerprint</strong>
+              <span class="badge" id="fingerprintBadge">None</span>
+            </div>
+            <div class="panel-body">
+              <div class="kv">
+                <div class="kv-row"><span>Identity</span><strong id="walletIdentity">-</strong></div>
+                <div class="kv-row"><span>Behavior</span><strong id="walletBehavior">-</strong></div>
+                <div class="kv-row"><span>Transfers</span><strong id="walletTransfers">-</strong></div>
+                <div class="kv-row"><span>Swap / Bridge</span><strong id="walletDefi">-</strong></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel inspector-panel" data-inspector-panel="flows" role="tabpanel">
+            <div class="panel-head">
+              <strong>Fund Flow Activity</strong>
+              <span class="badge" id="activityBadge">No activity</span>
+            </div>
+            <div class="panel-body">
+              <div class="kv">
+                <div class="kv-row"><span>Incoming / Outgoing</span><strong id="flowDirections">-</strong></div>
+                <div class="kv-row"><span>Senders / Receivers</span><strong id="flowCounterparties">-</strong></div>
+                <div class="kv-row"><span>Window</span><strong id="flowWindow">-</strong></div>
+                <div class="kv-row"><span>Semantic events</span><strong id="flowEventCount">0</strong></div>
+              </div>
+              <div class="section-label">Operations</div>
+              <div class="list" id="operationSummary"></div>
+              <div class="section-label">Flow Trend</div>
+              <div class="trend-list" id="flowTrend"></div>
+              <div class="section-label">Outgoing To</div>
+              <div class="list" id="outgoingCounterparties"></div>
+              <div class="section-label">Incoming From</div>
+              <div class="list" id="incomingCounterparties"></div>
+              <div class="section-label">AML Activity Evidence</div>
+              <div class="list" id="semanticEventList"></div>
+            </div>
+          </section>
+
+          <section class="panel inspector-panel" data-inspector-panel="identity" role="tabpanel">
+            <div class="panel-head">
+              <strong>Entity Intelligence</strong>
+              <span class="badge" id="intelligenceBadge">Unattributed</span>
+            </div>
+            <div class="panel-body">
+              <div class="kv">
+                <div class="kv-row"><span>Entity</span><strong id="intelligenceEntity">-</strong></div>
+                <div class="kv-row"><span>Role</span><strong id="intelligenceRole">-</strong></div>
+                <div class="kv-row"><span>Clusters</span><strong id="intelligenceClusters">0</strong></div>
+                <div class="kv-row"><span>Pending review</span><strong id="intelligencePending">0</strong></div>
+              </div>
+              <div class="list" id="intelligenceClaims"></div>
+            </div>
+          </section>
+
+          <section class="panel inspector-panel active" data-inspector-panel="holdings" role="tabpanel">
+            <div class="panel-head">
+              <strong>Holdings</strong>
+              <span class="badge" id="holdingsBadge">No assets</span>
+            </div>
+            <div class="panel-body">
+              <div class="kv">
+                <div class="kv-row"><span>TRX</span><strong id="nativeBalance">-</strong></div>
+                <div class="kv-row"><span>Assets</span><strong id="assetCount">-</strong></div>
+                <div class="kv-row"><span>Metadata</span><strong id="assetMetadata">-</strong></div>
+              </div>
+              <div class="list" id="holdingsList"></div>
+            </div>
+          </section>
+
+          <section class="panel inspector-panel" data-inspector-panel="quality" role="tabpanel">
+            <div class="panel-head">
+              <strong>Data Quality</strong>
+              <span class="badge" id="qualityBadge">No data</span>
+            </div>
+            <div class="panel-body">
+              <div class="kv">
+                <div class="kv-row"><span>Observed</span><strong id="qualityObserved">-</strong></div>
+                <div class="kv-row"><span>Holdings</span><strong id="qualityHoldings">-</strong></div>
+                <div class="kv-row"><span>Sample</span><strong id="qualitySample">-</strong></div>
+              </div>
+              <div class="list" id="qualityWarnings"></div>
+            </div>
+          </section>
+
+          <section class="panel inspector-panel" data-inspector-panel="node" role="tabpanel">
+            <div class="panel-head">
+              <strong>Selected Node</strong>
+              <span class="badge" id="nodeBadge">None</span>
+            </div>
+            <div class="panel-body">
+              <div class="kv" id="nodeDetails">
+                <div class="kv-row"><span>Address</span><strong class="mono">-</strong></div>
+                <div class="kv-row"><span>Type</span><strong>-</strong></div>
+                <div class="kv-row"><span>Entity</span><strong>-</strong></div>
+                <div class="kv-row"><span>Exchange</span><strong>-</strong></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel inspector-panel" data-inspector-panel="exchanges" role="tabpanel">
+            <div class="panel-head">
+              <strong>Exchange Interactions</strong>
+              <span class="badge warn" id="exchangeCount">0</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Exchange</th>
+                    <th>Dir</th>
+                    <th>Op</th>
+                    <th>Amount</th>
+                  </tr>
+                </thead>
+                <tbody id="exchangeTable">
+                  <tr><td colspan="4">-</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel drawer inspector-panel" data-inspector-panel="paths" role="tabpanel">
+            <div class="panel-head">
+              <strong>Wallet Paths</strong>
+              <a class="badge" id="neo4jLink" href="#" target="_blank" rel="noreferrer">Browser</a>
+            </div>
+            <div class="panel-body">
+              <form class="path-form" id="pathForm">
+                <div class="path-grid">
+                  <input class="input" id="pathSourceInput" autocomplete="off" placeholder="Source wallet" spellcheck="false">
+                  <input class="input" id="pathTargetInput" autocomplete="off" placeholder="Target wallet" spellcheck="false">
+                </div>
+                <div class="path-actions">
+                  <select class="select" id="pathDepthInput" aria-label="Path depth">
+                    <option value="1">1 hop</option>
+                    <option value="2">2 hops</option>
+                    <option value="3">3 hops</option>
+                    <option value="4">4 hops</option>
+                    <option value="5">5 hops</option>
+                    <option value="6">6 hops</option>
+                    <option value="7">7 hops</option>
+                    <option value="8">8 hops</option>
+                    <option value="9">9 hops</option>
+                    <option value="10" selected>10 hops</option>
+                  </select>
+                  <select class="select" id="pathDirectionInput" aria-label="Path direction">
+                    <option value="outgoing" selected>Outgoing</option>
+                    <option value="any">Any direction</option>
+                    <option value="incoming">Incoming</option>
+                  </select>
+                  <button class="secondary" id="pathButton" type="submit">Find Path</button>
+                </div>
+              </form>
+              <div class="path-summary" id="pathSummary">No wallet path search loaded.</div>
+              <div class="list" id="pathList" style="margin-bottom:12px"></div>
+              <button class="secondary" id="projectButton" type="button" style="width:100%;margin-bottom:12px">Project visible graph to Neo4j</button>
+              <div class="kv" style="margin-bottom:12px">
+                <div class="kv-row"><span>Wallet nodes</span><strong id="neoWalletNodes">0</strong></div>
+                <div class="kv-row"><span>Transfer edges</span><strong id="neoTransferEdges">0</strong></div>
+                <div class="kv-row"><span>Exchange edges</span><strong id="neoExchangeEdges">0</strong></div>
+              </div>
+              <pre class="cypher" id="cypherBox">-</pre>
+            </div>
+          </section>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const state = {
+      investigation: null,
+      graph: null,
+      holdings: null,
+      fingerprint: null,
+      activity: null,
+      intelligence: null,
+      dataQuality: null,
+      pathResult: null,
+      inspectorTab: 'holdings',
+      selectedNodeId: null,
+      filter: {
+        operation: 'all',
+        exchangeOnly: false
+      }
+    };
+
+    const els = {
+      form: document.getElementById('searchForm'),
+      wallet: document.getElementById('walletInput'),
+      depth: document.getElementById('depthInput'),
+      limit: document.getElementById('limitInput'),
+      window: document.getElementById('windowInput'),
+      button: document.getElementById('searchButton'),
+      status: document.getElementById('statusText'),
+      activeAddress: document.getElementById('activeAddress'),
+      svg: document.getElementById('flowSvg'),
+      graphWrap: document.getElementById('graphWrap'),
+      empty: document.getElementById('emptyState'),
+      operationFilter: document.getElementById('operationFilter'),
+      exchangeOnly: document.getElementById('exchangeOnly'),
+      pathForm: document.getElementById('pathForm'),
+      pathSource: document.getElementById('pathSourceInput'),
+      pathTarget: document.getElementById('pathTargetInput'),
+      pathDepth: document.getElementById('pathDepthInput'),
+      pathDirection: document.getElementById('pathDirectionInput'),
+      pathButton: document.getElementById('pathButton'),
+      projectButton: document.getElementById('projectButton'),
+      pathSummary: document.getElementById('pathSummary'),
+      pathList: document.getElementById('pathList'),
+      inspectorTabs: Array.from(document.querySelectorAll('[data-inspector-tab]')),
+      inspectorPanels: Array.from(document.querySelectorAll('[data-inspector-panel]')),
+      toast: document.getElementById('toast')
+    };
+
+    els.form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      loadInvestigation();
+    });
+
+    els.pathForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      loadWalletPath();
+    });
+
+    els.projectButton.addEventListener('click', () => {
+      projectVisibleGraph();
+    });
+
+    els.operationFilter.addEventListener('change', () => {
+      state.filter.operation = els.operationFilter.value;
+      renderAll();
+    });
+
+    els.exchangeOnly.addEventListener('change', () => {
+      state.filter.exchangeOnly = els.exchangeOnly.checked;
+      renderAll();
+    });
+
+    els.inspectorTabs.forEach((button) => {
+      button.addEventListener('click', () => {
+        setInspectorTab(button.dataset.inspectorTab);
+      });
+    });
+
+    window.addEventListener('resize', () => {
+      if (state.graph) {
+        renderGraph();
+      }
+    });
+
+    renderInspectorTabs();
+
+    document.getElementById('networkHome').hidden = location.pathname !== '/networks/tron/';
+    const initialAddress = new URLSearchParams(location.search).get('address');
+    if (initialAddress) {
+      els.wallet.value = initialAddress;
+      els.pathSource.value = initialAddress;
+      // Defer until the existing page has finished initializing its renderer.
+      queueMicrotask(() => els.form.requestSubmit());
+    }
+
+    async function loadInvestigation() {
+      const address = els.wallet.value.trim();
+      const depth = Number(els.depth.value);
+      const limit = Number(els.limit.value);
+      const windowDays = Number(els.window.value || 0);
+
+      if (!address) {
+        showToast('Wallet address is required.');
+        return;
+      }
+
+      setLoading(true);
+
+      try {
+        const query = new URLSearchParams({
+          depth: String(depth),
+          limit: String(limit),
+          window_days: String(windowDays),
+          top_counterparties: '25',
+          max_events: '20000',
+          holdings_limit: '100'
+        });
+        const response = await fetch(`/api/tron/wallet/${encodeURIComponent(address)}/investigation?${query.toString()}`, {
+          headers: { accept: 'application/json' }
+        });
+
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || `Request failed with ${response.status}`);
+        }
+
+        state.investigation = await response.json();
+        state.graph = state.investigation.graph;
+        state.holdings = state.investigation.holdings;
+        state.fingerprint = state.investigation.fingerprint;
+        state.activity = state.investigation.activity;
+        state.intelligence = state.investigation.intelligence;
+        state.dataQuality = state.investigation.data_quality;
+        state.pathResult = null;
+        state.selectedNodeId = state.graph.address;
+        els.activeAddress.textContent = state.graph.address;
+        if (!els.pathSource.value.trim()) {
+          els.pathSource.value = state.graph.address;
+        }
+        hydrateOperationFilter();
+        renderAll();
+        showToast('Investigation loaded.');
+      } catch (error) {
+        showToast(error.message || 'Failed to load investigation.');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function loadWalletPath() {
+      const source = els.pathSource.value.trim() || els.wallet.value.trim();
+      const target = els.pathTarget.value.trim();
+      const maxDepth = Number(els.pathDepth.value || 10);
+      const direction = els.pathDirection.value || 'outgoing';
+
+      if (!source || !target) {
+        showToast('Source and target wallets are required.');
+        return;
+      }
+
+      setPathLoading(true);
+
+      try {
+        const query = new URLSearchParams({
+          max_depth: String(maxDepth),
+          limit: '20',
+          per_address_limit: '500',
+          direction
+        });
+        const response = await fetch(`/api/tron/wallet/${encodeURIComponent(source)}/paths/${encodeURIComponent(target)}?${query.toString()}`, {
+          headers: { accept: 'application/json' }
+        });
+
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || `Request failed with ${response.status}`);
+        }
+
+        state.pathResult = await response.json();
+        state.graph = state.pathResult;
+        state.selectedNodeId = state.pathResult.source_address;
+        state.inspectorTab = 'paths';
+        els.activeAddress.textContent = `${shortAddress(state.pathResult.source_address)} -> ${shortAddress(state.pathResult.target_address)}`;
+        hydrateOperationFilter();
+        renderAll();
+        showToast(state.pathResult.path_count ? 'Wallet path loaded.' : 'No path found.');
+      } catch (error) {
+        showToast(error.message || 'Failed to load wallet path.');
+      } finally {
+        setPathLoading(false);
+      }
+    }
+
+    async function projectVisibleGraph() {
+      const walletAddress = els.wallet.value.trim();
+
+      if (!state.graph || (!state.pathResult && !walletAddress)) {
+        showToast('Load a wallet graph or wallet path first.');
+        return;
+      }
+
+      els.projectButton.disabled = true;
+      els.projectButton.textContent = 'Projecting...';
+
+      try {
+        let endpoint;
+
+        if (state.pathResult) {
+          const source = state.pathResult.source_address;
+          const target = state.pathResult.target_address;
+          const query = new URLSearchParams({
+            max_depth: String(state.pathResult.max_depth || 10),
+            limit: '20',
+            per_address_limit: '500',
+            direction: state.pathResult.direction || 'outgoing'
+          });
+          endpoint = `/api/tron/wallet/${encodeURIComponent(source)}/paths/${encodeURIComponent(target)}/neo4j/import?${query.toString()}`;
+        } else {
+          const query = new URLSearchParams({
+            depth: String(Number(els.depth.value || 3)),
+            limit: String(Number(els.limit.value || 500))
+          });
+          endpoint = `/api/tron/wallet/${encodeURIComponent(walletAddress)}/neo4j/import?${query.toString()}`;
+        }
+
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { accept: 'application/json' }
+        });
+
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || `Request failed with ${response.status}`);
+        }
+
+        const projected = await response.json();
+        state.graph = projected;
+        if (state.pathResult) {
+          state.pathResult = projected;
+        } else if (state.investigation) {
+          state.investigation.graph = projected;
+        }
+        renderAll();
+        showToast('Visible graph projected to Neo4j.');
+      } catch (error) {
+        showToast(error.message || 'Failed to project graph to Neo4j.');
+      } finally {
+        els.projectButton.disabled = false;
+        els.projectButton.textContent = 'Project visible graph to Neo4j';
+      }
+    }
+
+    function setLoading(loading) {
+      els.button.disabled = loading;
+      els.button.textContent = loading ? 'Tracing...' : 'Trace';
+      els.status.innerHTML = `<span class="pulse" style="background:${loading ? '#b76e00' : '#2f7d48'}"></span>${loading ? 'Loading' : 'Ready'}`;
+    }
+
+    function setPathLoading(loading) {
+      els.pathButton.disabled = loading;
+      els.pathButton.textContent = loading ? 'Searching...' : 'Find Path';
+      els.status.innerHTML = `<span class="pulse" style="background:${loading ? '#b76e00' : '#2f7d48'}"></span>${loading ? 'Searching path' : 'Ready'}`;
+    }
+
+    function hydrateOperationFilter() {
+      const graph = state.graph;
+      const operations = Array.from(new Set((graph.edges || []).map((edge) => edge.operation_type || edge.transfer_type || 'transfer'))).sort();
+      els.operationFilter.innerHTML = '<option value="all">All</option>' + operations.map((op) => `<option value="${escapeHtml(op)}">${escapeHtml(titleCase(op))}</option>`).join('');
+      state.filter.operation = 'all';
+    }
+
+    function renderAll() {
+      renderInspectorTabs();
+      renderMetrics();
+      renderFingerprint();
+      renderActivity();
+      renderIntelligence();
+      renderHoldings();
+      renderDataQuality();
+      renderGraph();
+      renderExchangeTable();
+      renderNodeDetails();
+      renderNeo4j();
+      renderPathResult();
+    }
+
+    function setInspectorTab(tabName) {
+      state.inspectorTab = tabName || 'holdings';
+      renderInspectorTabs();
+    }
+
+    function renderInspectorTabs() {
+      els.inspectorTabs.forEach((button) => {
+        const active = button.dataset.inspectorTab === state.inspectorTab;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+
+      els.inspectorPanels.forEach((panel) => {
+        const active = panel.dataset.inspectorPanel === state.inspectorTab;
+        panel.classList.toggle('active', active);
+        panel.toggleAttribute('hidden', !active);
+      });
+    }
+
+    function filteredEdges() {
+      if (!state.graph) {
+        return [];
+      }
+
+      const nodesById = new Map((state.graph.nodes || []).map((node) => [node.id, node]));
+
+      return (state.graph.edges || []).filter((edge) => {
+        const operation = edge.operation_type || edge.transfer_type || 'transfer';
+        const opMatch = state.filter.operation === 'all' || operation === state.filter.operation;
+        const from = nodesById.get(edge.from);
+        const to = nodesById.get(edge.to);
+        const exchangeMatch = !state.filter.exchangeOnly || Boolean(edge.exchange_name || from?.exchange_name || to?.exchange_name);
+
+        return opMatch && exchangeMatch;
+      });
+    }
+
+    function filteredNodes(edges) {
+      if (!state.graph) {
+        return [];
+      }
+
+      if (!edges.length) {
+        return state.graph.nodes || [];
+      }
+
+      const ids = new Set();
+      edges.forEach((edge) => {
+        ids.add(edge.from);
+        ids.add(edge.to);
+      });
+
+      return (state.graph.nodes || []).filter((node) => ids.has(node.id));
+    }
+
+    function renderMetrics() {
+      const graph = state.graph;
+      const edges = filteredEdges();
+      const nodes = filteredNodes(edges);
+      const exchangeNames = new Set();
+
+      if (graph) {
+        (graph.exchange_interactions || []).forEach((item) => exchangeNames.add(item.exchange_name));
+        (graph.nodes || []).forEach((node) => {
+          if (node.exchange_name) {
+            exchangeNames.add(node.exchange_name);
+          }
+        });
+      }
+
+      document.getElementById('metricNodes').textContent = String(nodes.length);
+      document.getElementById('metricEdges').textContent = String(edges.length);
+      document.getElementById('metricExchanges').textContent = String(exchangeNames.size);
+      document.getElementById('metricAmlEvents').textContent = state.pathResult
+        ? '-'
+        : String(state.activity?.summary?.semantic_event_count || 0);
+      document.getElementById('metricAssets').textContent = state.pathResult
+        ? '-'
+        : String(state.holdings?.total_asset_count || 0);
+      document.getElementById('metricNeo4j').textContent = String(graph?.neo4j?.imported_transfer_edges || 0);
+    }
+
+    function renderFingerprint() {
+      const fingerprint = state.fingerprint;
+      const badge = document.getElementById('fingerprintBadge');
+
+      if (!fingerprint) {
+        badge.textContent = 'None';
+        badge.className = 'badge';
+        document.getElementById('walletIdentity').textContent = '-';
+        document.getElementById('walletBehavior').textContent = '-';
+        document.getElementById('walletTransfers').textContent = '-';
+        document.getElementById('walletDefi').textContent = '-';
+        return;
+      }
+
+      badge.textContent = `${Math.round(Number(fingerprint.confidence || 0) * 100)}%`;
+      badge.className = 'badge ok';
+      document.getElementById('walletIdentity').textContent = titleCase(fingerprint.identity?.identity_type || '-');
+      document.getElementById('walletBehavior').textContent = fingerprint.fingerprint_label || titleCase(fingerprint.wallet_type || '-');
+      document.getElementById('walletTransfers').textContent = `${fingerprint.flows?.total_transfers || 0} / ${fingerprint.flows?.unique_transactions || 0} tx`;
+      document.getElementById('walletDefi').textContent = `${percent(fingerprint.behavior?.swap_ratio)} / ${percent(fingerprint.behavior?.bridge_ratio)}`;
+    }
+
+    function renderActivity() {
+      const activity = state.activity;
+      const fingerprint = state.fingerprint;
+      const badge = document.getElementById('activityBadge');
+      const operationSummary = document.getElementById('operationSummary');
+      const trendList = document.getElementById('flowTrend');
+      const outgoingList = document.getElementById('outgoingCounterparties');
+      const incomingList = document.getElementById('incomingCounterparties');
+      const eventList = document.getElementById('semanticEventList');
+
+      if (!activity) {
+        badge.textContent = 'No activity';
+        badge.className = 'badge';
+        document.getElementById('flowDirections').textContent = '-';
+        document.getElementById('flowCounterparties').textContent = '-';
+        document.getElementById('flowWindow').textContent = '-';
+        document.getElementById('flowEventCount').textContent = '0';
+        operationSummary.innerHTML = '';
+        trendList.innerHTML = '';
+        outgoingList.innerHTML = '';
+        incomingList.innerHTML = '';
+        eventList.innerHTML = '';
+        return;
+      }
+
+      const summary = activity.summary || {};
+      const flows = fingerprint?.flows || {};
+      const totalTransfers = Number(summary.incoming_transfers || 0) + Number(summary.outgoing_transfers || 0);
+      const eventCount = Number(summary.semantic_event_count || 0);
+      badge.textContent = `${totalTransfers} flow${totalTransfers === 1 ? '' : 's'}`;
+      badge.className = `badge ${totalTransfers ? 'ok' : ''}`;
+      document.getElementById('flowDirections').textContent = `${summary.incoming_transfers || 0} / ${summary.outgoing_transfers || 0}`;
+      document.getElementById('flowCounterparties').textContent = `${flows.unique_senders || 0} / ${flows.unique_receivers || 0}`;
+      const windowLabel = Number(activity.window_days) === 0 ? 'All history' : String(activity.window_days) + ' days';
+      document.getElementById('flowWindow').textContent = windowLabel + ' / ' + titleCase(activity.bucket_unit || '-');
+      document.getElementById('flowEventCount').textContent = activity.semantic_events_truncated
+        ? `${eventCount} (${activity.semantic_event_limit} shown)`
+        : String(eventCount);
+
+      const operations = [
+        ['Swap', summary.swap_transactions],
+        ['Bridge', summary.bridge_transactions],
+        ['Liquidity add', summary.liquidity_add_transactions],
+        ['Liquidity remove', summary.liquidity_remove_transactions],
+        ['Mint', summary.mint_transactions],
+        ['Burn', summary.burn_transactions],
+        ['Contract call', summary.contract_call_transactions]
+      ];
+      operationSummary.innerHTML = operations.map(([label, count]) => `
+        <div class="list-item"><span>${escapeHtml(label)}</span><strong>${Number(count || 0)} tx</strong></div>
+      `).join('');
+
+      const trend = (activity.trend || []).slice(-30);
+      const peak = Math.max(1, ...trend.flatMap((bucket) => [
+        Number(bucket.incoming_transfers || 0),
+        Number(bucket.outgoing_transfers || 0)
+      ]));
+      trendList.innerHTML = trend.length
+        ? trend.map((bucket) => {
+            const incoming = Number(bucket.incoming_transfers || 0);
+            const outgoing = Number(bucket.outgoing_transfers || 0);
+            const incomingWidth = Math.max(2, Math.round(incoming / peak * 100));
+            const outgoingWidth = Math.max(2, Math.round(outgoing / peak * 100));
+            return `
+              <div class="trend-row">
+                <time>${escapeHtml(formatBucket(bucket.bucket_start_unix_ms, activity.bucket_unit))}</time>
+                <span class="trend-bars">
+                  <span class="trend-bar" style="width:${incomingWidth}%"></span>
+                  <span class="trend-bar outgoing" style="width:${outgoingWidth}%"></span>
+                </span>
+                <strong>${incoming} / ${outgoing}</strong>
+              </div>`;
+          }).join('')
+        : '<div class="list-item"><span>No flow buckets in this window</span><strong>-</strong></div>';
+
+      outgoingList.innerHTML = renderCounterpartyItems(fingerprint?.receivers || []);
+      incomingList.innerHTML = renderCounterpartyItems(fingerprint?.senders || []);
+
+      const events = activity.recent_semantic_events || [];
+      eventList.innerHTML = events.length
+        ? events.map((event) => {
+            const assets = [event.asset_in, event.asset_out].filter(Boolean).map(shortAddress).join(' -> ') || '-';
+            const detail = [event.protocol, assets, formatBucket(event.timestamp, 'day')].filter(Boolean).join(' / ');
+            return `
+              <div class="list-item">
+                <span>${escapeHtml(titleCase(event.event_type || 'event'))}<small>${escapeHtml(detail)}<br>${escapeHtml(shortHash(event.tx_hash || ''))}</small></span>
+                <strong>${Math.round(Number(event.confidence || 0) * 100)}%</strong>
+              </div>`;
+          }).join('')
+        : '<div class="list-item"><span>No semantic AML events in this window</span><strong>-</strong></div>';
+    }
+
+    function renderCounterpartyItems(items) {
+      return items.length
+        ? items.slice(0, 15).map((item) => {
+            const identity = item.identity?.entity_name || item.identity?.exchange_name || item.relationship_label || 'wallet';
+            return `
+              <div class="list-item">
+                <span class="mono">${escapeHtml(shortAddress(item.address || ''))}<small>${escapeHtml(identity)} / ${item.unique_transactions || 0} tx</small></span>
+                <strong>${percent(item.share_of_wallet_transfers)}</strong>
+              </div>`;
+          }).join('')
+        : '<div class="list-item"><span>No counterparties in this window</span><strong>-</strong></div>';
+    }
+
+    function renderIntelligence() {
+      const intelligence = state.intelligence;
+      const badge = document.getElementById('intelligenceBadge');
+      const claims = document.getElementById('intelligenceClaims');
+
+      if (!intelligence) {
+        badge.textContent = 'Unattributed';
+        badge.className = 'badge';
+        document.getElementById('intelligenceEntity').textContent = '-';
+        document.getElementById('intelligenceRole').textContent = '-';
+        document.getElementById('intelligenceClusters').textContent = '0';
+        document.getElementById('intelligencePending').textContent = '0';
+        claims.innerHTML = '';
+        return;
+      }
+
+      const entity = intelligence.active_entity;
+      const exchange = intelligence.active_exchange;
+      const clusters = intelligence.active_clusters || [];
+      const pending = Number(intelligence.pending_review_count || 0);
+      badge.textContent = entity || exchange ? 'Attributed' : pending ? 'Review pending' : 'Unattributed';
+      badge.className = `badge ${entity || exchange ? 'ok' : pending ? 'warn' : ''}`;
+      document.getElementById('intelligenceEntity').textContent = entity?.entity_name || exchange?.exchange_name || '-';
+      document.getElementById('intelligenceRole').textContent = titleCase(exchange?.address_role || clusters[0]?.address_role || entity?.entity_type || '-');
+      document.getElementById('intelligenceClusters').textContent = String(clusters.length);
+      document.getElementById('intelligencePending').textContent = String(pending);
+
+      const entityClaims = (intelligence.entity_claims || []).map((claim) => ({
+        title: claim.entity_name || claim.entity_id,
+        detail: `${titleCase(claim.review_status)} / ${claim.source_name || claim.source_id}`,
+        trust: claim.trust_tier
+      }));
+      const clusterClaims = (intelligence.cluster_claims || []).map((claim) => ({
+        title: `${titleCase(claim.address_role)} cluster`,
+        detail: `${titleCase(claim.review_status)} / ${claim.source_name || claim.source_id}`,
+        trust: claim.trust_tier
+      }));
+      const items = [...entityClaims, ...clusterClaims].slice(0, 10);
+      claims.innerHTML = items.length
+        ? items.map((item) => `
+          <div class="list-item">
+            <span>${escapeHtml(item.title)}<small>${escapeHtml(item.detail)}</small></span>
+            <strong>${escapeHtml(titleCase(item.trust || '-'))}</strong>
+          </div>
+        `).join('')
+        : '<div class="list-item"><span>No submitted identity claims</span><strong>-</strong></div>';
+    }
+
+    function renderHoldings() {
+      const holdings = state.holdings;
+      const badge = document.getElementById('holdingsBadge');
+      const list = document.getElementById('holdingsList');
+
+      if (!holdings) {
+        badge.textContent = 'No assets';
+        badge.className = 'badge';
+        document.getElementById('nativeBalance').textContent = '-';
+        document.getElementById('assetCount').textContent = '-';
+        document.getElementById('assetMetadata').textContent = '-';
+        list.innerHTML = '';
+        return;
+      }
+
+      const assets = holdings.assets || [];
+      const total = Number(holdings.total_asset_count || assets.length);
+      const gaps = Number(holdings.metadata_gap_count || 0);
+      const native = holdings.native_balance;
+
+      badge.textContent = `${total} asset${total === 1 ? '' : 's'}`;
+      badge.className = `badge ${total ? 'ok' : ''}`;
+      document.getElementById('nativeBalance').textContent = native
+        ? `${formatDecimal(native.balance_decimal)} TRX`
+        : '0 TRX';
+      document.getElementById('assetCount').textContent = `${assets.length}/${total} shown`;
+      document.getElementById('assetMetadata').textContent = gaps ? `${gaps} gap${gaps === 1 ? '' : 's'}` : 'Complete';
+
+      list.innerHTML = assets.length
+        ? assets.map((asset) => `
+          <div class="list-item">
+            <span>${escapeHtml(assetDisplayName(asset))}</span>
+            <strong>${escapeHtml(formatAssetHolding(asset))}</strong>
+          </div>
+        `).join('')
+        : '<div class="list-item"><span>No indexed holdings</span><strong>-</strong></div>';
+    }
+
+    function renderDataQuality() {
+      const quality = state.dataQuality;
+      const badge = document.getElementById('qualityBadge');
+      const warnings = document.getElementById('qualityWarnings');
+
+      if (!quality) {
+        badge.textContent = 'No data';
+        badge.className = 'badge';
+        document.getElementById('qualityObserved').textContent = '-';
+        document.getElementById('qualityHoldings').textContent = '-';
+        document.getElementById('qualitySample').textContent = '-';
+        warnings.innerHTML = '';
+        return;
+      }
+
+      const warningCount = (quality.warnings || []).length;
+      badge.textContent = warningCount ? `${warningCount} warning${warningCount === 1 ? '' : 's'}` : 'Clean';
+      badge.className = `badge ${warningCount ? 'warn' : 'ok'}`;
+      document.getElementById('qualityObserved').textContent = `${quality.observed_transfers || 0} transfers`;
+      document.getElementById('qualityHoldings').textContent = `${quality.holdings_asset_count || 0} assets`;
+      document.getElementById('qualitySample').textContent = quality.fingerprint_is_truncated
+        ? `${quality.fingerprint_event_limit} capped`
+        : `${quality.fingerprint_event_limit} limit`;
+
+      warnings.innerHTML = warningCount
+        ? quality.warnings.map((warning) => `<div class="list-item"><span>${escapeHtml(titleCase(warning))}</span><strong>check</strong></div>`).join('')
+        : '<div class="list-item"><span>No sampling warnings</span><strong>ok</strong></div>';
+    }
+
+    function renderGraph() {
+      const graph = state.graph;
+      const svg = els.svg;
+      const wrap = els.graphWrap;
+      const width = Math.max(760, wrap.clientWidth || 760);
+      const height = Math.max(520, wrap.clientHeight || 520);
+
+      svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+      if (!graph) {
+        svg.innerHTML = '';
+        els.empty.style.display = 'grid';
+        return;
+      }
+
+      const edges = filteredEdges();
+      const nodes = filteredNodes(edges);
+      const denseGraph = nodes.length > 60 || edges.length > 90;
+      const positions = layoutNodes(nodes, edges, graph.address, width, height);
+      els.empty.style.display = nodes.length ? 'none' : 'grid';
+
+      const marker = `
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#66736b"></path>
+          </marker>
+          <marker id="arrowExchange" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#087f77"></path>
+          </marker>
+        </defs>`;
+
+      const edgeMarkup = edges.map((edge, index) => {
+        const from = positions.get(edge.from);
+        const to = positions.get(edge.to);
+
+        if (!from || !to) {
+          return '';
+        }
+
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+        const curve = Math.min(90, Math.max(-90, (index % 5 - 2) * 18));
+        const cx = (from.x + to.x) / 2 - dy / 10 + curve;
+        const cy = (from.y + to.y) / 2 + dx / 10;
+        const isExchange = Boolean(edge.exchange_name || edge.exchange_flow_type);
+        const markerId = isExchange ? 'arrowExchange' : 'arrow';
+        const cls = ['edge', isExchange ? 'exchange' : '', denseGraph ? 'dense' : ''].filter(Boolean).join(' ');
+        const label = edge.exchange_flow_type || edge.operation_type || edge.transfer_type || 'flow';
+
+        return `
+          <path class="${cls}" d="M ${from.x} ${from.y} Q ${cx} ${cy} ${to.x} ${to.y}" marker-end="url(#${markerId})"></path>
+          ${denseGraph ? '' : `<text class="edge-label" x="${cx}" y="${cy - 6}">${escapeHtml(titleCase(label))}</text>`}
+        `;
+      }).join('');
+
+      const nodeMarkup = nodes.map((node) => {
+        const pos = positions.get(node.id);
+
+        if (!pos) {
+          return '';
+        }
+
+        const color = nodeColor(node);
+        const isRoot = node.id === graph.address;
+        const isSelected = state.selectedNodeId === node.id;
+        const isAttributed = Boolean(node.exchange_name || node.entity_name || node.cluster_id);
+        const radius = isRoot ? 20 : node.exchange_name ? (denseGraph ? 11 : 17) : denseGraph ? 5 : 14;
+        const showLabel = !denseGraph || isRoot || isSelected || isAttributed;
+        const classes = ['node', node.id === graph.address ? 'root' : '', state.selectedNodeId === node.id ? 'selected' : ''].filter(Boolean).join(' ');
+
+        return `
+          <g class="${classes}" data-node-id="${escapeAttr(node.id)}" transform="translate(${pos.x} ${pos.y})">
+            <circle r="${radius}" fill="${color}"></circle>
+            ${showLabel ? `<text class="node-label" y="${radius + 17}">${escapeHtml(shortAddress(node.label || node.id))}</text>` : ''}
+          </g>
+        `;
+      }).join('');
+
+      svg.innerHTML = marker + edgeMarkup + nodeMarkup;
+
+      svg.querySelectorAll('.node').forEach((el) => {
+        el.addEventListener('click', () => {
+          state.selectedNodeId = el.getAttribute('data-node-id');
+          state.inspectorTab = 'node';
+          renderAll();
+        });
+      });
+    }
+
+    function layoutNodes(nodes, edges, rootId, width, height) {
+      const positions = new Map();
+      const byId = new Map(nodes.map((node) => [node.id, node]));
+      const adjacency = new Map(nodes.map((node) => [node.id, []]));
+
+      edges.forEach((edge) => {
+        if (adjacency.has(edge.from) && adjacency.has(edge.to)) {
+          adjacency.get(edge.from).push(edge.to);
+          adjacency.get(edge.to).push(edge.from);
+        }
+      });
+
+      const root = byId.has(rootId) ? rootId : nodes[0]?.id;
+
+      if (!root) {
+        return positions;
+      }
+
+      const levels = new Map([[root, 0]]);
+      const queue = [root];
+
+      while (queue.length) {
+        const current = queue.shift();
+        const level = levels.get(current);
+
+        for (const next of adjacency.get(current) || []) {
+          if (!levels.has(next)) {
+            levels.set(next, level + 1);
+            queue.push(next);
+          }
+        }
+      }
+
+      nodes.forEach((node) => {
+        if (!levels.has(node.id)) {
+          levels.set(node.id, 3);
+        }
+      });
+
+      const grouped = new Map();
+      nodes.forEach((node) => {
+        const level = Math.min(4, levels.get(node.id) || 0);
+        if (!grouped.has(level)) {
+          grouped.set(level, []);
+        }
+        grouped.get(level).push(node);
+      });
+
+      const cx = width / 2;
+      const cy = height / 2;
+      positions.set(root, { x: cx, y: cy });
+
+      Array.from(grouped.entries()).forEach(([level, items]) => {
+        if (level === 0) {
+          return;
+        }
+
+        const radiusX = Math.min(width * 0.44, 125 + level * 90);
+        const radiusY = Math.min(height * 0.40, 90 + level * 68);
+        const offset = level % 2 ? -Math.PI / 5 : Math.PI / 7;
+
+        items.forEach((node, index) => {
+          const angle = offset + (Math.PI * 2 * index) / Math.max(1, items.length);
+          positions.set(node.id, {
+            x: clamp(cx + Math.cos(angle) * radiusX, 46, width - 46),
+            y: clamp(cy + Math.sin(angle) * radiusY, 46, height - 46)
+          });
+        });
+      });
+
+      return positions;
+    }
+
+    function renderExchangeTable() {
+      const tbody = document.getElementById('exchangeTable');
+      const count = document.getElementById('exchangeCount');
+      const rows = state.graph?.exchange_interactions || [];
+
+      count.textContent = String(rows.length);
+
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="4">-</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = rows.slice(0, 80).map((row) => `
+        <tr>
+          <td><strong>${escapeHtml(row.exchange_name || '-')}</strong><br><span class="mono">${escapeHtml(shortAddress(row.address || ''))}</span></td>
+          <td>${escapeHtml(row.direction || '-')}</td>
+          <td>${escapeHtml(titleCase(row.operation_type || '-'))}</td>
+          <td class="mono">${escapeHtml(formatAmount(row.amount))}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderNodeDetails() {
+      const graph = state.graph;
+      const node = (graph?.nodes || []).find((item) => item.id === state.selectedNodeId) || null;
+      const details = document.getElementById('nodeDetails');
+      const badge = document.getElementById('nodeBadge');
+
+      if (!node) {
+        badge.textContent = 'None';
+        badge.className = 'badge';
+        details.innerHTML = `
+          <div class="kv-row"><span>Address</span><strong class="mono">-</strong></div>
+          <div class="kv-row"><span>Type</span><strong>-</strong></div>
+          <div class="kv-row"><span>Entity</span><strong>-</strong></div>
+          <div class="kv-row"><span>Exchange</span><strong>-</strong></div>`;
+        return;
+      }
+
+      const badgeRisk = node.exchange_name ? '' : node.node_type === 'wallet' ? '' : 'warn';
+      badge.textContent = titleCase(node.exchange_role || node.node_type || 'node');
+      badge.className = `badge ${badgeRisk}`;
+
+      details.innerHTML = `
+        <div class="kv-row"><span>Address</span><strong class="mono">${escapeHtml(node.id)}</strong></div>
+        <div class="kv-row"><span>Type</span><strong>${escapeHtml(titleCase(node.node_type || '-'))}</strong></div>
+        <div class="kv-row"><span>Entity</span><strong>${escapeHtml(node.entity_name || node.entity_type || '-')}</strong></div>
+        <div class="kv-row"><span>Exchange</span><strong>${escapeHtml(exchangeLabel(node))}</strong></div>
+        <div class="kv-row"><span>Confidence</span><strong>${node.confidence == null ? '-' : Math.round(Number(node.confidence) * 100) + '%'}</strong></div>
+      `;
+    }
+
+    function renderPathResult() {
+      const result = state.pathResult;
+
+      if (!result) {
+        els.pathSummary.textContent = 'No wallet path search loaded.';
+        els.pathList.innerHTML = '';
+        return;
+      }
+
+      const depth = Number(result.max_depth || 10);
+      const searched = Number(result.searched_node_count || 0);
+      const truncated = result.truncated ? ' / capped' : '';
+      const direction = titleCase(result.direction || 'outgoing');
+      els.pathSummary.textContent = result.path_count
+        ? `${direction}: ${result.path_count} path(s), ${result.edges?.length || 0} edge(s), ${searched} node expansion(s)${truncated}.`
+        : `No ${direction.toLowerCase()} path found up to ${depth} hop(s), ${searched} node expansion(s)${truncated}.`;
+
+      const edgesById = new Map((result.edges || []).map((edge) => [edge.id, edge]));
+      els.pathList.innerHTML = (result.paths || []).length
+        ? result.paths.slice(0, 20).map((path) => {
+            const pathEdges = (path.edge_ids || []).map((edgeId) => edgesById.get(edgeId)).filter(Boolean);
+            const operations = Array.from(new Set(pathEdges.map((edge) => titleCase(edge.operation_type || edge.transfer_type || 'transfer')))).join(', ');
+            const tokens = Array.from(new Set(pathEdges.map((edge) => shortAddress(edge.token_address || '-')))).slice(0, 3).join(', ');
+            const tail = path.node_ids?.length ? path.node_ids.map(shortAddress).join(' -> ') : '-';
+
+            return `
+              <div class="list-item">
+                <span>${escapeHtml(tail)}<small>${escapeHtml(operations || '-')} / ${escapeHtml(tokens || '-')}</small></span>
+                <strong>${Number(path.hop_count || 0)} hop</strong>
+              </div>`;
+          }).join('')
+        : '<div class="list-item"><span>No path found</span><strong>-</strong></div>';
+    }
+
+    function renderNeo4j() {
+      const neo = state.graph?.neo4j;
+      document.getElementById('neoWalletNodes').textContent = String(neo?.imported_wallet_nodes || 0);
+      document.getElementById('neoTransferEdges').textContent = String(neo?.imported_transfer_edges || 0);
+      document.getElementById('neoExchangeEdges').textContent = String(neo?.imported_exchange_interactions || 0);
+      document.getElementById('cypherBox').textContent = neo?.cypher || '-';
+
+      const link = document.getElementById('neo4jLink');
+      if (neo?.browser_url) {
+        link.href = neo.browser_url;
+        link.style.pointerEvents = 'auto';
+        link.style.opacity = '1';
+      } else {
+        link.href = '#';
+        link.style.pointerEvents = 'none';
+        link.style.opacity = '0.55';
+      }
+    }
+
+    function nodeColor(node) {
+      if (node.exchange_name || node.node_type === 'exchange') {
+        return '#087f77';
+      }
+
+      if (node.node_type === 'bridge') {
+        return '#6750a4';
+      }
+
+      if (node.node_type === 'mint') {
+        return '#2f7d48';
+      }
+
+      if (node.node_type === 'burn') {
+        return '#b12a34';
+      }
+
+      if (node.node_type === 'protocol') {
+        return '#b76e00';
+      }
+
+      return '#5f6f66';
+    }
+
+    function exchangeLabel(node) {
+      if (!node.exchange_name) {
+        return '-';
+      }
+
+      return `${node.exchange_name}${node.exchange_role ? ' / ' + node.exchange_role : ''}`;
+    }
+
+    function percent(value) {
+      return `${Math.round(Number(value || 0) * 100)}%`;
+    }
+
+    function shortAddress(value) {
+      if (!value) {
+        return '-';
+      }
+
+      if (value.length <= 14) {
+        return value;
+      }
+
+      return `${value.slice(0, 6)}...${value.slice(-6)}`;
+    }
+
+    function shortHash(value) {
+      if (!value) {
+        return '-';
+      }
+
+      return String(value).slice(0, 12);
+    }
+
+    function formatBucket(value, unit) {
+      const timestamp = Number(value || 0);
+      if (!timestamp) {
+        return '-';
+      }
+
+      const options = unit === 'day'
+        ? { month: 'short', day: '2-digit' }
+        : { year: '2-digit', month: 'short' };
+      return new Intl.DateTimeFormat('en-US', options).format(new Date(timestamp));
+    }
+
+    function formatAmount(value) {
+      if (value == null) {
+        return '-';
+      }
+
+      const text = String(value);
+      return text.length > 18 ? `${text.slice(0, 9)}...${text.slice(-6)}` : text;
+    }
+
+    function formatDecimal(value) {
+      const number = Number(value);
+
+      if (!Number.isFinite(number)) {
+        return '-';
+      }
+
+      const absolute = Math.abs(number);
+
+      if (absolute === 0) {
+        return '0';
+      }
+
+      if (absolute >= 1_000_000_000) {
+        return number.toExponential(2);
+      }
+
+      if (absolute >= 100_000) {
+        return new Intl.NumberFormat('en-US', {
+          maximumFractionDigits: 0
+        }).format(number);
+      }
+
+      if (absolute >= 1) {
+        return new Intl.NumberFormat('en-US', {
+          maximumFractionDigits: 4
+        }).format(number);
+      }
+
+      return new Intl.NumberFormat('en-US', {
+        maximumFractionDigits: 8
+      }).format(number);
+    }
+
+    function assetDisplayName(asset) {
+      const symbol = asset.asset_symbol || shortAddress(asset.asset_id);
+      const name = asset.asset_name && asset.asset_name !== symbol ? ` / ${asset.asset_name}` : '';
+      const metadata = asset.metadata_available ? '' : ' / metadata pending';
+      const verification = asset.asset_type === 'native'
+        ? ''
+        : asset.metadata_verified
+          ? ' / verified'
+          : ' / unverified';
+
+      return `${symbol}${name}${metadata}${verification}`;
+    }
+
+    function formatAssetHolding(asset) {
+      const symbol = asset.asset_symbol || shortAddress(asset.asset_id);
+      const decimal = asset.metadata_available
+        ? formatDecimal(asset.balance_decimal)
+        : `${asset.balance_raw} raw`;
+
+      return `${decimal} ${symbol}`;
+    }
+
+    function titleCase(value) {
+      return String(value || '')
+        .replace(/[_:]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, (char) => char.toUpperCase()) || '-';
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replaceAll('`', '&#096;');
+    }
+
+    let toastTimer = null;
+    function showToast(message) {
+      clearTimeout(toastTimer);
+      els.toast.textContent = message;
+      els.toast.classList.add('show');
+      toastTimer = setTimeout(() => els.toast.classList.remove('show'), 4200);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1.7
+
+FROM rust:1.92-bookworm AS builder
+WORKDIR /build
+ENV CARGO_NET_OFFLINE=true
+
+COPY cargo-registry-linux.tar.gz cargo-registry-linux.sha256 /tmp/
+RUN cd /tmp \
+    && sha256sum --check cargo-registry-linux.sha256 \
+    && tar -xzf cargo-registry-linux.tar.gz -C /usr/local/cargo \
+    && rm -f cargo-registry-linux.tar.gz cargo-registry-linux.sha256
+
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src/bin \
+    && printf 'fn main() {}\n' > src/bin/ethereum_ingestor.rs \
+    && cargo build --locked --offline --release --bin ethereum_ingestor \
+    && rm -rf src
+
+COPY src ./src
+COPY sql ./sql
+COPY web ./web
+RUN cargo build --locked --offline --release --bins \
+    && mkdir -p /out \
+    && find target/release -maxdepth 1 -type f -executable -exec cp '{}' /out/ \; \
+    && strip --strip-unneeded /out/*
+
+FROM debian:bookworm-slim AS runtime
+ARG APP_UID=10001
+ARG APP_GID=10001
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /out/ /usr/local/bin/
+WORKDIR /app
+ENV RUST_BACKTRACE=1 TZ=UTC
+USER ${APP_UID}:${APP_GID}
+EXPOSE 5001
+STOPSIGNAL SIGTERM
+CMD ["ethereum_ingestor", "follow"]
