@@ -130,3 +130,6 @@ runs/
 
 # Superseded local implementation notes
 /dockerizd_tron/docs/ethereum_completion_todo.md
+
+# Private presenter notes; not part of the customer delivery
+/docs/private/

@@ -15,7 +15,7 @@ x-bsc-schema-environment: &bsc-schema-environment
 
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:23.8.16.16@sha256:512bb8a214831bfb66e0fd51368c10c13ed319a50fa0d3864f88c01c0e8295fe
+    image: ${BSC_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:23.8.16.16@sha256:512bb8a214831bfb66e0fd51368c10c13ed319a50fa0d3864f88c01c0e8295fe}
     restart: unless-stopped
     ports:
       - "${DOCKER_BIND_ADDRESS:-127.0.0.1}:${BSC_CLICKHOUSE_HTTP_PORT:-38123}:8123"
@@ -201,6 +201,67 @@ services:
     depends_on:
       bsc-schema:
         condition: service_completed_successfully
+    networks: ["bsc-backend"]
+    logging: *json-logging
+
+  bsc-api:
+    image: bsc-aml-service:${BSC_APP_IMAGE_TAG:-local}
+    build: .
+    command: ["bsc_api"]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    mem_limit: 1g
+    cpus: 2
+    pids_limit: 128
+    stop_grace_period: 130s
+    environment:
+      <<: *bsc-runtime-environment
+      BSC_API_ADDR: 0.0.0.0:6001
+      AML_SERVICE_KEY: ${AML_SERVICE_KEY:?Set the same AML_SERVICE_KEY as the main VM}
+    ports:
+      - "${BSC_API_BIND_ADDRESS:-127.0.0.1}:${BSC_API_PORT:-6001}:6001"
+    healthcheck:
+      test: ["CMD", "bsc_api", "--healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      bsc-schema: {condition: service_completed_successfully}
+    networks: ["bsc-backend"]
+    logging: *json-logging
+
+  bsc-token-metadata:
+    image: bsc-aml-service:${BSC_APP_IMAGE_TAG:-local}
+    build: .
+    profiles: ["runtime"]
+    command: ["bsc_token_metadata_worker", "--follow"]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    mem_limit: 256m
+    pids_limit: 64
+    environment: *bsc-runtime-environment
+    depends_on:
+      bsc-schema: {condition: service_completed_successfully}
+    networks: ["bsc-backend"]
+    logging: *json-logging
+
+  bsc-intelligence:
+    image: bsc-aml-service:${BSC_APP_IMAGE_TAG:-local}
+    profiles: ["tools"]
+    command: ["bsc_intelligence", "--help"]
+    restart: "no"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    environment: *bsc-schema-environment
+    depends_on:
+      bsc-schema: {condition: service_completed_successfully}
     networks: ["bsc-backend"]
     logging: *json-logging
 

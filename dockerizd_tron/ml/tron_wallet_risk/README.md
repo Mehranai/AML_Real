@@ -14,12 +14,12 @@ The runtime contract is:
 The sample CSV is only for checking that the pipeline works. Do not treat it as
 a real AML model.
 
-```powershell
-cd D:\Sarbazi\dockerizd_eth_code
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r ml\tron_wallet_risk\requirements.txt
-python ml\tron_wallet_risk\train.py --input ml\tron_wallet_risk\sample_training_data.csv --output-dir ml\tron_wallet_risk\artifacts\smoke
+```bash
+cd "$HOME/AML_Whole/dockerizd_tron"
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r ml/tron_wallet_risk/requirements.txt
+python3 ml/tron_wallet_risk/train.py --input ml/tron_wallet_risk/sample_training_data.csv --output-dir ml/tron_wallet_risk/artifacts/smoke
 ```
 
 The script writes:
@@ -39,14 +39,14 @@ generated SQL registers a `CANDIDATE`.
 After `wallet_ml_labels` and `wallet_ml_feature_snapshots` have data, export a
 training CSV with:
 
-```powershell
-clickhouse-client --query "$(Get-Content ml\tron_wallet_risk\export_training_dataset.sql -Raw) FORMAT CSVWithNames" > ml\tron_wallet_risk\training.csv
+```bash
+clickhouse-client --format CSVWithNames < ml/tron_wallet_risk/export_training_dataset.sql > ml/tron_wallet_risk/training.csv
 ```
 
 Then train:
 
-```powershell
-python ml\tron_wallet_risk\train.py --input ml\tron_wallet_risk\training.csv --output-dir ml\tron_wallet_risk\artifacts\tron_wallet_pytorch_mlp_v1
+```bash
+python3 ml/tron_wallet_risk/train.py --input ml/tron_wallet_risk/training.csv --output-dir ml/tron_wallet_risk/artifacts/tron_wallet_pytorch_mlp_v1
 ```
 
 ## Build Training CSV From Labeled Addresses
@@ -63,16 +63,16 @@ TWalletAddress2,0
 
 Start the Rust API first:
 
-```powershell
-cd D:\Sarbazi\dockerizd_eth_code\app
+```bash
+cd "$HOME/AML_Whole/dockerizd_tron/app"
 cargo run --bin tron_graph_api
 ```
 
 In another terminal, generate model features for each labeled wallet:
 
-```powershell
-cd D:\Sarbazi\dockerizd_eth_code
-python ml\tron_wallet_risk\build_training_csv_from_api.py --labels ml\tron_wallet_risk\my_labeled_wallets.csv --output ml\tron_wallet_risk\training.csv --labels-sql-output ml\tron_wallet_risk\insert_labels.sql
+```bash
+cd "$HOME/AML_Whole/dockerizd_tron"
+python3 ml/tron_wallet_risk/build_training_csv_from_api.py --labels ml/tron_wallet_risk/my_labeled_wallets.csv --output ml/tron_wallet_risk/training.csv --labels-sql-output ml/tron_wallet_risk/insert_labels.sql
 ```
 
 This calls:
@@ -87,14 +87,14 @@ features needed for training.
 
 Then train and review a candidate:
 
-```powershell
-python ml\tron_wallet_risk\train.py --input ml\tron_wallet_risk\training.csv --output-dir ml\tron_wallet_risk\artifacts\tron_wallet_pytorch_mlp_v1
+```bash
+python3 ml/tron_wallet_risk/train.py --input ml/tron_wallet_risk/training.csv --output-dir ml/tron_wallet_risk/artifacts/tron_wallet_pytorch_mlp_v1
 ```
 
 For a real dataset, activate only after reviewing the held-out test metrics:
 
-```powershell
-python ml\tron_wallet_risk\train.py --input ml\tron_wallet_risk\training.csv --output-dir ml\tron_wallet_risk\artifacts\tron_wallet_pytorch_mlp_v1 --activate
+```bash
+python3 ml/tron_wallet_risk/train.py --input ml/tron_wallet_risk/training.csv --output-dir ml/tron_wallet_risk/artifacts/tron_wallet_pytorch_mlp_v1 --activate
 ```
 
 Activation defaults require at least 200 held-out test wallets, test AUC of at
@@ -104,7 +104,7 @@ the checksummed artifact and updates the production deployment pointer.
 Run the generated SQL against ClickHouse:
 
 ```text
-ml\tron_wallet_risk\artifacts\tron_wallet_pytorch_mlp_v1\register_model.sql
+ml/tron_wallet_risk/artifacts/tron_wallet_pytorch_mlp_v1/register_model.sql
 ```
 
 ## Training Data Format

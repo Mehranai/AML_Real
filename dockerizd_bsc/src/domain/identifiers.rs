@@ -131,7 +131,7 @@ impl AssetId {
     }
 }
 
-fn normalize_evm_address(value: &str) -> Result<String, IdentifierError> {
+pub fn normalize_evm_address(value: &str) -> Result<String, IdentifierError> {
     let value = value.trim();
     let Some(hex) = value
         .strip_prefix("0x")

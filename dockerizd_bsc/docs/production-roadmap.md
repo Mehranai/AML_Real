@@ -1,6 +1,9 @@
 # BSC Production Roadmap
 
-این فایل تنها checklist مرجع BSC است. تیک هر مرحله فقط بعد از pass شدن Definition of Done همان مرحله زده می‌شود.
+این فایل checklist معیارهای production است. تیک هر مرحله فقط بعد از pass شدن Definition of Done همان مرحله زده می‌شود.
+تحویل تحقیق و اتصال VM جداگانه در [completion checklist](completion-checklist.md) ثبت می‌شود.
+پیاده‌سازی API، metadata، holdings، labels، exposure و اتصال مرکزی انجام شده است؛
+gateهای نود واقعی، اطلاعات هویتی معتبر و ظرفیت production مستقل از تحویل نرم‌افزار باز می‌مانند.
 
 ## Progress
 
@@ -13,9 +16,9 @@
 - [x] Phase 6 - Semantic AML event producers and protocol registry
 - [ ] Phase 7 - Token metadata, holdings and wallet fingerprint
 - [ ] Phase 8 - Entity intelligence and reviewed clustering
-- [ ] Phase 9 - Neo4j graph, 10-hop paths and exposure propagation
-- [ ] Phase 10 - Unified investigation API and BSC analyst UI
-- [ ] Phase 11 - AML Whole gateway integration
+- [x] Phase 9 - Neo4j graph, 10-hop paths and exposure propagation
+- [x] Phase 10 - Unified investigation API and BSC analyst UI
+- [x] Phase 11 - AML Whole gateway integration
 - [ ] Phase 12 - Production hardening, load validation and release gate
 
 ## Phase 0 - Architecture, scope and production gates
@@ -127,57 +130,57 @@ Definition of Done: each event type has positive/negative fixtures, provenance, 
 
 ## Phase 7 - Metadata, holdings and fingerprint
 
-- [ ] Metadata discovery queue and bounded RPC worker for token name/symbol/decimals/standard.
-- [ ] Manual metadata override/import with source and review fields.
-- [ ] Compact wallet balance deltas and canonical holdings view, including native BNB.
+- [x] Metadata discovery queue and bounded RPC worker for token name/symbol/decimals/standard.
+- [x] Manual metadata override/import with source and review fields.
+- [x] Replace planned balance-delta tables with explicit observed asset flows and on-demand finalized RPC holdings; no duplicate balance history.
 - [ ] Fingerprint for flow direction, timing, churn, concentration, counterparties and semantic event ratios.
-- [ ] Wallet activity trend and top incoming/outgoing counterparties.
-- [ ] Data quality report for range, truncation, receipt, trace and metadata coverage.
+- [x] Wallet activity trend and top incoming/outgoing counterparties.
+- [x] Data quality report for range, truncation, receipt, trace and metadata coverage.
 
 Definition of Done: holdings reconcile against selected on-chain balances at the same finalized block; fingerprint uses only stored evidence and reports truncation honestly.
 
 ## Phase 8 - Entity intelligence and clustering
 
-- [ ] Versioned intelligence source, raw claim, review decision and active label tables.
-- [ ] Bulk import for known exchange, bridge, protocol, scam and sanctions data.
-- [ ] Separate discovered cluster candidates from approved entity identities.
-- [ ] Conservative clustering heuristics with evidence and false-positive controls.
-- [ ] Analyst approve/reject workflow and immutable audit trail.
+- [x] Compact versioned claims including source provenance/review decision, with current and active views.
+- [x] Bulk import for externally verified entity labels.
+- [x] Separate discovered cluster candidates from approved entity identities.
+- [x] Shared-destination leads with evidence, never automatic ownership.
+- [x] CLI analyst approve/reject workflow and immutable audit trail (single writer).
 - [ ] BSC protocol/exchange seed pack kept as data, not hardcoded Rust logic.
 
 Definition of Done: unreviewed claims cannot become active labels or exposure seeds; every active identity resolves to source and review evidence.
 
 ## Phase 9 - Graph, paths and exposure
 
-- [ ] On-demand Neo4j projection from canonical ClickHouse relationships.
-- [ ] Network-qualified uniqueness constraints and idempotent MERGE behavior.
-- [ ] Wallet graph with depth/edge/time/operation filters.
-- [ ] Directed source-to-target search up to 10 hops with hard safety caps.
-- [ ] Amount/time/direction weighted exposure from reviewed seeds.
-- [ ] Service-mediated boundary handling for exchanges, bridges and custodians.
-- [ ] Persist best explainable paths and make runs versioned/reproducible.
+- [x] On-demand central Neo4j snapshot from canonical ClickHouse relationships; no per-chain Neo4j.
+- [x] Network-qualified investigation-scoped identities and idempotent Export.
+- [x] Wallet graph with depth/edge/time/asset filters.
+- [x] Directed source-to-target search up to 10 hops with hard safety caps.
+- [x] Amount/time/direction weighted exposure from reviewed seeds (3-hop bounded policy).
+- [x] Service-mediated boundary handling for exchanges, bridges and custodians.
+- [x] Persist explainable paths and policy/run identifiers inside the immutable central snapshot.
 
 Definition of Done: Neo4j can be erased and rebuilt; path output contains evidence edge IDs; truncation is explicit; direct and service-mediated exposure are distinguishable.
 
 ## Phase 10 - Investigation API and UI
 
-- [ ] `/api/bsc/wallet/{address}/investigation` with graph, holdings, fingerprint, events, intelligence and quality.
-- [ ] `/api/bsc/wallet/{source}/paths/{target}` with hop ceiling 10.
-- [ ] health, readiness and ingestion status with dependency details.
-- [ ] BSC UI with readable graph, independently scrollable evidence and path workflow.
-- [ ] Loading, empty, partial, truncated and error states.
-- [ ] Responsive and accessibility tests at mobile/tablet/desktop sizes.
-- [ ] No AI risk percentage or legal conclusion.
+- [x] `/api/bsc/wallet/{address}/investigation` with graph, fingerprint, events, intelligence and quality; separate live holdings endpoint.
+- [x] `/api/bsc/wallet/{source}/paths/{target}` with hop ceiling 10.
+- [x] Health, lightweight readiness and ingestion status with dependency details.
+- [x] BSC UI with readable graph, independently scrollable evidence and path workflow.
+- [x] Loading, empty, partial, truncated and error states.
+- [x] Responsive tests at 390/768/1440 pixels, canvas framing checks and labeled form controls (not a full accessibility audit).
+- [x] No AI risk percentage or legal conclusion.
 
 Definition of Done: API contract tests and browser tests pass against real ClickHouse/Neo4j containers; a stored BSC address renders a nonblank graph.
 
 ## Phase 11 - AML Whole gateway
 
-- [ ] Add BSC upstream and fixed Nginx route allowlist.
-- [ ] Add BSC selector metadata and address validation.
-- [ ] Copy the real BSC UI into the gateway image.
-- [ ] Add status row, offline-chain isolation and cross-network navigation tests.
-- [ ] Keep BSC hidden until its `/ready` contract and investigation tests pass.
+- [x] Add BSC upstream and fixed Nginx route allowlist.
+- [x] Add BSC selector metadata and address validation.
+- [x] Copy the real BSC UI into the gateway image.
+- [x] Add status row, offline-chain isolation and cross-network navigation tests.
+- [x] Expose BSC after its `/ready` contract and investigation tests pass.
 
 Definition of Done: selecting BSC routes only to BSC; TRON/Ethereum behavior is unchanged; an offline BSC cannot break other networks.
 
@@ -197,4 +200,5 @@ Definition of Done: no known critical issue; zero unexplained data gap in the va
 ## ترتیب اجرای بعدی
 
 capacity gate مرحله 5 هنوز باید روی node/RPC production با `live_rate_multiple >= 2.0` تکرار شود، اما
-این محدودیت مانع correctness مرحله 6 نیست. مرحله توسعه بعد **Phase 7: metadata, holdings and fingerprint** است.
+این محدودیت مانع تست تحقیق نیست. تحویل مرحله جاری، تست VM است؛ مرحله بعد، اعتبارسنجی روی نود و داده واقعی
+طبق Phase 12 و تأمین seed pack بررسی‌شده است. همه قابلیت‌های original roadmap معادل گواهی production نیستند.

@@ -96,7 +96,7 @@ components:
       required: true
       schema:
         type: string
-        enum: [tron, ethereum]
+        enum: [tron, ethereum, bsc]
     Address:
       name: address
       in: path

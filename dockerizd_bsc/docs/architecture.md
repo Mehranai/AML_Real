@@ -1,5 +1,10 @@
 # BSC AML Architecture
 
+Current deployment: BSC ClickHouse -> BSC API -> main Analytical Node -> central Neo4j.
+There is no BSC-local Neo4j. Temporary/saved snapshots and evidence risk are owned by the main VM.
+See [VM delivery](VM_READINESS_FA.md) for current implementation and [checklist](completion-checklist.md) for validation.
+The diagram below describes evidence stages; projection runs on the main VM, not inside ingestion.
+
 ## 1. اصل معماری
 
 BSC یک شبکه EVM است. بنابراین لایه دریافت block، transaction، receipt، log، trace و آدرس باید از

@@ -12,6 +12,8 @@ server {
     resolver_timeout 3s;
     set $tron_upstream "${AML_TRON_UPSTREAM}";
     set $ethereum_upstream "${AML_ETHEREUM_UPSTREAM}";
+    set $bsc_upstream "${AML_BSC_UPSTREAM}";
+    set $analytical_upstream "http://analytical-node:7001";
     proxy_connect_timeout 5s;
     proxy_read_timeout 300s;
     proxy_send_timeout 30s;
@@ -23,6 +25,8 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Request-ID $request_id;
     proxy_set_header X-AML-Service-Key "${AML_SERVICE_KEY}";
+    # Never trust a browser-supplied owner identity.
+    proxy_set_header X-AML-User $remote_user;
     proxy_ssl_server_name on;
     proxy_ssl_verify on;
     proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
@@ -48,6 +52,7 @@ server {
         default_type application/json;
         return 200 '{"status":"alive","service":"aml-whole-gateway"}';
     }
+    location = /ready { proxy_pass $analytical_upstream/ready; }
     location = / { try_files /index.html =404; }
     location = /index.html { try_files $uri =404; }
     location /assets/ { try_files $uri =404; }
@@ -60,8 +65,32 @@ server {
     location = /networks/ethereum/ready { proxy_pass $ethereum_upstream/ready; }
     location = /networks/tron/status { proxy_pass $tron_upstream/status; }
     location = /networks/ethereum/status { proxy_pass $ethereum_upstream/status; }
+    location = /networks/bsc { return 308 /networks/bsc/$is_args$args; }
+    location = /networks/bsc/ { try_files /networks/bsc/index.html =404; }
+    location = /networks/bsc/ready { proxy_pass $bsc_upstream/ready; }
+    location = /networks/bsc/status { proxy_pass $bsc_upstream/status; }
 
-    # Preserve paths, queries, HTTP methods and response bodies, including Neo4j POSTs.
+    # Investigation responses are snapshotted centrally before reaching the browser.
+    location ~ ^/api/(tron|ethereum|bsc)/wallet/[^/]+/(investigation|paths/[^/]+)$ {
+        limit_req zone=aml_api burst=10 nodelay;
+        limit_conn aml_connections 10;
+        proxy_pass $analytical_upstream$request_uri;
+    }
+    location /api/investigations {
+        limit_req zone=aml_api burst=10 nodelay;
+        limit_conn aml_connections 10;
+        proxy_pass $analytical_upstream$request_uri;
+    }
+    location ~ /neo4j/import$ {
+        default_type application/json;
+        return 410 '{"error":"Export the current investigation by its ID on the main VM."}';
+    }
+    # Other warehouse APIs remain on their respective chain VM.
+    location /api/bsc/ {
+        limit_req zone=aml_api burst=30 nodelay;
+        limit_conn aml_connections 20;
+        proxy_pass $bsc_upstream$request_uri;
+    }
     location /api/tron/ {
         limit_req zone=aml_api burst=30 nodelay;
         limit_conn aml_connections 20;

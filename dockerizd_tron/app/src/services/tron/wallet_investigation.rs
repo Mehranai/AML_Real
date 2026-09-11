@@ -8,7 +8,7 @@ use crate::services::tron::{
     neo4j::{flow_graph::build_wallet_flow_graph, types::WalletFlowGraph},
     wallet_activity::{WalletActivity, build_wallet_activity},
     wallet_ai_risk::{WalletAiRiskAssessment, build_disabled_wallet_ai_risk},
-    wallet_exposure::load_wallet_exposure_summary,
+    wallet_exposure::{WalletExposureSummary, load_wallet_exposure_summary},
     wallet_fingerprint::{WalletFingerprint, build_wallet_fingerprint},
     wallet_holdings::{WalletHoldings, build_wallet_holdings},
 };
@@ -54,6 +54,7 @@ pub struct WalletInvestigation {
     pub activity: WalletActivity,
     pub intelligence: WalletIntelligence,
     pub ai_risk: WalletAiRiskAssessment,
+    pub exposure: WalletExposureSummary,
     pub data_quality: InvestigationDataQuality,
 }
 
@@ -97,7 +98,7 @@ pub async fn build_wallet_investigation(
         load_wallet_intelligence(clickhouse.clone(), address),
         load_wallet_exposure_summary(clickhouse.clone(), address, Some(25)),
     )?;
-    let ai_risk = build_disabled_wallet_ai_risk(&fingerprint, exposure);
+    let ai_risk = build_disabled_wallet_ai_risk(&fingerprint, exposure.clone());
     let data_quality = build_data_quality(
         &graph,
         &holdings,
@@ -118,6 +119,7 @@ pub async fn build_wallet_investigation(
         activity,
         intelligence,
         ai_risk,
+        exposure,
         data_quality,
     })
 }

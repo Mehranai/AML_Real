@@ -49,7 +49,7 @@ pub fn build_router() -> anyhow::Result<Router> {
         )
         .route(
             "/tron/wallet/{address}/neo4j/import",
-            post(tron_graph::tron_wallet_graph_import),
+            post(health::central_projection_only),
         )
         .route(
             "/tron/wallet/{source}/paths/{target}",
@@ -57,7 +57,7 @@ pub fn build_router() -> anyhow::Result<Router> {
         )
         .route(
             "/tron/wallet/{source}/paths/{target}/neo4j/import",
-            post(tron_wallet_paths::tron_wallet_paths_import),
+            post(health::central_projection_only),
         )
         .route(
             "/api/tron/wallet/{address}/graph",
@@ -89,7 +89,7 @@ pub fn build_router() -> anyhow::Result<Router> {
         )
         .route(
             "/api/tron/wallet/{address}/neo4j/import",
-            post(tron_graph::tron_wallet_graph_import),
+            post(health::central_projection_only),
         )
         .route(
             "/api/tron/wallet/{source}/paths/{target}",
@@ -97,7 +97,7 @@ pub fn build_router() -> anyhow::Result<Router> {
         )
         .route(
             "/api/tron/wallet/{source}/paths/{target}/neo4j/import",
-            post(tron_wallet_paths::tron_wallet_paths_import),
+            post(health::central_projection_only),
         )
         .layer(middleware::from_fn_with_state(
             service_auth,

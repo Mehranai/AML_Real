@@ -18,7 +18,7 @@ const eth = '0x0000000000000000000000000000000000000001';
 const ethTarget = '0x0000000000000000000000000000000000000002';
 const serviceKey = 'browser-test-service-key-000000000000000000000000';
 const observed = [];
-const ready = { status: 'ready', dependencies: { clickhouse: 'ready', neo4j: 'ready' } };
+const ready = { status: 'ready', dependencies: { clickhouse: 'ready', graph_storage: 'central_analytical_node' } };
 const tronGraph = {
   address: tron, nodes: [tron, tronTarget].map(id => ({ id, node_type: 'wallet' })),
   edges: [{ id: 'test-transfer', from: tron, to: tronTarget, amount: '10', operation_type: 'transfer', transfer_type: 'TRX' }],
@@ -30,7 +30,7 @@ const ethGraph = {
 };
 const ethInvestigation = {
   address: eth, graph: ethGraph, fingerprint: { transaction_count: 1, transfer_count: 1, unique_counterparties: 1 },
-  asset_flows: [], top_counterparties: [], semantic_events: [], entities: [], clusters: [], exposure_paths: [],
+  asset_flows: [], top_counterparties: [], semantic_events: [], entities: [{entity_id:'reviewed-seed',entity_name:'Test seed',entity_type:'scam',address_role:'seed',confidence:1,is_exposure_seed:true,risk_level:100}], clusters: [], exposure_paths: [],
   risk_engine: { enabled: false, signals: [] }, data_coverage: {}, neo4j_projection: { projected: false, node_count: 0, edge_count: 0 },
 };
 
@@ -47,7 +47,7 @@ async function mock(network) {
       ? { ...tronGraph, source_address: tron, target_address: tronTarget, max_depth: 10, path_count: 1, searched_node_count: 2, paths: [{ node_ids: [tron, tronTarget], edge_ids: ['test-transfer'], hop_count: 1 }] }
       : { ...ethGraph, source: eth, target: ethTarget, max_hops: 10, expanded_addresses: 2, paths: [{ addresses: [eth, ethTarget], hop_count: 1 }], neo4j_projection: { edge_count: 1 } };
     else if (url.pathname.endsWith('/investigation')) result = network === 'tron'
-      ? { graph: tronGraph, fingerprint: { flows: { total_transfers: 1 } }, holdings: { total_asset_count: 1, assets: [], native_balance: { balance_decimal: '10' } }, activity: { summary: { outgoing_transfers: 1 } } }
+      ? { address: tron, network_id:'tron:mainnet', graph: tronGraph, fingerprint: { flows: { total_transfers: 1 } }, holdings: { total_asset_count: 1, assets: [], native_balance: { balance_decimal: '10' } }, activity: { summary: { outgoing_transfers: 1 } } }
       : ethInvestigation;
     else result = { network, method: request.method, url: request.url, body };
     response.writeHead(url.pathname.endsWith('/test-error') ? 422 : 200, { 'content-type': 'application/json' });
@@ -67,10 +67,10 @@ const env = {
   ...process.env, AML_PORT: String(port), AML_BIND_ADDRESS: '127.0.0.1',
   AML_TRON_UPSTREAM: `http://host.docker.internal:${tronServer.address().port}`,
   AML_ETHEREUM_UPSTREAM: `http://host.docker.internal:${ethServer.address().port}`,
-  AML_SERVICE_KEY: serviceKey,
+  AML_SERVICE_KEY: serviceKey, NEO4J_PASSWORD: 'browser-test-neo4j-password', AML_NEO4J_HTTP_PORT:'0', AML_NEO4J_BOLT_PORT:'0',
 };
 const project = `aml-whole-test-${process.pid}`;
-const compose = (...args) => run('docker', ['compose', '-p', project, '-f', 'compose.yaml', ...args], { cwd: root, env, timeout: 120000 });
+const compose = (...args) => run('docker', ['compose', '-p', project, '-f', 'compose.yaml', ...args], { cwd: root, env, timeout: 240000 });
 const base = `http://127.0.0.1:${port}`;
 let browser;
 let failure;
@@ -91,6 +91,49 @@ try {
     assert.equal(echo.url, `/api/${network}/test-error?limit=20&encoded=a%2Bb`);
     assert.equal(response.headers.get('cache-control'), 'no-store');
   }
+  const dbPort = (await compose('port','neo4j','7474')).stdout.trim().split(':').at(-1);
+  async function database(statement, parameters={}) {
+    const body=await (await fetch(`http://127.0.0.1:${dbPort}/db/neo4j/query/v2`,{
+      method:'POST',headers:{'Content-Type':'application/json',
+        Authorization:'Basic '+Buffer.from('neo4j:'+env.NEO4J_PASSWORD).toString('base64')},
+      body:JSON.stringify({statement,parameters})})).json();
+    assert.ok(!body.errors?.length,JSON.stringify(body.errors));
+    return body.data.values;
+  }
+  let cookie='';
+  async function api(path,options={}) {
+    await new Promise(resolve=>setTimeout(resolve,250));
+    const response=await fetch(base+path,{...options,headers:{Cookie:cookie,...options.headers}});
+    if(response.headers.get('set-cookie')) cookie=response.headers.get('set-cookie').split(';')[0];
+    return {status:response.status,data:await response.json()};
+  }
+  const first=await api(`/api/ethereum/wallet/${eth}/investigation`);
+  assert.equal(first.status,200);
+  assert.equal(first.data.risk_engine.risk_score,70);
+  assert.equal(first.data.risk_engine.probability_claimed,false);
+  const id=first.data.investigation.id;
+  const savedResult=await api(`/api/investigations/${id}/export`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  assert.equal(savedResult.data.investigation.state,'saved');
+  const repeated=await api(`/api/investigations/${id}/export`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  assert.deepEqual(savedResult.data,repeated.data);
+  assert.equal((await api(`/api/investigations/${id}`,{headers:{Cookie:'aml_session='+'a'.repeat(64)}})).status,404);
+  const expired=await api(`/api/ethereum/wallet/${eth}/investigation`);
+  const expiredId=expired.data.investigation.id;
+  await database("MATCH (i:Investigation {id:$id}) SET i.expires_at_unix_ms=0 RETURN i.id",{id:expiredId});
+  assert.equal((await api(`/api/investigations/${expiredId}/export`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,404);
+  await compose('restart','analytical-node');
+  for(let i=0;i<40;i++){
+    try{if((await fetch(base+'/ready')).ok)break;}catch{}
+    await new Promise(resolve=>setTimeout(resolve,500));
+  }
+  const restored=await api(`/api/investigations/${id}`);
+  assert.equal(restored.data.investigation.state,'saved');
+  assert.equal(restored.data.investigation.snapshot_hash,first.data.investigation.snapshot_hash);
+  assert.deepEqual(restored.data.graph,first.data.graph);
+  assert.equal((await database("MATCH (i:Investigation {id:$id})-[:CONTAINS]->(w) RETURN count(w), collect(DISTINCT w.network_id)",{id}))[0][0],2);
+  assert.equal((await database("MATCH (i:Investigation {id:$id}) RETURN count(i)",{id:expiredId}))[0][0],0);
+  console.log('PASS ownership isolation, immutable/idempotent Export, expiry cleanup, network scoping and persistence after restart');
+  observed.length=0;
   const snapshot = await (await fetch(`${base}/api/analysis/tron/wallet/${tron}`)).json();
   assert.equal(snapshot.network, 'tron');
   const post = await (await fetch(`${base}/api/tron/test-post?limit=23`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"test":true}' })).json();
@@ -111,7 +154,7 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(base);
   await page.waitForFunction(() => document.getElementById('network-list').getAttribute('aria-busy') === 'false');
-  assert.equal(await page.locator('.state[data-state=ready]').count(), 6);
+  assert.equal(await page.locator('.state[data-state=ready]').count(), 4);
   assert.equal(await page.locator('img').evaluateAll(images => images.every(image => image.complete && image.naturalWidth > 0)), true);
   await page.screenshot({ path: fileURLToPath(new URL('home-desktop.png', output)), fullPage: true });
   await page.locator('#address').fill(eth);
@@ -123,6 +166,8 @@ try {
   assert.match(page.url(), /\/networks\/tron\/\?address=/);
   assert.equal(await page.locator('#flowSvg .edge').count(), 1);
   assert.match(await page.locator('#nativeBalance').innerText(), /10.*TRX/);
+  assert.match(await page.locator('#cypherBox').textContent(), /MATCH \(i:Investigation/);
+  assert.equal(await page.locator('#neo4jLink').isVisible(), false);
   assert.equal(observed.filter(item => item.network === 'tron' && item.path.includes('/investigation?')).length, 1);
   await page.screenshot({ path: fileURLToPath(new URL('tron-desktop.png', output)), fullPage: true });
   await page.locator('[data-inspector-tab="paths"]').click();
@@ -130,10 +175,15 @@ try {
   await page.locator('#pathDepthInput').selectOption('10');
   await page.locator('#pathButton').click();
   await page.waitForFunction(() => document.getElementById('pathSummary').textContent.includes('1 path(s)'));
+  assert.ok(!(await page.locator('#nativeBalance').textContent()).includes('10 TRX'));
   assert.ok(observed.some(item => item.network === 'tron' && item.path.includes('/paths/') && item.path.includes('max_depth=10')));
-  await page.locator('#projectButton').click();
-  await page.waitForFunction(() => !document.getElementById('projectButton').disabled);
-  assert.ok(observed.some(item => item.network === 'tron' && item.method === 'POST' && item.path.includes('/neo4j/import')));
+  assert.match(await page.locator('#snapshot-status').innerText(), /Temporary/);
+  await page.locator('#snapshot-export').click();
+  await page.waitForFunction(() => document.getElementById('snapshot-status').textContent.includes('Saved permanently'));
+  assert.ok(!observed.some(item => item.path.includes('/neo4j/import')));
+  await page.locator('#snapshot-saved').selectOption({index:1});
+  await page.waitForFunction(() => document.getElementById('snapshot-status').textContent.includes('Saved permanently'));
+  console.log('PASS Export preserves the displayed path snapshot without a second chain query');
   await page.getByRole('link', { name: 'Networks', exact: true }).click();
 
   await page.locator('#network').selectOption('ethereum');
@@ -144,6 +194,7 @@ try {
   assert.equal(await page.locator('#path-form').isVisible(), false);
   assert.equal(await page.locator('#graph-placeholder').isVisible(), false);
   assert.equal(observed.filter(item => item.network === 'ethereum' && item.path.includes('/investigation?')).length, 1);
+  assert.match(await page.locator('#evidence-content').innerText(), /70.*100/);
   await page.waitForTimeout(300);
   const colors = await page.locator('canvas').evaluate(canvas => {
     const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
@@ -192,10 +243,11 @@ try {
   assert.equal((await fetch(`${base}/api/tron/test`, { signal: AbortSignal.timeout(12000) })).status, 503);
   console.log('PASS offline chain isolation and honest unknown dependency status');
 } catch (error) {
+  try { console.error((await compose('logs','--tail','70','analytical-node','gateway')).stdout); } catch {}
   failure = error;
 } finally {
   if (browser) await browser.close();
-  try { await compose('down'); } catch (error) { failure ??= error; }
+  try { await compose('down', '--volumes'); } catch (error) { failure ??= error; }
   tronServer.closeAllConnections();
   ethServer.closeAllConnections();
   tronServer.close();

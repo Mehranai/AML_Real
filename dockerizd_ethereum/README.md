@@ -1,5 +1,10 @@
 # Ethereum AML Platform
 
+> Current deployment uses only the main VM's Neo4j. Chain APIs read ClickHouse;
+> temporary snapshots, Export and the non-ML evidence policy run centrally.
+> See [Central investigations](../docs/CENTRAL_INVESTIGATIONS_FA.md).
+> Older local Neo4j projection instructions below describe legacy tools, not the current UI workflow.
+
 > New location: `AML_Whole/dockerizd_ethereum`. For the shared TRON/Ethereum
 > entry page and Docker launcher, use [AML Whole](../README.md).
 
@@ -82,14 +87,14 @@ returns probability_claimed: false.
 
 ## First Docker start
 
-~~~powershell
-cd D:\Sarbazi\dockerizd_ethereum
-Copy-Item .env.example .env
+~~~bash
+cd "$HOME/AML_Whole/dockerizd_ethereum"
+cp -n .env.example .env
 ~~~
 
 Set ETH_RPC_URL, CLICKHOUSE_PASSWORD, and NEO4J_PASSWORD, then run:
 
-~~~powershell
+~~~bash
 docker compose up -d --build
 docker compose ps
 ~~~
@@ -141,7 +146,7 @@ ClickHouse coverage, and Neo4j projection counts.
 
 ## Ingestion operations
 
-~~~powershell
+~~~bash
 docker compose run --rm ethereum-ingestion ethereum_ingestor probe
 docker compose run --rm ethereum-ingestion ethereum_ingestor range --from-block 25736898 --to-block 25736900
 docker compose logs -f ethereum-ingestion
@@ -160,13 +165,13 @@ seed_category is present.
 
 Import the CSV after mounting it into the container:
 
-~~~powershell
+~~~bash
 docker compose run --rm ethereum-schema ethereum_ingest_entity_labels --file /data/ethereum_labels.csv --source-id internal_cases --source-name "Internal reviewed cases" --source-type INTERNAL --trust-tier VERIFIED --created-by analyst-a --submitted-by analyst-a
 ~~~
 
 ## Analytics operations
 
-~~~powershell
+~~~bash
 docker compose run --rm ethereum-schema ethereum_discover_address_clusters
 docker compose run --rm ethereum-schema ethereum_propagate_exposure --max-hops 5 --hop-decay 0.65 --time-half-life-days 365 --max-paths-per-subject 3
 docker compose run --rm ethereum-schema ethereum_assess_wallet --address 0x1111111111111111111111111111111111111111
@@ -184,7 +189,7 @@ Ethereum ClickHouse and Neo4j data should be deleted intentionally.
 
 ## Validation
 
-~~~powershell
+~~~bash
 cargo fmt --all -- --check
 cargo test --all-targets
 docker compose config --quiet

@@ -4,6 +4,14 @@ use reqwest::Url;
 
 use crate::BSC_CLICKHOUSE_DATABASE;
 
+pub fn setting(key: &str) -> Result<Option<String>, ConfigError> {
+    let local = load_env_file(Path::new(".env"))?;
+    Ok(env::var(key)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| local.get(key).cloned().filter(|v| !v.trim().is_empty())))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeploymentMode {
     Development,

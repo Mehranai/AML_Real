@@ -2,7 +2,7 @@
 
 سرویس مستقل BNB Smart Chain برای پروژه `AML_Whole`.
 
-این شبکه قرار است همان خروجی عملیاتی TRON را ارائه کند:
+این شبکه خروجی تحقیق کیف پول را در Gateway مشترک ارائه می‌کند:
 
 - نمودار جریان وجوه یک کیف پول از داده ذخیره‌شده در ClickHouse
 - fingerprint رفتاری، holdings، counterparties و semantic events
@@ -13,12 +13,16 @@
 
 ## وضعیت فعلی
 
-قابلیت‌های **Phase 6: Semantic AML evidence** پیاده‌سازی شده‌اند. `bsc_ingest` حالت‌های range،
+مسیر investigation، fingerprint، holdings، metadata، هویت‌های بازبینی‌شده، exposure و گراف مرکزی
+اضافه شده است. [راهنمای تحویل BSC و VM](docs/VM_READINESS_FA.md) و
+[چک‌لیست این تحویل](docs/completion-checklist.md) وضعیت دقیق و محدودیت‌ها را مشخص می‌کنند.
+`bsc_ingest` حالت‌های range،
 auto-resume و follow دارد؛ fetch بلاک‌ها concurrent و bounded است، اما continuity validation، commit و cursor
 به ترتیب block انجام می‌شوند. reorg با common ancestor و tombstone append-only ترمیم می‌شود و ابزارهای مستقل
 replay، gap/dead-letter repair و benchmark وجود دارند. semantic eventها از registry بررسی‌شده، event topic،
-method mapping و fund-flow evidence تولید می‌شوند. metadata/holdings، API و Neo4j هنوز پیاده‌سازی نشده‌اند
-و BSC عمداً در gateway نمایش داده نمی‌شود؛ بنابراین این پوشه هنوز investigation کامل BSC نیست.
+method mapping و fund-flow evidence تولید می‌شوند. API روی پورت 6001، فقط با service key، داده ClickHouse
+را می‌خواند. Neo4j فقط روی VM اصلی است؛ ذخیره موقت و Export برای BSC هم در همان‌جا انجام می‌شود.
+Holdings از finalized RPC برای BNB و دارایی‌های کشف‌شده خوانده می‌شود، نه از تفاضل انتقال‌ها.
 
 تست ظرفیت با ۲۰ بلاک واقعی روی RPC عمومی در بهترین اجرا `1.65 block/s`، حدود `1453 row/s` و compression
 حدود `7.93x` ثبت کرد. این از ingest ترتیبی سریع‌تر است، ولی gate حداقل `2x` نرخ زنجیره را پاس نکرد؛ برای
@@ -50,8 +54,8 @@ method mapping و fund-flow evidence تولید می‌شوند. metadata/holdin
 
 فایل نمونه را کپی و فقط مقدار `BSC_RPC_URL` را با endpoint خودتان جایگزین کنید:
 
-```powershell
-Copy-Item .env.example .env
+```bash
+cp -n .env.example .env
 cargo run --locked --bin bsc_rpc_probe
 ```
 
@@ -69,9 +73,10 @@ endpoint اتریوم یا endpoint فاقد این قابلیت‌ها پذیر
 
 فایل environment را بسازید و حداقل `BSC_CLICKHOUSE_PASSWORD` را به یک رمز قوی تغییر دهید:
 
-```powershell
-Copy-Item .env.example .env
-docker compose up -d
+```bash
+cp -n .env.example .env
+bash scripts/refresh-linux-vendor.sh
+docker compose up -d --build
 docker compose ps -a
 docker compose logs bsc-schema
 ```
@@ -82,13 +87,13 @@ ClickHouse HTTP روی `127.0.0.1:38123` و native protocol روی `127.0.0.1:39
 
 برای دیدن objectهای ساخته‌شده بدون نوشتن رمز در command history:
 
-```powershell
+```bash
 docker compose exec clickhouse sh -lc 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "SHOW TABLES FROM bsc_aml"'
 ```
 
 برای validation دستی schema موجود از host:
 
-```powershell
+```bash
 cargo run --locked --offline --bin bsc_schema -- --check
 ```
 
@@ -99,41 +104,41 @@ cargo run --locked --offline --bin bsc_schema -- --check
 
 یک range مشخص را بدون حرکت cursor پردازش کنید:
 
-```powershell
+```bash
 cargo run --locked --offline --bin bsc_ingest -- --mode range --start 119947828 --end 119947900
 ```
 
 اولین اجرای auto به start نیاز دارد؛ اجراهای بعدی فقط از `sync_state_current.next_block` ادامه می‌یابند:
 
-```powershell
+```bash
 cargo run --locked --offline --bin bsc_ingest -- --mode auto --start 119947828
 cargo run --locked --offline --bin bsc_ingest -- --mode auto
 ```
 
 برای follow دائمی در Docker، start را فقط بار اول در `.env` تنظیم کنید:
 
-```powershell
+```bash
 docker compose --profile runtime up -d bsc-follow
 docker compose logs -f bsc-follow
 ```
 
 Replay cursor را جابه‌جا نمی‌کند و فقط همان evidence را با revision جدید بازسازی می‌کند:
 
-```powershell
+```bash
 cargo run --locked --offline --bin bsc_replay -- --start 119947828 --end 119947900
 cargo run --locked --offline --bin bsc_replay -- --hash 0xBLOCK_HASH
 ```
 
 Repair فقط gapها، traceهای ناقص و failureهای باز را بازسازی می‌کند. dead-letter فقط با opt-in دوباره اجرا می‌شود:
 
-```powershell
+```bash
 cargo run --locked --offline --bin bsc_repair -- --start 119947828 --end 119947900
 cargo run --locked --offline --bin bsc_repair -- --start 119947828 --end 119947900 --include-dead
 ```
 
 Benchmark نتیجه را در `ingestion_benchmarks` نگه می‌دارد:
 
-```powershell
+```bash
 cargo run --release --locked --offline --bin bsc_benchmark -- --start 119947828 --end 119948027
 ```
 
@@ -155,13 +160,13 @@ trace تاریخی استفاده شود. raw trace ذخیره نمی‌شود �
 
 برای بررسی ingest:
 
-```powershell
+```bash
 docker compose exec clickhouse sh -lc 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "SELECT block_number, transaction_count, log_count, trace_data_complete, current_revision FROM bsc_aml.ingested_blocks_canonical ORDER BY block_number DESC LIMIT 10"'
 ```
 
 برای دیدن edgeهای استخراج‌شده:
 
-```powershell
+```bash
 docker compose exec clickhouse sh -lc 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "SELECT transfer_type, count() FROM bsc_aml.address_relationships_canonical GROUP BY transfer_type ORDER BY transfer_type"'
 ```
 
@@ -173,7 +178,7 @@ Cursor فقط بعد از marker کامل جلو می‌رود. اگر process �
 
 فایل JSONL ابتدا بدون نوشتن در دیتابیس validate می‌شود:
 
-```powershell
+```bash
 cargo run --locked --offline --bin bsc_import_protocols -- --file docs/protocol-registry.example.jsonl --dry-run
 ```
 
@@ -181,13 +186,13 @@ cargo run --locked --offline --bin bsc_import_protocols -- --file docs/protocol-
 `reviewed_by` معتبر دارد در `protocol_contract_registry_active` دیده می‌شود؛ `pending` و `rejected` هیچ eventی
 تولید نمی‌کنند. اجرای import همزمان برای یک آدرس پشتیبانی نمی‌شود و باید از یک operator/job واحد انجام شود.
 
-```powershell
-cargo run --locked --offline --bin bsc_import_protocols -- --file .\registry-reviewed.jsonl
+```bash
+cargo run --locked --offline --bin bsc_import_protocols -- --file ./registry-reviewed.jsonl
 ```
 
 اجرای همان ابزار داخل Docker با mount فقط‌خواندنی:
 
-```powershell
+```bash
 docker compose --profile tools run --rm -v "${PWD}/registry-reviewed.jsonl:/input/registry.jsonl:ro" bsc-import-protocols --file /input/registry.jsonl
 ```
 
@@ -199,7 +204,7 @@ decoderهای `amm_v2`, `amm_v3`, `aggregator`, `bridge_generic`, `lending_gener
 
 خروجی‌ها در `transaction_features_canonical` و `semantic_aml_events_canonical` قابل مشاهده‌اند:
 
-```powershell
+```bash
 docker compose exec clickhouse sh -lc 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "SELECT event_type, protocol, count() FROM bsc_aml.semantic_aml_events_canonical GROUP BY event_type, protocol ORDER BY event_type, protocol"'
 ```
 
@@ -209,31 +214,39 @@ docker compose exec clickhouse sh -lc 'clickhouse-client --user "$CLICKHOUSE_USE
 
 ## کنترل کیفیت
 
-```powershell
-.\scripts\check.ps1
+تحویل تحقیق، اتصال Neo4j مرکزی و مراحل VM در
+[راهنمای VM](docs/VM_READINESS_FA.md) و [چک‌لیست تحویل](docs/completion-checklist.md) آمده است.
+نتیجه آزمون‌ها و روش تکرار آن‌ها: [verification](docs/verification-20260909.md).
+
+```bash
+bash scripts/check.sh
 ```
 
 تست واقعی ClickHouse شامل lifecycle migration، checksum drift، پنج مرز crash، reorg، dead-letter/requeue،
 receipt/trace fallback، native/token/internal extraction و replay با canonical count ثابت است:
 
-```powershell
-.\scripts\test-clickhouse.ps1
+```bash
+read -r -s -p 'ClickHouse test password: ' BSC_CLICKHOUSE_PASSWORD
+echo
+export BSC_CLICKHOUSE_PASSWORD
+bash scripts/test-clickhouse.sh
+unset BSC_CLICKHOUSE_PASSWORD
 ```
 
 Docker build برای Rust به شبکه وابسته نیست و archive کامل source dependencyها را مصرف می‌کند. فایل
 `vendor-linux.tar.gz` به دلیل حجم در Git نگهداری نمی‌شود؛ پیش از اولین build و پس از هر تغییر در
 `Cargo.lock` آن را روی host دارای cache به‌روزرسانی کنید:
 
-```powershell
-.\scripts\refresh-linux-vendor.ps1
+```bash
+bash scripts/refresh-linux-vendor.sh
 docker build --network=none -t bsc-aml-service:local .
 ```
 
 برای اجرای dependency audit پس از نصب `cargo-audit`:
 
-```powershell
+```bash
 cargo install cargo-audit --locked
-.\scripts\check.ps1 -Audit
+bash scripts/check.sh --audit
 ```
 
 ## سیاست ساخت فایل‌ها

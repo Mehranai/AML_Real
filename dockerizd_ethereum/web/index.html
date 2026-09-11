@@ -292,6 +292,7 @@
     </aside>
   </main>
 
+  <script src="/assets/investigations.js"></script>
   <script>
     const canvas = document.getElementById('graph-canvas');
     const placeholder = document.getElementById('graph-placeholder');
@@ -487,6 +488,7 @@
       button.disabled = true;
       button.textContent = 'Loading';
       try {
+        if (window.AmlSnapshots) return await window.AmlSnapshots.query(url);
         const response = await fetch(url);
         const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(body.error || `Request failed with ${response.status}`);
@@ -523,6 +525,23 @@
       } catch (error) { errorBox.textContent = error.message; }
     });
 
+    window.AmlSnapshots?.onReopen(data => {
+      if (data.investigation.mode === 'paths') {
+        document.getElementById('path-tab').click();
+        document.getElementById('source-address').value = data.source;
+        document.getElementById('target-address').value = data.target;
+        document.getElementById('max-hops').value = String(data.max_hops);
+        if (data.direction) document.getElementById('path-direction').value = data.direction;
+        renderer.setData(data.nodes, data.edges, data.source);
+        renderPaths(data);
+      } else {
+        document.getElementById('wallet-tab').click();
+        renderer.setData(data.graph.nodes, data.graph.edges, data.address);
+        document.getElementById('wallet-address').value = data.address;
+        renderInvestigation(data);
+      }
+    });
+
     function renderInvestigation(data) {
       document.getElementById('evidence-subtitle').textContent = short(data.address);
       const f = data.fingerprint;
@@ -533,10 +552,9 @@
       const clusters = data.clusters.map(item => `<div class="data-row"><div class="row-title"><code title="${escapeHtml(item.cluster_id)}">${escapeHtml(short(item.cluster_id))}</code><span class="badge info">${escapeHtml(item.membership_type)}</span></div><div class="row-meta">Entity ${escapeHtml(short(item.entity_id))} � confidence ${Math.round(item.confidence * 100)}%</div></div>`).join('');
       const exposures = data.exposure_paths.map(item => `<div class="data-row"><div class="row-title"><strong>${escapeHtml(item.direction)}</strong><span class="badge warning">${item.hop_count} hops � ${Math.round(item.exposure_score * 100)}%</span></div><div class="row-meta">Seed ${escapeHtml(short(item.seed_address))} � ${escapeHtml(short(item.asset_id))}${item.service_mediated ? ' � service boundary' : ''}<br><span class="mono">${item.path_addresses.map(short).map(escapeHtml).join(' �w^~)�v ')}</span></div></div>`).join('');
       const risk = data.risk_engine;
-      const signals = (risk.signals || []).map(item => `<div class="data-row"><div class="row-title"><strong>${escapeHtml(item.signal_type)}</strong><span class="badge warning">+${Number(item.contribution).toFixed(1)}</span></div><div class="row-meta">${escapeHtml(item.summary)} � strength ${Math.round(item.signal_strength * 100)}%</div></div>`).join('');
-      const riskPanel = risk.enabled && risk.status === 'available'
-        ? `<div class="metrics">${metric('Risk score', Number(risk.risk_score).toFixed(1))}${metric('Risk level', risk.risk_level)}${metric('Signals', risk.signals.length)}</div><div class="coverage-note">Versioned evidence score using ${escapeHtml(risk.policy_version)}. This is not a statistical probability or a legal conclusion.</div><div class="data-list">${signals || '<p class="empty">No policy signal was activated.</p>'}</div>`
-        : `<span class="badge info">Disabled</span><p class="row-meta">Evidence scoring is disabled by configuration.</p>`;
+      const riskPanel = window.AmlSnapshots
+        ? window.AmlSnapshots.riskMarkup(risk)
+        : '<p>Evidence scoring and storage are available on the main VM.</p>';
       evidence.innerHTML = `
         <section class="evidence-section"><h3 class="section-title">Behavioral fingerprint</h3><div class="metrics">
           ${metric('Transactions', f.transaction_count)}${metric('Fund flows', f.transfer_count)}${metric('Counterparties', f.unique_counterparties)}${metric('Contract calls', f.contract_calls)}${metric('Inbound', f.inbound_transfers)}${metric('Outbound', f.outbound_transfers)}${metric('Swaps', f.swap_events)}${metric('Bridges', f.bridge_events)}${metric('Mixer', f.mixer_events)}${metric('Liquidity', f.liquidity_events)}
@@ -549,7 +567,7 @@
         <section class="evidence-section"><h3 class="section-title">Asset flows</h3><div class="data-list">${assets || '<p class="empty">No stored asset flow was found.</p>'}</div></section>
         <section class="evidence-section"><h3 class="section-title">Top counterparties</h3><div class="data-list">${counterparties || '<p class="empty">No counterparty was found in the stored range.</p>'}</div></section>
         <section class="evidence-section"><h3 class="section-title">Semantic events</h3><div class="data-list">${events || '<p class="empty">No decoded swap, bridge, mixer, or liquidity event is stored for this wallet yet.</p>'}</div></section>
-        <section class="evidence-section"><h3 class="section-title">Graph projection</h3><div class="row-meta">${data.neo4j_projection.projected ? `${number(data.neo4j_projection.node_count)} wallets and ${number(data.neo4j_projection.edge_count)} transfer edges synchronized to Neo4j.` : 'Read-only result. Use the Neo4j import endpoint when a persisted projection is required.'}</div></section>`;
+        <section class="evidence-section"><h3 class="section-title">Graph projection</h3><div class="row-meta">${data.neo4j_projection.projected ? `${number(data.neo4j_projection.node_count)} wallets and ${number(data.neo4j_projection.edge_count)} transfer edges synchronized to Neo4j.` : 'Snapshot storage is managed by the main VM.'}</div></section>`;
     }
 
     function renderPaths(data) {
@@ -573,7 +591,7 @@
         const body = await response.json();
         if (!response.ok) throw new Error();
         dot.className = 'status-dot ready';
-        text.textContent = `ClickHouse ${body.dependencies.clickhouse} · Neo4j ${body.dependencies.neo4j}`;
+        text.textContent = `ClickHouse ${body.dependencies.clickhouse} | Graph storage: central VM`;
       } catch (_) {
         dot.className = 'status-dot failed';
         text.textContent = 'Dependencies unavailable';

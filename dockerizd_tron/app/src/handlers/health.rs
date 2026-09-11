@@ -5,10 +5,14 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use clickhouse::Client;
-use neo4rs::query;
+
 use serde::Deserialize;
 use serde_json::json;
 use tokio::time::timeout;
+
+pub async fn central_projection_only() -> impl IntoResponse {
+    (StatusCode::GONE, Json(json!({"error":"Use the main VM investigation Export endpoint; chain APIs do not persist graphs."})))
+}
 
 pub async fn health_check() -> Json<serde_json::Value> {
     Json(json!({"status":"alive"}))
@@ -39,22 +43,7 @@ pub async fn readiness_check() -> impl IntoResponse {
     .and_then(Result::ok)
     .unwrap_or(false);
 
-    let neo4j_ready = timeout(Duration::from_secs(3), async {
-        let client = crate::services::tron::neo4j::client::Neo4jClient::new(
-            &config.neo4j_uri,
-            &config.neo4j_username,
-            &config.neo4j_password,
-        )
-        .await?;
-        client.graph.run(query("RETURN 1 AS value")).await?;
-        Ok::<bool, anyhow::Error>(true)
-    })
-    .await
-    .ok()
-    .and_then(Result::ok)
-    .unwrap_or(false);
-
-    let ready = clickhouse_ready && neo4j_ready;
+    let ready = clickhouse_ready;
     let status = if ready {
         StatusCode::OK
     } else {
@@ -67,7 +56,7 @@ pub async fn readiness_check() -> impl IntoResponse {
             "status": if ready { "ready" } else { "not_ready" },
             "dependencies": {
                 "clickhouse": if clickhouse_ready { "ready" } else { "unavailable" },
-                "neo4j": if neo4j_ready { "ready" } else { "unavailable" }
+                "graph_storage": "central_analytical_node"
             }
         })),
     )

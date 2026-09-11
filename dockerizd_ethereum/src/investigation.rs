@@ -19,7 +19,7 @@ const MAX_PER_ADDRESS_LIMIT: u64 = 2_000;
 #[derive(Clone)]
 pub struct InvestigationService {
     clickhouse: Client,
-    graph: EthereumGraph,
+    graph: Option<EthereumGraph>,
     network_id: String,
     graph_max_edges: usize,
     risk_engine: EvidenceRiskEngine,
@@ -366,7 +366,7 @@ struct PlatformStatusRow {
 impl InvestigationService {
     pub fn new(
         clickhouse: Client,
-        graph: EthereumGraph,
+        graph: Option<EthereumGraph>,
         network_id: String,
         graph_max_edges: usize,
         risk_engine: EvidenceRiskEngine,
@@ -397,7 +397,7 @@ impl InvestigationService {
     }
 
     pub async fn probe_neo4j(&self) -> anyhow::Result<()> {
-        self.graph.probe().await
+        self.graph.as_ref().context("Graph storage is managed by the main VM")?.probe().await
     }
 
     pub async fn investigate_wallet(
@@ -450,8 +450,9 @@ impl InvestigationService {
         let graph = build_wallet_graph(address, edges, limit as usize);
 
         let projection = if project_to_neo4j {
-            self.graph.project_wallet(&self.network_id, address).await?;
-            self.graph.project_edges(&graph.edges).await?
+            let store = self.graph.as_ref().context("Graph storage is managed by the main VM")?;
+            store.project_wallet(&self.network_id, address).await?;
+            store.project_edges(&graph.edges).await?
         } else {
             ProjectionSummary::default()
         };
@@ -628,7 +629,7 @@ impl InvestigationService {
         edges.sort_by_key(|edge| (edge.block_number, edge.id.clone()));
         let nodes = build_nodes(source, &edges);
         let projection = if project_to_neo4j {
-            self.graph.project_edges(&edges).await?
+            self.graph.as_ref().context("Graph storage is managed by the main VM")?.project_edges(&edges).await?
         } else {
             ProjectionSummary::default()
         };

@@ -1,6 +1,58 @@
 name: aml-whole
 
 services:
+  neo4j:
+    image: neo4j:5.26-community
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?Set the central NEO4J_PASSWORD in .env}
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512m
+      NEO4J_db_transaction_timeout: 60s
+    ports:
+      - "127.0.0.1:${AML_NEO4J_HTTP_PORT:-7474}:7474"
+      - "127.0.0.1:${AML_NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - central_neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${NEO4J_AUTH#*/}\" 'RETURN 1' >/dev/null"]
+      interval: 10s
+      timeout: 8s
+      retries: 20
+      start_period: 40s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  analytical-node:
+    image: aml-analytical-node:local
+    build: ./analytical_node
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      AML_NEO4J_HTTP_URL: http://neo4j:7474
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?Set the central NEO4J_PASSWORD in .env}
+      AML_GRAPH_TTL_HOURS: ${AML_GRAPH_TTL_HOURS:-24}
+      AML_SERVICE_KEY: ${AML_SERVICE_KEY:?Set AML_SERVICE_KEY in .env}
+      AML_TRON_UPSTREAM: ${AML_TRON_UPSTREAM:-http://host.docker.internal:4001}
+      AML_ETHEREUM_UPSTREAM: ${AML_ETHEREUM_UPSTREAM:-http://host.docker.internal:5001}
+      AML_BSC_UPSTREAM: ${AML_BSC_UPSTREAM:-http://host.docker.internal:6001}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      neo4j: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "aml_analytical_node", "--healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
   gateway:
     image: aml-whole-gateway:local
     build:
@@ -19,14 +71,17 @@ services:
     environment:
       AML_TRON_UPSTREAM: ${AML_TRON_UPSTREAM:-http://host.docker.internal:4001}
       AML_ETHEREUM_UPSTREAM: ${AML_ETHEREUM_UPSTREAM:-http://host.docker.internal:5001}
-      AML_SERVICE_KEY: ${AML_SERVICE_KEY:-}
+      AML_BSC_UPSTREAM: ${AML_BSC_UPSTREAM:-http://host.docker.internal:6001}
+      AML_SERVICE_KEY: ${AML_SERVICE_KEY:?Set AML_SERVICE_KEY in .env}
       AML_BASIC_AUTH_REALM: ${AML_BASIC_AUTH_REALM:-off}
       NGINX_ENVSUBST_OUTPUT_DIR: /tmp
-      NGINX_ENVSUBST_FILTER: ^AML_((TRON|ETHEREUM)_UPSTREAM|SERVICE_KEY|BASIC_AUTH_REALM)$$
+      NGINX_ENVSUBST_FILTER: ^AML_((TRON|ETHEREUM|BSC)_UPSTREAM|SERVICE_KEY|BASIC_AUTH_REALM)$$
     volumes:
       - "${AML_HTPASSWD_FILE:-./gateway/auth/disabled.htpasswd}:/etc/nginx/auth/htpasswd:ro"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      analytical-node: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
       interval: 15s
@@ -38,3 +93,6 @@ services:
         max-size: "10m"
         max-file: "3"
     stop_grace_period: 15s
+
+volumes:
+  central_neo4j_data:

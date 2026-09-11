@@ -1,93 +1,151 @@
 # AML Whole
 
-ورودی مشترک سامانه تحقیق کیف پول برای TRON و Ethereum.
-این پوشه دو سرویس مستقل را کنار هم نگه می‌دارد؛ داده‌ها و منطق شبکه‌ها با هم ادغام نمی‌شوند.
+سامانه تحقیق کیف پول برای TRON، Ethereum و BNB Smart Chain با یک مخزن Git و استقرار مستقل هر شبکه.
+کاربر در VM اصلی شبکه و آدرس کیف پول را انتخاب می‌کند؛ Analytical Node شواهد API همان شبکه را دریافت می‌کند.
+فقط VM اصلی Neo4j دارد: بررسی‌ها ابتدا موقت‌اند و Export همان snapshot را دائمی می‌کند. امتیاز ریسک بدون ML و با دلایل قابل بررسی ارائه می‌شود.
 
-راهنمای کامل استقرار روی VM اصلی و VM مستقل هر شبکه:
-[`docs/MULTI_VM_DEPLOYMENT_FA.md`](docs/MULTI_VM_DEPLOYMENT_FA.md)
+[راهنمای Neo4j مرکزی، Export و ریسک بدون ML](docs/CENTRAL_INVESTIGATIONS_FA.md)
 
-## اجرا در Windows / Docker Desktop
+[راهنمای BSC: اجرا روی VM، داده‌های هویتی، holdings و محدودیت‌های تحویل](dockerizd_bsc/docs/VM_READINESS_FA.md)
 
-از ریشه همین پوشه اجرا کنید:
+راهنمای مرحله‌به‌مرحله نصب، شبکه، رمزها، انتقال آفلاین و تست:
+[راهنمای استقرار روی Linux](docs/MULTI_VM_DEPLOYMENT_FA.md).
 
-```powershell
-cd D:\Sarbazi\AML_Whole
-.\scripts\aml.ps1 up
+## اجرای Linux روی چند VM
+
+پیش‌نیاز: Linux، Bash نسخه 4 یا بالاتر، Docker Engine و افزونه Docker Compose v2.
+برای helperهای تست و انتقال، `curl`، `jq`، `openssl` و `sha256sum` لازم‌اند.
+تمام دستورات زیر از ریشه مخزن اجرا می‌شوند. فقط role همان VM را اجرا کنید.
+
+```bash
+git clone https://github.com/Mehranai/AML_Real.git "$HOME/AML_Whole"
+cd "$HOME/AML_Whole"
 ```
 
-آدرس صفحه اصلی: http://127.0.0.1:8080
+روی TRON VM:
 
-شبکه را انتخاب کنید، آدرس همان شبکه را وارد کنید و Investigate را بزنید.
-صفحه کامل تحقیق آن شبکه باز می‌شود و آدرس به صورت خودکار جست‌وجو می‌شود.
-پیوند Networks در بالای صفحه شما را به انتخاب شبکه برمی‌گرداند.
-Open console نیز بدون واردکردن آدرس، صفحه همان شبکه را برای جست‌وجوی مسیر دو کیف پول باز می‌کند.
-
-پیش‌نیازها: Docker Desktop با Linux containers و تنظیمات موجود هر شبکه:
-
-- `dockerizd_tron/app/.env`
-- `dockerizd_ethereum/.env`
-
-کلید RPC و رمز دیتابیس فقط در فایل مربوط به همان شبکه باقی می‌ماند.
-فایل `.env` ریشه اختیاری است؛ برای تغییر پورت 8080 یا آدرس APIها از `.env.example` همین پوشه استفاده کنید.
-اگر PowerShell اجرای اسکریپت را محدود کرده است، دستور معادل:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\aml.ps1 up
+```bash
+umask 077
+cp -n dockerizd_tron/app/.env.example dockerizd_tron/app/.env
+nano dockerizd_tron/app/.env
+bash scripts/vm.sh tron up --build
+bash scripts/vm.sh tron check
 ```
 
-اجرای پیش‌فرض فقط APIها و وابستگی‌های دیتابیس را بالا می‌آورد. Ingestion جدید شروع نمی‌شود و از سهمیه RPC مصرف نمی‌کند.
-کارگرهایی که از قبل در حال اجرا بوده‌اند متوقف نمی‌شوند.
+روی Ethereum VM:
 
-```powershell
-# اجرای ingestion و workerها همراه رابط
-.\scripts\aml.ps1 up -WithIngestion
-# بازسازی تصاویر Rust پس از تغییر کد backend
-.\scripts\aml.ps1 up -Build -WithIngestion
-# وضعیت و آخرین log هر سه stack
-.\scripts\aml.ps1 ps
-.\scripts\aml.ps1 logs
-# توقف بدون حذف volumeهای دیتابیس
-.\scripts\aml.ps1 down
+```bash
+umask 077
+cp -n dockerizd_ethereum/.env.example dockerizd_ethereum/.env
+nano dockerizd_ethereum/.env
+bash scripts/vm.sh ethereum up --build
+bash scripts/vm.sh ethereum check
 ```
 
-## ساختار و مسیر درخواست
+روی Main VM:
+
+```bash
+umask 077
+cp -n .env.example .env
+nano .env
+bash scripts/vm.sh main up --build
+bash scripts/vm.sh main check
+bash scripts/smoke-test.sh --main-url http://127.0.0.1:8080
+```
+
+قبل از up، RPC و رمز ClickHouse شبکه‌ها و رمز Neo4j فقط در `.env` اصلی را تنظیم کنید. `API_BIND_ADDRESS` هر Chain VM باید IP خصوصی واقعی آن VM باشد؛
+`AML_TRON_UPSTREAM` و `AML_ETHEREUM_UPSTREAM` در Main VM باید همان IPها را نشان دهند.
+`DATABASE_BIND_ADDRESS=127.0.0.1` باقی می‌ماند.
+
+یک کلید با `bash scripts/new-service-key.sh` بسازید و مقدار یکسان آن را در `AML_SERVICE_KEY` هر سه VM قرار دهید.
+در Chain VMها `AML_SERVICE_AUTH_REQUIRED=true` تنظیم شود.
+راهنمای کامل، فعال‌کردن رمز UI و تنظیم TLS را توضیح می‌دهد.
+
+صفحه اصلی روی `http://MAIN_VM_IP:8080` در دسترس است؛ برای دسترسی از شبکه، `AML_BIND_ADDRESS` در Main VM را
+به IP مناسب تغییر دهید. مقدار پیش‌فرض آن فقط localhost است.
+
+## دستورهای روزانه
+
+```bash
+# API و دیتابیس، بدون شروع ingestion جدید
+bash scripts/vm.sh tron up --build --api-only
+bash scripts/vm.sh ethereum up --build --api-only
+
+# مشاهده وضعیت، log و توقف بدون حذف volume
+bash scripts/vm.sh tron ps
+bash scripts/vm.sh ethereum logs
+bash scripts/vm.sh main check
+bash scripts/vm.sh tron down
+```
+
+اجرای API-only، workerهایی را که قبلاً روشن بوده‌اند متوقف نمی‌کند.
+نام Compose پروژه‌ها در launcher چند VM به‌ترتیب `aml-main`، `aml-tron` و `aml-ethereum` است.
+برای داده‌های قدیمی، نام پروژه موجود را با `docker compose ls -a` بررسی و در همه دستورات همان `--project NAME` را بدهید؛
+تغییر نام پروژه باعث انتخاب volume دیگری می‌شود.
+
+## اجرای همه سرویس‌ها روی یک میزبان Linux
+
+`aml.sh` برای آزمایش تک‌میزبانی است. فایل `.env` ریشه و هر دو شبکه لازم‌اند.
+روی Linux، Gateway داخل container نمی‌تواند به سرویس bindشده فقط روی localhost میزبان وصل شود.
+IP خصوصی قابل‌دسترسی میزبان را در `API_BIND_ADDRESS` هر دو شبکه و upstreamهای ریشه بنویسید.
+
+```bash
+# پیش‌فرض: APIها و دیتابیس‌ها
+bash scripts/aml.sh up --build
+# به‌همراه ingestion و workerها
+bash scripts/aml.sh up --build --with-ingestion
+bash scripts/aml.sh ps
+bash scripts/aml.sh down
+```
+
+این launcher نام‌های قدیمی `app`، `dockerizd_ethereum` و `aml-whole` را حفظ می‌کند.
+برای استفاده از volumeهای launcher چند VM، صریحاً گزینه‌های
+`--tron-project aml-tron --ethereum-project aml-ethereum --main-project aml-main` را بدهید.
+
+## انتقال imageهای آماده
+
+```bash
+bash scripts/export-images.sh --output ./deployment-artifacts
+# پوشه deployment-artifacts را به VM مقصد منتقل کنید.
+bash scripts/import-images.sh ./deployment-artifacts
+bash scripts/vm.sh tron up --pull-never
+```
+
+روی هر VM فقط role همان VM را اجرا کنید. بدون `--build`، build خودکار انجام نمی‌شود؛
+`--pull-never` نیز دانلود image در مقصد را غیرفعال می‌کند.
+manifest و SHA-256 تمام imageها پیش از import بررسی می‌شوند.
+بسته شامل imageهای برنامه، ClickHouse و Neo4j است؛ داده دیتابیس و فایل‌های `.env` داخل آن نیست.
+
+## ساختار پروژه
 
 ```text
 AML_Whole/
-  compose.yaml                  فقط gateway مشترک
-  scripts/aml.ps1                اجرای stackها از مسیر نسبی جدید
-  gateway/
-    Dockerfile                  تصویر سبک Nginx و UIها
-    nginx.conf                  تنظیمات عمومی و access log بدون آدرس کیف پول
-    default.conf.template       مسیردهی ثابت به API هر شبکه
-    web/                        فرم انتخاب شبکه، آدرس و وضعیت سرویس‌ها
-    tests/                      تست آدرس، مسیردهی و جریان مرورگر
-  dockerizd_tron/app/            سرویس Rust، UI، SQL و Compose موجود TRON
-  dockerizd_ethereum/            سرویس Rust، UI، SQL و Compose موجود Ethereum
-  dockerizd_bsc/                 schema/ingestion/replay آماده؛ investigation API و UI هنوز فعال نیست
-  contracts/                     قرارداد versioned بین Gateway و Chain VMها
+  .git/                         تنها مخزن Git
+  compose.yaml                  Gateway
+  scripts/                      launcher، کلید، انتقال و smoke-test با Bash
+  gateway/                      Nginx، انتخاب شبکه و تست‌های UI
+  contracts/                    قرارداد API بین VMها
+  docs/                         راهنمای استقرار
+  dockerizd_tron/app/            Rust، SQL، UI و Compose ترون
+  dockerizd_ethereum/            Rust، SQL، UI و Compose اتریوم
+  dockerizd_bsc/                 ingestion/replay/schema؛ investigation هنوز آماده نیست
 ```
 
 ```text
 Browser: network + wallet
-  -> /networks/tron/?address=...       یا /networks/ethereum/?address=...
-  -> همان UI موجود شبکه، با ارسال خودکار فرم
-  -> /api/tron/...                    یا /api/ethereum/...
-  -> Nginx -> API Rust همان شبکه
-  -> ClickHouse همان شبکه -> تحلیل/گراف موجود -> Neo4j طبق جریان همان شبکه
-  -> JSON -> نمودار و پنل شواهد همان UI
+  -> Main VM / Gateway
+  -> Chain VM / Rust API
+  -> ClickHouse / evidence and graph queries
+  -> JSON / browser graph and evidence panels
+
+Explicit POST /neo4j/import -> Neo4j projection on the same Chain VM
 ```
 
-Gateway موتور تحلیل یا دیتابیس جدیدی ندارد. فایل‌های HTML از مسیر اصلی شبکه‌ها در زمان build کپی می‌شوند؛
-دو نسخه مستقل از UI در کد نگهداری نمی‌شود. بعد از تغییر UI، gateway را دوباره build کنید.
-صفحات مستقیم قبلی روی 4001 و 5001 همچنان قابل استفاده‌اند؛ برای به‌روزرسانی HTML تعبیه‌شده در Rust باید تصویر همان شبکه نیز build شود.
+GETهای investigation و paths داده ذخیره‌شده را می‌خوانند؛ projection پایدار Neo4j با POST انجام می‌شود.
+HTML هر شبکه هنگام build Gateway از سورس همان شبکه کپی می‌شود. پس از تغییر UI، imageهای Gateway و API مربوط را بازسازی کنید.
+این استقرار تطبیق bridge بین شبکه‌ها یا گراف مشترک چندزنجیره‌ای اضافه نمی‌کند.
 
-مسیرهای investigation، holdings/fingerprint موجود TRON، جست‌وجوی مسیر تا سقف قبلی 10 hop،
-ارسال POST به Neo4j و snapshotهای TRON بدون تغییر قرارداد backend عبور داده می‌شوند.
-درگاه قابلیت تازه‌ای برای تطبیق bridge بین شبکه‌ها اضافه نمی‌کند؛ مسیر بین TRON و Ethereum هنوز یک گراف مشترک نیست.
-هیچ ML یا محاسبه ریسک جدیدی به این تغییر اضافه نشده است.
-
-## پورت‌ها و حفظ داده بعد از جابه‌جایی
+## پورت‌ها
 
 | سرویس | TRON | Ethereum |
 |---|---|---|
@@ -97,81 +155,27 @@ Gateway موتور تحلیل یا دیتابیس جدیدی ندارد. فای�
 | Neo4j Browser | 18474 | 28474 |
 | Neo4j Bolt | 17687 | 27687 |
 
-پورت‌ها defaults هستند و ممکن است در `.env` شبکه تغییر کرده باشند. در آن صورت upstream ریشه را نیز هماهنگ کنید.
-اسکریپت نام پروژه Compose قبلی را حفظ می‌کند: TRON با `app` و Ethereum با `dockerizd_ethereum`.
-بنابراین همان named volumeهای قبلی استفاده می‌شوند. اگر قبلاً نام دیگری داشته‌اید، قبل از up از
-`docker compose ls -a` کمک بگیرید و پارامترهای `-TronProject` و `-EthereumProject` را تنظیم کنید.
-صرفاً start کردن کانتینر قدیمی کافی نیست: bind mount آن ممکن است هنوز به پوشه قبلی اشاره کند.
-اجرای compose up از مسیر جدید، mount فایل SQL ترون را با مسیر جدید بازسازی می‌کند.
-هیچ دستور `down -v` یا حذف داده‌ای در اسکریپت وجود ندارد.
+پورت‌ها قابل تنظیم‌اند. دیتابیس‌ها فقط روی localhost همان VM منتشر می‌شوند.
 
-## استقرار شبکه‌ها روی سیستم‌های جدا
+## تست
 
-هر شبکه می‌تواند Compose خودش را روی ماشین مستقل اجرا کند. روی ماشین gateway فقط این دستور کافی است:
+```bash
+# تست قرارداد launcherها، خطاها و checksum، بدون دیتابیس یا RPC واقعی
+bash scripts/tests/linux-cli.sh
 
-```powershell
-docker compose up -d --build
-# یا
-.\scripts\aml.ps1 up -GatewayOnly
-```
+# تست واقعی image آماده Gateway با پورت و کانتینر موقت
+bash scripts/tests/gateway-docker.sh
 
-در `.env` ریشه آدرس خصوصی APIها را تنظیم کنید:
-
-```dotenv
-AML_TRON_UPSTREAM=http://tron-api.internal:4001
-AML_ETHEREUM_UPSTREAM=http://ethereum-api.internal:5001
-```
-
-مقدار upstream باید فقط origin باشد: بدون path، slash انتهایی یا username/password.
-TLS برای upstreamهای HTTPS بررسی می‌شود. مرورگر فقط با gateway ارتباط دارد؛ CORS بین پورت‌های شبکه لازم نیست.
-روی Linux، پیش‌فرض `host.docker.internal` به gateway میزبان resolve می‌شود ولی سرویس bindشده فقط به 127.0.0.1
-ممکن است از کانتینر قابل دسترس نباشد. از شبکه Docker مشترک یا IP خصوصی قابل دسترس استفاده کنید.
-برای ماشین‌های مجزا پورت API باید با firewall فقط برای gateway قابل دسترس شود؛ دیتابیس‌ها را عمومی نکنید.
-
-اجرای role محلی هر VM با اسکریپت واحد:
-
-```powershell
-.\scripts\vm.ps1 -Role tron -Action up -Build
-.\scripts\vm.ps1 -Role ethereum -Action up -Build
-.\scripts\vm.ps1 -Role main -Action up -Build
-```
-
-در deployment چند-VM هر دستور فقط روی VM مربوط به همان role اجرا می‌شود. راهنمای جزئی تنظیم IP، کلید سرویس،
-Basic Auth، firewall، تست و انتقال آفلاین در `docs/MULTI_VM_DEPLOYMENT_FA.md` قرار دارد.
-
-این ورودی به‌صورت پیش‌فرض روی localhost منتشر می‌شود. Basic Auth اختیاری برای ارائه و شبکه داخلی پیاده‌سازی شده است؛
-برای دسترسی عمومی یا چندکاربره، Gateway را پشت OIDC/SSO و TLS سازمان قرار دهید.
-
-## وضعیت و تست
-
-`/health` فقط سلامت خود gateway است. وضعیت ClickHouse و Neo4j در صفحه اصلی از `/ready` هر شبکه خوانده می‌شود.
-Ready به معنی تکمیل تاریخچه ingestion نیست. Unknown یعنی API پاسخ معتبر نداده و وضعیت دیتابیس معلوم نیست.
-آفلاین‌بودن یک شبکه مانع استفاده از شبکه دیگر نیست. درخواست‌های 502/504 اتصال با خطای JSON و وضعیت 503 نمایش داده می‌شوند.
-
-```powershell
-npm test
+# تست آدرس و مسیردهی
 npm ci
+npm test
+# تست مرورگر؛ Docker روشن و image Gateway ساخته‌شده لازم است
 npx playwright install chromium
 npm run test:browser
 ```
 
-Node فقط برای تست توسعه است؛ در محیط اجرایی gateway به Node یا Python نیاز ندارد.
-تست مرورگر به Docker روشن و تصویر ساخته‌شده gateway نیاز دارد. یک stack موقت مستقل و دو API ساختگی ایجاد می‌کند
-و در پایان آن‌ها را جمع می‌کند؛ به دیتابیس واقعی داده تستی اضافه نمی‌کند.
-تست مرورگر از پاسخ‌های کنترل‌شده استفاده می‌کند و صحت مسیردهی/UI را می‌سنجد، نه صحت داده زنده زنجیره.
-برای تست زنده، آدرسی از داده‌های ingestشده ClickHouse همان شبکه جست‌وجو کنید.
+تست مرورگر از پاسخ‌های کنترل‌شده استفاده می‌کند. برای تست داده واقعی، آدرس ingestشده در ClickHouse را به
+`scripts/smoke-test.sh` بدهید. `ready` فقط آمادگی وابستگی‌هاست و به معنی کامل‌بودن تاریخچه شبکه نیست.
 
-### نتیجه بررسی این نسخه
-
-در 2026-09-03، تست‌های آدرس، Nginx، جداسازی درخواست شبکه‌ها، حفظ query و POST، قطع یک API،
-جست‌وجوی خودکار و نمایش نمودار/مسیر در مرورگر پاس شدند. نماهای 390، 768 و 1440 پیکسل بررسی شدند.
-بررسی زنده از درگاه نیز برای این آدرس‌های موجود در دیتابیس پاسخ 200 داد:
-
-- TRON: `TGX6tRfV4CcUH4hbsujqhcL8omACeGu4kQ`، گراف محدود به 25 انتقال با 26 node.
-- Ethereum: `0x238a4d9fb5337fa220f98f2829d9d903664b337b`، گراف با 1 انتقال و 2 node.
-
-برای هر دو جفت آدرس ذخیره‌شده، جست‌وجوی مسیر با سقف 10 hop نیز پاسخ داد. این تست به معنی کشف مسیر 10 مرحله‌ای نیست؛
-مسیر پیدا‌شده مستقیم بود. جست‌وجوی TRON با `per_address_limit=10` مقدار `truncated=true` داشت و ادعای کامل‌بودن نمی‌کند.
-تغییرات این مرحله schema را تغییر نمی‌دهند و داده‌های قبلی حذف نشده‌اند.
-
-مرجع تنظیمات پروکسی: [مستندات رسمی Nginx](https://nginx.org/en/docs/http/ngx_http_proxy_module.html).
+فایل‌های `.sh` در Git با LF و مجوز اجرا نگهداری می‌شوند. در صورت انتقال با ZIP یا از فایل‌سیستم بدون مجوز Unix،
+اجرای `bash scripts/vm.sh ...` به executable bit وابسته نیست.

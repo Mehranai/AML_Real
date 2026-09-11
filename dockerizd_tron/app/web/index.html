@@ -877,7 +877,7 @@
             <div class="metric"><span>Exchanges</span><strong id="metricExchanges">0</strong></div>
             <div class="metric"><span>AML events</span><strong id="metricAmlEvents">0</strong></div>
             <div class="metric"><span>Assets</span><strong id="metricAssets">0</strong></div>
-            <div class="metric"><span>Projected edges</span><strong id="metricNeo4j">0</strong></div>
+            <div class="metric"><span>Risk score</span><strong id="metricNeo4j">Unknown</strong></div>
           </section>
 
           <section class="panel graph-panel">
@@ -906,6 +906,7 @@
 
         <aside class="aside">
           <div class="inspector-tabs" role="tablist" aria-label="Investigation panels">
+            <button class="inspector-tab" type="button" role="tab" data-inspector-tab="risk">Risk</button>
             <button class="inspector-tab" type="button" role="tab" data-inspector-tab="fingerprint">Fingerprint</button>
             <button class="inspector-tab" type="button" role="tab" data-inspector-tab="flows">Flows</button>
             <button class="inspector-tab" type="button" role="tab" data-inspector-tab="identity">Identity</button>
@@ -917,6 +918,7 @@
           </div>
 
           <div class="inspector-body">
+          <section class="inspector-panel" data-inspector-panel="risk" hidden><div id="central-risk-panel"></div></section>
           <section class="panel inspector-panel" data-inspector-panel="fingerprint" role="tabpanel">
             <div class="panel-head">
               <strong>Fingerprint</strong>
@@ -1074,7 +1076,7 @@
               </form>
               <div class="path-summary" id="pathSummary">No wallet path search loaded.</div>
               <div class="list" id="pathList" style="margin-bottom:12px"></div>
-              <button class="secondary" id="projectButton" type="button" style="width:100%;margin-bottom:12px">Project visible graph to Neo4j</button>
+              <button class="secondary" id="projectButton" type="button" style="width:100%;margin-bottom:12px">Export investigation</button>
               <div class="kv" style="margin-bottom:12px">
                 <div class="kv-row"><span>Wallet nodes</span><strong id="neoWalletNodes">0</strong></div>
                 <div class="kv-row"><span>Transfer edges</span><strong id="neoTransferEdges">0</strong></div>
@@ -1091,6 +1093,7 @@
 
   <div class="toast" id="toast"></div>
 
+  <script src="/assets/investigations.js"></script>
   <script>
     const state = {
       investigation: null,
@@ -1206,7 +1209,7 @@
           max_events: '20000',
           holdings_limit: '100'
         });
-        const response = await fetch(`/api/tron/wallet/${encodeURIComponent(address)}/investigation?${query.toString()}`, {
+        const response = await investigationResponse(`/api/tron/wallet/${encodeURIComponent(address)}/investigation?${query.toString()}`, {
           headers: { accept: 'application/json' }
         });
 
@@ -1258,7 +1261,7 @@
           per_address_limit: '500',
           direction
         });
-        const response = await fetch(`/api/tron/wallet/${encodeURIComponent(source)}/paths/${encodeURIComponent(target)}?${query.toString()}`, {
+        const response = await investigationResponse(`/api/tron/wallet/${encodeURIComponent(source)}/paths/${encodeURIComponent(target)}?${query.toString()}`, {
           headers: { accept: 'application/json' }
         });
 
@@ -1268,6 +1271,7 @@
         }
 
         state.pathResult = await response.json();
+        clearWalletEvidence();
         state.graph = state.pathResult;
         state.selectedNodeId = state.pathResult.source_address;
         state.inspectorTab = 'paths';
@@ -1283,63 +1287,50 @@
     }
 
     async function projectVisibleGraph() {
-      const walletAddress = els.wallet.value.trim();
+      if (window.AmlSnapshots) await window.AmlSnapshots.exportCurrent();
+      else showToast('Open the main VM interface to save an investigation.');
+    }
 
-      if (!state.graph || (!state.pathResult && !walletAddress)) {
-        showToast('Load a wallet graph or wallet path first.');
-        return;
-      }
-
-      els.projectButton.disabled = true;
-      els.projectButton.textContent = 'Projecting...';
-
-      try {
-        let endpoint;
-
-        if (state.pathResult) {
-          const source = state.pathResult.source_address;
-          const target = state.pathResult.target_address;
-          const query = new URLSearchParams({
-            max_depth: String(state.pathResult.max_depth || 10),
-            limit: '20',
-            per_address_limit: '500',
-            direction: state.pathResult.direction || 'outgoing'
-          });
-          endpoint = `/api/tron/wallet/${encodeURIComponent(source)}/paths/${encodeURIComponent(target)}/neo4j/import?${query.toString()}`;
-        } else {
-          const query = new URLSearchParams({
-            depth: String(Number(els.depth.value || 3)),
-            limit: String(Number(els.limit.value || 500))
-          });
-          endpoint = `/api/tron/wallet/${encodeURIComponent(walletAddress)}/neo4j/import?${query.toString()}`;
-        }
-
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { accept: 'application/json' }
-        });
-
-        if (!response.ok) {
-          const message = await response.text();
-          throw new Error(message || `Request failed with ${response.status}`);
-        }
-
-        const projected = await response.json();
-        state.graph = projected;
-        if (state.pathResult) {
-          state.pathResult = projected;
-        } else if (state.investigation) {
-          state.investigation.graph = projected;
-        }
-        renderAll();
-        showToast('Visible graph projected to Neo4j.');
-      } catch (error) {
-        showToast(error.message || 'Failed to project graph to Neo4j.');
-      } finally {
-        els.projectButton.disabled = false;
-        els.projectButton.textContent = 'Project visible graph to Neo4j';
+    function clearWalletEvidence() {
+      for (const key of ['investigation', 'holdings', 'fingerprint', 'activity', 'intelligence', 'dataQuality']) {
+        state[key] = null;
       }
     }
+
+    async function investigationResponse(url, options) {
+      if (!window.AmlSnapshots) return fetch(url, options);
+      const data = await window.AmlSnapshots.query(url);
+      return { ok: true, json: async () => data };
+    }
+
+    window.AmlSnapshots?.onReopen(data => {
+      if (data.investigation.mode === 'paths') {
+        clearWalletEvidence();
+        state.pathResult = data;
+        state.graph = data;
+        els.pathSource.value = data.source_address;
+        els.pathTarget.value = data.target_address;
+        els.pathDepth.value = String(data.max_depth);
+        state.inspectorTab = 'paths';
+        state.selectedNodeId = data.source_address;
+        els.activeAddress.textContent = data.source_address + ' -> ' + data.target_address;
+      } else {
+        state.investigation = data;
+        state.graph = data.graph;
+        state.holdings = data.holdings;
+        state.fingerprint = data.fingerprint;
+        state.activity = data.activity;
+        state.intelligence = data.intelligence;
+        state.dataQuality = data.data_quality;
+        state.pathResult = null;
+        state.selectedNodeId = data.address;
+        els.wallet.value = data.address;
+        els.activeAddress.textContent = data.address;
+        state.inspectorTab = 'risk';
+      }
+      hydrateOperationFilter();
+      renderAll();
+    });
 
     function setLoading(loading) {
       els.button.disabled = loading;
@@ -1454,7 +1445,8 @@
       document.getElementById('metricAssets').textContent = state.pathResult
         ? '-'
         : String(state.holdings?.total_asset_count || 0);
-      document.getElementById('metricNeo4j').textContent = String(graph?.neo4j?.imported_transfer_edges || 0);
+      const score = state.pathResult ? null : state.investigation?.risk_engine?.risk_score;
+      document.getElementById('metricNeo4j').textContent = score == null ? 'Unknown' : score + ' / 100';
     }
 
     function renderFingerprint() {
@@ -1948,13 +1940,21 @@
     }
 
     function renderNeo4j() {
-      const neo = state.graph?.neo4j;
+      const snapshot = (state.pathResult || state.investigation)?.investigation;
+      const neo = snapshot ? {
+        imported_wallet_nodes: state.graph?.nodes?.length || 0,
+        imported_transfer_edges: state.graph?.edges?.length || 0,
+        imported_exchange_interactions: 0,
+        cypher: 'MATCH (i:Investigation {id: ' + JSON.stringify(snapshot.id) + '})-[:CONTAINS]->(w:InvestigationWallet)\nOPTIONAL MATCH (w)-[r:TRANSFER]->(other:InvestigationWallet)\nWHERE other.investigation_id = i.id\nRETURN i, w, r, other'
+      } : state.graph?.neo4j;
       document.getElementById('neoWalletNodes').textContent = String(neo?.imported_wallet_nodes || 0);
       document.getElementById('neoTransferEdges').textContent = String(neo?.imported_transfer_edges || 0);
       document.getElementById('neoExchangeEdges').textContent = String(neo?.imported_exchange_interactions || 0);
       document.getElementById('cypherBox').textContent = neo?.cypher || '-';
 
       const link = document.getElementById('neo4jLink');
+      link.hidden = Boolean(window.AmlSnapshots);
+      link.style.display = window.AmlSnapshots ? 'none' : '';
       if (neo?.browser_url) {
         link.href = neo.browser_url;
         link.style.pointerEvents = 'auto';

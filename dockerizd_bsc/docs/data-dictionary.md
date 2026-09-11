@@ -1,5 +1,48 @@
 # BSC ClickHouse Data Dictionary
 
+## September 2026 Investigation Additions
+
+Migration 0007 adds one append-only intelligence table. It does not duplicate transfers, paths or balances.
+Migration 0008 refreshes the semantic canonical view so Phase 6 bridge columns are actually readable.
+
+| New Column | Writer | Reader / Meaning |
+|---|---|---|
+| intelligence_claims.network_id | bsc_intelligence import-labels | Network isolation; always eip155:56 |
+| claim_id | Import file | Stable claim identity across review revisions |
+| address | Validated import | Wallet identity lookup |
+| claim_kind | Import | label or cluster; cluster cannot seed exposure |
+| entity_id | Import | Grouping for reviewed entity/cluster |
+| entity_name | Import | Analyst-visible name; never inferred as fact |
+| entity_type | Import | Entity context and exchange/bridge/custodian/DEX boundaries |
+| address_role | Import | Deposit/hot wallet/protocol/other recorded role |
+| confidence | Import | Attribution evidence strength, 0..1 |
+| risk_level | Import | Explicit source designation, 0..100, not model probability |
+| is_exposure_seed | Import | Explicit opt-in for risky label seeds |
+| seed_category | Import | Reason/category carried with exposure paths |
+| source_id | Import | Identifier of the intelligence source |
+| source_reference | Import | Retrievable case/source reference |
+| evidence_refs | Import | Required source evidence shown in API/UI |
+| review_status | Import | pending/approved/rejected, latest revision wins |
+| reviewed_by | Import | Required reviewer for decisions |
+| review_note | Import | Audit detail, accessible with CLI claims |
+| revision | CLI max(previous+1, clock) | Single-writer revision order |
+| created_at_unix_ms | CLI | Recorded revision timestamp |
+| inserted_at | ClickHouse default | Ingestion audit timestamp |
+| token_metadata.reviewed_by | Manual import | Review provenance visible in asset metadata |
+| token_metadata.source_reference | RPC worker/manual import | Observed block hash or source reference |
+
+Active view: intelligence_claims_current deduplicates revisions; intelligence_active only exposes approved
+claims with reviewer and source evidence. Rejection does not delete history.
+Retention: preserve claim/review history as intelligence audit evidence; no automatic destructive TTL.
+
+The investigation API reads existing canonical facts for graph, fingerprint, counterparties, daily activity
+and semantic events. Metadata discoveries are consumed by bsc_token_metadata_worker; token_metadata_jobs
+records bounded retry attempts and backoff. Verified manual metadata has precedence over RPC metadata.
+
+Exposure is computed on demand and stored with the central immutable investigation snapshot. There is
+no duplicate BSC path table or periodic risk assessment table. Live holdings are RPC reads, not stored
+balance guesses; token discovery is explicitly incomplete when wallet history is incomplete.
+
 این سند قرارداد schema نسخه `20260905_0006` است. SQL مرجع در `sql/migrations` قرار دارد و
 `src/db/migrations.rs` نام و type ستون‌ها را هنگام startup اعتبارسنجی می‌کند.
 

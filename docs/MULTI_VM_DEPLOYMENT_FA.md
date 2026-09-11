@@ -1,138 +1,144 @@
-# راهنمای استقرار چند-VM سامانه AML
+# راهنمای استقرار سامانه AML روی Linux
 
-این سند روش انتقال، اجرا و تست نسخه فعلی سامانه روی سه ماشین مستقل را توضیح می‌دهد:
+این راهنما برای VMهای لینوکسی Main، TRON، Ethereum و BSC است. همه شبکه‌ها داخل یک مخزن Git قرار دارند؛
+روی هر VM فقط سرویس‌های همان نقش اجرا می‌شوند. اسکریپت‌های اجرایی Bash هستند و PowerShell لازم نیست.
 
-- VM اصلی: رابط کاربری و Gateway
-- VM شبکه TRON: API، ingestion، ClickHouse و Neo4j ترون
-- VM شبکه Ethereum: API، ingestion، ClickHouse و Neo4j اتریوم
+BSC نیز API تحقیق، UI و ریسک بدون ML متصل به Neo4j مرکزی دارد.
+راهنمای اجرای آن، محدودیت‌ها و قالب برچسب‌ها در [تحویل BSC](../dockerizd_bsc/docs/VM_READINESS_FA.md) است.
 
-BSC در نسخه فعلی schema، ingestion، replay و repair دارد، اما هنوز API تحقیق کیف پول، Neo4j و UI آن کامل نیست؛
-بنابراین تا تکمیل این اجزا در Gateway اصلی فعال نشده است.
-
-## 1. معماری اجرایی
+## 1. معماری و آدرس‌دهی
 
 ```text
 Browser
-  |
-  | HTTP/HTTPS فقط به VM اصلی
-  v
-Main VM: Nginx Gateway + Unified UI
-  |                         |
-  | private API + key       | private API + key
-  v                         v
+   |
+   v
+Main VM: Gateway + UI + Analytical Node + one Neo4j
+   | private API + service key
+   +-------------------------+
+   v                         v
 TRON VM                  Ethereum VM
-  |- tron-api              |- ethereum-api
-  |- ingestion             |- ingestion
-  |- metadata worker       |- metadata/analytics workers
-  |- ClickHouse            |- ClickHouse
-  |- Neo4j                 |- Neo4j
-  `- TRON node/RPC         `- Reth/RPC
+API + ingestion          API + ingestion
+metadata worker          metadata/analytics workers
+ClickHouse               ClickHouse
+TRON Node/RPC            Reth/RPC
 ```
 
-مرورگر و VM اصلی نباید مستقیماً به ClickHouse یا Neo4j شبکه‌ها متصل شوند. تنها Chain API هر شبکه از طریق
-شبکه خصوصی برای VM اصلی قابل دسترسی است.
+| VM | IP نمونه | پورت دسترسی |
+|---|---|---|
+| Main | 10.20.0.10 | 8080 یا TLS سازمان روی 443 |
+| TRON | 10.20.0.21 | 4001 فقط از Main |
+| Ethereum | 10.20.0.22 | 5001 فقط از Main |
+| BSC | 10.20.0.23 | 6001 فقط از Main |
 
-## 2. نمونه آدرس‌دهی
+این IPها نمونه‌اند؛ قبل از اجرا با IP واقعی شبکه کارفرما جایگزین شوند.
+مرورگر به Main متصل می‌شود؛ Main فقط API شبکه‌ها را صدا می‌زند.
+ClickHouse روی Chain VM و تنها Neo4j روی Main VM قرار دارد. پورت‌های دیتابیس روی localhost باقی می‌مانند.
+راهنمای رفتار موقت/دائمی و ریسک: [Neo4j مرکزی و Export](CENTRAL_INVESTIGATIONS_FA.md).
 
-در این راهنما از IPهای نمونه زیر استفاده می‌شود. آن‌ها را با IP واقعی شبکه خصوصی کارفرما عوض کنید:
+## 2. پیش‌نیاز و دریافت پروژه
 
-| نقش | IP خصوصی | پورت قابل دسترسی |
-|---|---:|---:|
-| Main VM | `10.20.0.10` | `8080` یا reverse proxy روی `443` |
-| TRON VM | `10.20.0.21` | `4001` فقط از Main VM |
-| Ethereum VM | `10.20.0.22` | `5001` فقط از Main VM |
+روی هر VM، Docker Engine و افزونه Compose v2 نصب و سرویس Docker روشن باشد.
+برای بررسی:
 
-پورت‌های ClickHouse و Neo4j روی `127.0.0.1` همان VM باقی می‌مانند و نباید در شبکه عمومی یا خصوصی باز شوند.
-
-## 3. پیش‌نیازها
-
-- Docker Engine یا Docker Desktop
-- Docker Compose v2
-- ساعت هماهنگ‌شده با NTP روی هر سه VM
-- ارتباط IP خصوصی یا VPN بین Main VM و Chain VMها
-- فضای پایدار Docker volume برای ClickHouse و Neo4j
-- RPC یا Full Node قابل دسترسی از VM همان شبکه
-
-برای ساده‌ترین انتقال، repository کامل را روی هر VM قرار دهید و فقط role همان VM را اجرا کنید. وجود سورس سایر
-شبکه‌ها باعث اجرای آن‌ها نمی‌شود.
-
-## 4. ساخت کلید داخلی مشترک
-
-روی یک سیستم امن از ریشه پروژه اجرا کنید:
-
-```powershell
-cd D:\Sarbazi\AML_Whole
-$serviceKey = .\scripts\new-service-key.ps1
-$serviceKey
+```bash
+docker version
+docker compose version
 ```
 
-این مقدار باید دقیقاً در فایل `.env` هر سه VM یکسان باشد. آن را در Git، screenshot یا پیام عمومی قرار ندهید.
+روی Ubuntu/Debian ابزارهای helper را نصب کنید:
 
-## 5. تنظیم TRON VM
-
-```powershell
-cd D:\Sarbazi\AML_Whole\dockerizd_tron\app
-Copy-Item .env.example .env
+```bash
+sudo apt-get update
+sudo apt-get install -y bash git ca-certificates curl jq openssl coreutils
+# فقط برای ساخت کاربر Basic Auth روی Main VM
+sudo apt-get install -y apache2-utils
 ```
 
-مقادیر اصلی `.env`:
+کاربر اجرا باید دسترسی Docker داشته باشد. تمام دستورها با همان کاربر مالک پروژه اجرا شوند.
+از ساعت هماهنگ‌شده، دیسک پایدار برای volumeها و RPC قابل‌دسترسی از Chain VM مطمئن شوید.
+
+```bash
+git clone https://github.com/Mehranai/AML_Real.git "$HOME/AML_Whole"
+cd "$HOME/AML_Whole"
+```
+
+برای دریافت نسخه جدید همان clone موجود، از workflow معمول Git استفاده کنید؛ clone جدید و `git init` داخل شبکه‌ها لازم نیست.
+اگر پروژه را در مسیر دیگری قرار دادید، فقط دستور cd تغییر می‌کند؛ اسکریپت‌ها مسیر را نسبت به خودشان پیدا می‌کنند.
+
+برای imageهای آماده، معماری CPU مقصد باید با imageها سازگار باشد؛ بسته فعلی ساخته‌شده برای `linux/amd64` است.
+انتقال فایل‌ها از Windows نیز مجاز است؛ برای اجرا همیشه Bash لینوکس استفاده شود.
+
+## 3. ساخت کلید سرویس
+
+روی یک سیستم امن:
+
+```bash
+cd "$HOME/AML_Whole"
+bash scripts/new-service-key.sh
+```
+
+خروجی را در `AML_SERVICE_KEY` هر سه فایل محیط قرار دهید.
+کلید به مرورگر داده نمی‌شود؛ Gateway آن را در هدر `X-AML-Service-Key` اضافه می‌کند.
+فایل‌های محیط باید فقط برای کاربر اجرا قابل خواندن باشند و داخل Git قرار نمی‌گیرند.
+
+## 4. تنظیم TRON VM
+
+```bash
+cd "$HOME/AML_Whole"
+umask 077
+cp -n dockerizd_tron/app/.env.example dockerizd_tron/app/.env
+chmod 600 dockerizd_tron/app/.env
+nano dockerizd_tron/app/.env
+```
+
+مقادیر اصلی را تنظیم کنید:
 
 ```dotenv
 API_BIND_ADDRESS=10.20.0.21
 DATABASE_BIND_ADDRESS=127.0.0.1
 TRON_API_PORT=4001
-
 AML_SERVICE_AUTH_REQUIRED=true
-AML_SERVICE_KEY=PASTE_THE_SHARED_SERVICE_KEY
-
+AML_SERVICE_KEY=PASTE_SHARED_KEY
 CLICKHOUSE_USER=admin
-CLICKHOUSE_PASSWORD=USE_A_RANDOM_DATABASE_PASSWORD
-NEO4J_PASSWORD=USE_ANOTHER_RANDOM_PASSWORD
-
+CLICKHOUSE_PASSWORD=CHOOSE_DATABASE_PASSWORD
 TRON_RPC_URL=http://PRIVATE_TRON_NODE:8090
 TRON_API_KEY=
 SYNC_MODE=auto
 TRON_START_BLOCK=0
 ```
 
-اگر فعلاً از provider استفاده می‌شود، `TRON_RPC_URL` و در صورت نیاز `TRON_API_KEY` را با اطلاعات provider پر کنید.
-با `SYNC_MODE=auto` ingestion از checkpoint ذخیره‌شده ادامه پیدا می‌کند.
+RPC را با نود یا provider واقعی جایگزین کنید. برای Node داخل container، آدرس localhost به همان container اشاره می‌کند؛
+از DNS سرویس در شبکه مشترک Docker یا IP قابل‌دسترسی نود استفاده کنید.
 
-اجرای کامل:
-
-```powershell
-cd D:\Sarbazi\AML_Whole
-.\scripts\vm.ps1 -Role tron -Action up -Build
-.\scripts\vm.ps1 -Role tron -Action check
+```bash
+bash scripts/vm.sh tron up --build
+bash scripts/vm.sh tron check
 ```
 
-برای تست API بدون شروع ingestion:
+برای شروع فقط API و دیتابیس:
 
-```powershell
-.\scripts\vm.ps1 -Role tron -Action up -Build -ApiOnly
+```bash
+bash scripts/vm.sh tron up --build --api-only
 ```
 
-## 6. تنظیم Ethereum VM
+## 5. تنظیم Ethereum VM
 
-```powershell
-cd D:\Sarbazi\AML_Whole\dockerizd_ethereum
-Copy-Item .env.example .env
+```bash
+cd "$HOME/AML_Whole"
+umask 077
+cp -n dockerizd_ethereum/.env.example dockerizd_ethereum/.env
+chmod 600 dockerizd_ethereum/.env
+nano dockerizd_ethereum/.env
 ```
-
-مقادیر اصلی `.env`:
 
 ```dotenv
 API_BIND_ADDRESS=10.20.0.22
 DATABASE_BIND_ADDRESS=127.0.0.1
 ETHEREUM_API_PORT=5001
-
 AML_SERVICE_AUTH_REQUIRED=true
-AML_SERVICE_KEY=PASTE_THE_SHARED_SERVICE_KEY
-
+AML_SERVICE_KEY=PASTE_SHARED_KEY
 CLICKHOUSE_USER=admin
-CLICKHOUSE_PASSWORD=USE_A_RANDOM_DATABASE_PASSWORD
-NEO4J_PASSWORD=USE_ANOTHER_RANDOM_PASSWORD
-
+CLICKHOUSE_PASSWORD=CHOOSE_DATABASE_PASSWORD
 ETH_RPC_URL=http://PRIVATE_RETH_NODE:8545
 ETH_EXPECTED_CHAIN_ID=1
 ETH_NETWORK_ID=eip155:1
@@ -140,230 +146,227 @@ ETH_TRACE_MODE=auto
 ETH_RISK_ENGINE_ENABLED=false
 ```
 
-اجرای کامل:
+در صورت نیاز به trace کامل، نود باید trace را ارائه کند و `ETH_TRACE_MODE=required` تنظیم شود.
 
-```powershell
-cd D:\Sarbazi\AML_Whole
-.\scripts\vm.ps1 -Role ethereum -Action up -Build
-.\scripts\vm.ps1 -Role ethereum -Action check
+```bash
+bash scripts/vm.sh ethereum up --build
+bash scripts/vm.sh ethereum check
+# یا فقط API و دیتابیس:
+bash scripts/vm.sh ethereum up --build --api-only
 ```
 
-## 7. تنظیم Main VM
+## 6. تنظیم Main VM
 
-```powershell
-cd D:\Sarbazi\AML_Whole
-Copy-Item .env.example .env
+```bash
+cd "$HOME/AML_Whole"
+umask 077
+cp -n .env.example .env
+chmod 600 .env
+nano .env
 ```
-
-مقادیر اصلی `.env`:
 
 ```dotenv
-AML_BIND_ADDRESS=0.0.0.0
+NEO4J_PASSWORD=CHOOSE_CENTRAL_NEO4J_PASSWORD
+AML_GRAPH_TTL_HOURS=24
+AML_BIND_ADDRESS=10.20.0.10
 AML_PORT=8080
 AML_TRON_UPSTREAM=http://10.20.0.21:4001
 AML_ETHEREUM_UPSTREAM=http://10.20.0.22:5001
-AML_SERVICE_KEY=PASTE_THE_SHARED_SERVICE_KEY
-
-# فقط برای تست اولیه داخلی؛ قبل از دسترسی کاربران احراز هویت را فعال کنید.
+AML_SERVICE_KEY=PASTE_SHARED_KEY
 AML_BASIC_AUTH_REALM=off
 AML_HTPASSWD_FILE=./gateway/auth/disabled.htpasswd
 ```
 
-قبل از start، اتصال شبکه را بررسی کنید:
+مقدار upstream فقط origin است: بدون path، slash انتهایی یا username/password.
+برای تست اتصال از Main:
 
-```powershell
-Test-NetConnection 10.20.0.21 -Port 4001
-Test-NetConnection 10.20.0.22 -Port 5001
+```bash
+curl --fail --show-error --connect-timeout 5 http://10.20.0.21:4001/ready
+curl --fail --show-error --connect-timeout 5 http://10.20.0.22:5001/ready
+bash scripts/vm.sh main up --build
+bash scripts/vm.sh main check
 ```
 
-سپس Gateway را اجرا کنید:
+صفحه سامانه: `http://10.20.0.10:8080`.
+در اجرای تک‌میزبانی Linux نیز باید APIها روی IP قابل دسترسی از container Gateway bind شوند؛
+`127.0.0.1` میزبان از داخل container، آدرس همان میزبان نیست.
 
-```powershell
-.\scripts\vm.ps1 -Role main -Action up -Build
-.\scripts\vm.ps1 -Role main -Action check
+## 7. رمز ورود UI
+
+پس از نصب `apache2-utils` روی Main:
+
+```bash
+cd "$HOME/AML_Whole"
+mkdir -p secrets
+htpasswd -cB secrets/aml.htpasswd analyst
+chmod 644 secrets/aml.htpasswd
 ```
 
-صفحه سامانه روی `http://10.20.0.10:8080` در دسترس است.
+htpasswd رمز را تعاملی می‌گیرد. فایل شامل hash است و باید برای کاربر غیر root کانتینر Nginx قابل خواندن باشد.
+برای افزودن کاربر بعدی، `-c` را حذف کنید تا فایل قبلی بازنویسی نشود.
 
-## 8. فعال‌کردن رمز ورود UI
-
-یک فایل محلی و ignored برای کاربر تحلیلگر بسازید:
-
-```powershell
-New-Item -ItemType Directory -Force .\secrets | Out-Null
-docker run --rm httpd:2.4-alpine htpasswd -nbB analyst 'A_STRONG_PASSWORD' |
-  Set-Content -Encoding ascii .\secrets\aml.htpasswd
-```
-
-سپس `.env` در Main VM را تغییر دهید:
+در `.env` ریشه:
 
 ```dotenv
 AML_BASIC_AUTH_REALM=AML-Restricted
 AML_HTPASSWD_FILE=./secrets/aml.htpasswd
 ```
 
-Gateway را بازسازی کنید:
-
-```powershell
-.\scripts\vm.ps1 -Role main -Action up -Build
+```bash
+bash scripts/vm.sh main up
 ```
 
-Basic Auth برای شبکه داخلی و ارائه کافی است. برای دسترسی سازمانی چندکاربره، Nginx باید پشت OIDC/SSO و TLS سازمان قرار گیرد.
+برای ورود واقعی کاربران، TLS سازمان یا ارتباط VPN محافظت‌شده لازم است؛ Basic Auth خودش ترافیک را رمز نمی‌کند.
+SSO/OIDC سازمان می‌تواند جلوی Gateway قرار بگیرد. `/health` برای probe بدون رمز باقی می‌ماند.
 
-## 9. تست کامل از Main VM
+## 8. تست سیستم
 
-بدون Basic Auth:
-
-```powershell
-.\scripts\smoke-test.ps1 `
-  -MainUrl http://127.0.0.1:8080 `
-  -TronAddress TGX6tRfV4CcUH4hbsujqhcL8omACeGu4kQ `
-  -EthereumAddress 0x238a4d9fb5337fa220f98f2829d9d903664b337b
+```bash
+bash scripts/smoke-test.sh --main-url http://10.20.0.10:8080
+# با ورود UI؛ رمز به‌صورت تعاملی پرسیده می‌شود:
+bash scripts/smoke-test.sh --main-url http://10.20.0.10:8080 --user analyst
 ```
 
-با Basic Auth:
+برای بررسی تحقیق و مسیر دو آدرس، آدرس‌هایی را انتخاب کنید که داده‌شان ingest شده است:
 
-```powershell
-$credential = Get-Credential analyst
-.\scripts\smoke-test.ps1 -MainUrl http://127.0.0.1:8080 -Credential $credential
+```bash
+bash scripts/smoke-test.sh \
+  --main-url http://10.20.0.10:8080 \
+  --user analyst \
+  --tron-address SOURCE_TRON \
+  --tron-path-target TARGET_TRON \
+  --ethereum-address SOURCE_ETH \
+  --ethereum-path-target TARGET_ETH
 ```
 
-برای تست مسیر تا 10 hop، targetها را نیز اضافه کنید:
+اسکریپت health، readiness، تطابق آدرس investigation و قالب paths را بررسی می‌کند.
+عمق جست‌وجوی مسیر ۱۰ است. وجود paths خالی یعنی در داده و محدوده جست‌وجو مسیری پیدا نشده است؛
+این اسکریپت وجود مسیر ده‌مرحله‌ای یا تکمیل تاریخچه را اثبات نمی‌کند.
 
-```powershell
-.\scripts\smoke-test.ps1 `
-  -MainUrl http://127.0.0.1:8080 `
-  -TronAddress SOURCE_TRON `
-  -TronPathTarget TARGET_TRON `
-  -EthereumAddress SOURCE_ETH `
-  -EthereumPathTarget TARGET_ETH
+تست مستقل اسکریپت‌ها، بدون دیتابیس و RPC:
+
+```bash
+bash scripts/tests/linux-cli.sh
 ```
 
-آدرس تست باید در ClickHouse همان شبکه ingest شده باشد. پاسخ خالی برای آدرس خارج از محدوده ingest الزاماً خطای سیستم نیست.
+برای تست واقعی image آماده Gateway با پورت موقت و پاک‌سازی خودکار کانتینر:
 
-## 10. رفتار ClickHouse و Neo4j
+```bash
+bash scripts/tests/gateway-docker.sh
+```
 
-Endpointهای `GET investigation` و `GET paths` فقط از داده‌های ذخیره‌شده می‌خوانند و UI را تغذیه می‌کنند.
-رسم canvas در مرورگر از JSON پاسخ انجام می‌شود و نیاز ندارد مرورگر به Neo4j متصل شود.
+## 9. ClickHouse و Neo4j
 
-Projection پایدار در Neo4j یک command صریح است:
+API شبکه‌ها داده ClickHouse را می‌خوانند. در مسیر VM اصلی هر investigation یا paths ابتدا به صورت موقت در Neo4j مرکزی ثبت می‌شود.
+دکمه Export همان snapshot را دائمی می‌کند و network_id روی تحقیق، node و edge ثبت شده است.
 
 ```text
-POST /api/tron/wallet/{address}/neo4j/import
-POST /api/tron/wallet/{source}/paths/{target}/neo4j/import
-POST /api/ethereum/wallet/{address}/neo4j/import
-POST /api/ethereum/wallet/{source}/paths/{target}/neo4j/import
+POST /api/investigations/{id}/export
+GET /api/investigations
+GET /api/investigations/{id}
 ```
 
-Gateway هدر `X-AML-Service-Key` را خودش اضافه می‌کند. کاربران نباید service key را در مرورگر وارد کنند.
+مسیرهای قدیمی neo4j/import دیگر فعال نیستند و پاسخ 410 می‌دهند.
+[راهنمای کامل ذخیره مرکزی و سیاست ریسک](CENTRAL_INVESTIGATIONS_FA.md).
 
-## 11. انتقال به محیط بدون اینترنت
+روی TRON VM، برای مشاهده دیتابیس همان پروژه اجراشده:
 
-بهترین روش این است که imageها روی سیستم build متصل ساخته و سپس منتقل شوند. پس از build موفق:
-
-```powershell
-.\scripts\export-images.ps1
+```bash
+docker compose --project-name aml-tron \
+  --project-directory dockerizd_tron/app \
+  --env-file dockerizd_tron/app/.env \
+  --file dockerizd_tron/app/docker-compose.yml \
+  exec clickhouse sh -lc 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --database tron_db'
 ```
 
-پوشه ignored به نام `deployment-artifacts` شامل imageهای Gateway، سرویس‌های TRON و Ethereum، ClickHouse و
-Neo4j به‌همراه نام و checksum آن‌ها می‌شود. آن را خارج از Git به محیط کارفرما منتقل کنید. روی VM مقصد:
-
-```powershell
-.\scripts\import-images.ps1 -InputDirectory D:\Transfer\deployment-artifacts
-.\scripts\vm.ps1 -Role tron -Action up
-# یا Roleهای ethereum و main روی VM مربوط به خودشان
+```sql
+SHOW TABLES;
+SELECT count() FROM transactions_canonical;
+SELECT count() FROM address_relationships_canonical;
 ```
 
-چون `-Build` استفاده نشده، Compose از image واردشده استفاده می‌کند.
+## 10. انتقال آفلاین
 
-برای build آفلاین Ethereum از source، ابتدا روی سیستم متصل cache لینوکسی checksumدار را بسازید:
+روی سیستم build، ابتدا imageهای هر سه نقش را بسازید. سپس:
 
-```powershell
-cd .\dockerizd_ethereum
-.\scripts\refresh-linux-cache.ps1
-cd ..
-.\scripts\vm.ps1 -Role ethereum -Action up -Offline
+```bash
+bash scripts/export-images.sh --output ./deployment-artifacts
 ```
 
-`cargo-registry-linux.tar.gz` حجیم است و در Git نگهداری نمی‌شود. آن را باید همراه artifactهای deployment انتقال دهید.
+پنج image برنامه و دیتابیس همراه `manifest.json` و SHA-256 صادر می‌شوند.
+این بسته داده‌های ClickHouse/Neo4j یا فایل‌های `.env` را شامل نمی‌شود؛ برای نمایش داده قبلی باید backup دیتابیس را
+جداگانه انتقال دهید یا در مقصد ingestion را اجرا کنید.
 
-## 12. Firewall
+بسته را روی هر VM مقصد منتقل و import کنید:
 
-قواعد لازم:
-
-- کاربران مجاز -> Main VM: پورت `8080` یا ترجیحاً `443`
-- Main VM -> TRON VM: پورت `4001`
-- Main VM -> Ethereum VM: پورت `5001`
-- هیچ client دیگری -> Chain APIها: مسدود
-- تمام ماشین‌های دیگر -> پورت‌های ClickHouse و Neo4j: مسدود
-
-حتی با وجود firewall، `DATABASE_BIND_ADDRESS=127.0.0.1` را تغییر ندهید. برای production بهتر است روی Chain VMها
-پورت‌های database از Compose نیز کاملاً حذف شوند؛ loopback فعلی برای مشاهده و عیب‌یابی محلی در نظر گرفته شده است.
-
-## 13. عملیات روزانه
-
-```powershell
-# وضعیت
-.\scripts\vm.ps1 -Role tron -Action ps
-
-# آخرین logها
-.\scripts\vm.ps1 -Role ethereum -Action logs
-
-# readiness
-.\scripts\vm.ps1 -Role main -Action check
-
-# توقف بدون حذف volume
-.\scripts\vm.ps1 -Role tron -Action down
+```bash
+bash scripts/import-images.sh /path/to/deployment-artifacts
+# بعد از تنظیم .env، فقط role همان VM:
+bash scripts/vm.sh tron up --pull-never
 ```
 
-هیچ‌گاه برای عملیات عادی `docker compose down -v` اجرا نکنید؛ گزینه `-v` volumeهای ClickHouse و Neo4j را حذف می‌کند.
+برای Main و Ethereum، role را عوض کنید. `--pull-never` دانلود را ممنوع می‌کند و نبود image خطاست.
+فرمت manifest با بسته‌ای که قبلاً صادر شده سازگار است. پس از هر تغییر backend/UI باید image مربوط دوباره ساخته و export شود.
 
-## 14. Backup
+برای build آفلاین Ethereum از سورس روی سیستم دارای Rust و دسترسی dependency:
 
-- ClickHouse باید با روش backup سازگار با نسخه ClickHouse و مقصد جداگانه snapshot شود.
-- Neo4j Community باید با توقف هماهنگ‌شده یا روش dump/backup مورد تأیید نسخه آن نگهداری شود.
-- فایل‌های `.env` باید در password manager یا secret manager سازمان نگهداری شوند.
-- backup روی همان دیسک VM، backup واقعی محسوب نمی‌شود.
+```bash
+bash dockerizd_ethereum/scripts/refresh-linux-cache.sh
+bash scripts/vm.sh ethereum up --offline --api-only
+```
 
-## 15. خطاهای متداول
+فایل `cargo-registry-linux.tar.gz` به‌همراه checksum آن منتقل شود.
+این گزینه dependencyهای Cargo را آفلاین می‌کند؛ base imageهای Docker و frontend مربوط به Dockerfile نیز باید قبلاً موجود باشند.
+برای محیط بدون اینترنت، انتقال image نهایی مطمئن‌تر است.
 
-`401 unauthorized service request`:
-کلید `AML_SERVICE_KEY` در Main VM و Chain VM یکسان نیست یا auth فقط در Chain VM فعال شده است.
+BSC برای build سورس از `bash dockerizd_bsc/scripts/refresh-linux-vendor.sh` استفاده می‌کند؛
+role مستقل آن `bash scripts/vm.sh bsc up --build --api-only` است؛ برای ingestion گزینه api-only را حذف کنید.
 
-`503 selected network API is unavailable`:
-Chain API خاموش است، `API_BIND_ADDRESS` اشتباه است یا firewall ارتباط Main VM را بسته است.
+## 11. عملیات و حفظ داده
 
-`ready` موفق ولی داده کیف پول خالی است:
-دیتابیس‌ها سالم‌اند، اما ingestion هنوز به بلاک مربوط به آن آدرس نرسیده است. endpoint ingestion/status و log worker را بررسی کنید.
+```bash
+bash scripts/vm.sh tron ps
+bash scripts/vm.sh ethereum logs
+bash scripts/vm.sh main check
+bash scripts/vm.sh tron down
+```
 
-خطای bind:
-IP نوشته‌شده در `API_BIND_ADDRESS` باید واقعاً روی کارت شبکه همان VM وجود داشته باشد و پورت آزاد باشد.
+نام‌های Compose: `aml-main`، `aml-tron`، `aml-ethereum` و `aml-bsc`.
+برای استفاده از volumeهای قبلی، قبل از up نام پروژه موجود را با `docker compose ls -a` بررسی کنید:
 
-خطای Docker build در crates.io:
-دوباره build کنید تا cache ادامه پیدا کند، یا از image exportشده/روش offline استفاده کنید.
+```bash
+bash scripts/vm.sh tron up --project app
+bash scripts/vm.sh tron check --project app
+```
 
-## 16. افزودن شبکه بعدی
+همان نام را در up/check/logs/down تکرار کنید. هیچ اسکریپتی volume را حذف نمی‌کند.
+`down -v` دستور حذف داده است و برای عملیات روزانه استفاده نمی‌شود.
 
-هر شبکه جدید باید قبل از ثبت در Gateway این قرارداد را پاس کند:
+## 12. شبکه و backup
 
-- API versioned مطابق `contracts/chain-api-v1.openapi.yaml`
-- liveness و readiness واقعی
-- investigation read-only
-- path search محدود و دارای `truncated`/coverage
-- projection صریح Neo4j با POST
-- service authentication
-- ClickHouse و Neo4j محلی و غیرقابل دسترسی از بیرون VM
-- تست contract و smoke-test
+فقط کاربران مجاز به Main و فقط Main به پورت API شبکه‌ها دسترسی داشته باشند.
+پورت‌های دیتابیس روی localhost باقی بمانند. قوانین firewall باید ترافیک منتشرشده Docker را نیز پوشش دهند.
 
-پس از آن network registry، Nginx upstream و UI برای همان شبکه اضافه می‌شوند.
+ClickHouse و Neo4j باید backup سازگار با نسخه و روی مقصد جداگانه داشته باشند.
+فایل‌های محیط و کلیدها در محل امن سازمان نگهداری شوند. image export جایگزین backup دیتابیس نیست.
 
-## 17. چک‌لیست روز ارائه
+## 13. خطاهای رایج
 
-1. هر سه VM ساعت و ارتباط شبکه صحیح داشته باشند.
-2. Chain VMها زودتر از Main VM start شوند.
-3. `vm.ps1 -Action check` روی هر سه VM پاس شود.
-4. از Main VM، پورت‌های 4001 و 5001 قابل دسترسی باشند.
-5. `smoke-test.ps1` با حداقل یک آدرس ingestشده از هر شبکه پاس شود.
-6. یک جست‌وجوی wallet و یک path search در UI نمایش داده شود.
-7. خاموش‌کردن آزمایشی یک Chain API فقط همان شبکه را unavailable نشان دهد.
-8. `.env`، service key و رمز دیتابیس در Git یا صفحه ارائه نمایش داده نشوند.
+- `Missing .../.env`: فایل نمونه همان role را کپی و تنظیم کنید.
+- `Permission denied` برای shell: دستور را با `bash scripts/vm.sh ...` اجرا کنید یا `chmod +x scripts/*.sh` بزنید.
+- `bash\r` یا `$'\r'`: فایل با CRLF منتقل شده؛ clone جدید از Git با قانون LF پروژه بگیرید.
+- `401 unauthorized service request`: کلید Main و Chain VMها یکسان نیست.
+- `503 selected network API is unavailable`: bind، IP، firewall یا API شبکه را بررسی کنید.
+- health موفق و investigation خالی: ingestion هنوز داده آدرس را پوشش نداده است.
+- `No such image`: image را build یا import کنید؛ up عادی build خودکار ندارد.
+- `Cannot connect to the Docker daemon`: وضعیت `systemctl status docker` و دسترسی کاربر را بررسی کنید.
+- شروع دیتابیس خالی پس از تغییر launcher: نام Compose پروژه و volume انتخاب‌شده را بررسی کنید.
+
+## 14. روز ارائه
+
+1. IPها، RPC و ساعت هر سه VM صحیح باشند.
+2. Chain VMها را روشن و check کنید؛ سپس Main را روشن کنید.
+3. smoke-test را با آدرس ingestشده هر شبکه اجرا کنید.
+4. جست‌وجوی کیف پول و مسیر دو آدرس را در UI نمایش دهید.
+5. محدوده تاریخچه ingest و محدودیت تعداد edge/hop را همراه خروجی توضیح دهید.
+6. بسته image، backup داده نمونه و راهنمای حاضر را همراه داشته باشید.

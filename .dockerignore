@@ -13,3 +13,6 @@
 !dockerizd_ethereum/
 !dockerizd_ethereum/web/
 !dockerizd_ethereum/web/index.html
+!dockerizd_bsc/
+!dockerizd_bsc/web/
+!dockerizd_bsc/web/index.html

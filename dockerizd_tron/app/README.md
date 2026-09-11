@@ -1,5 +1,10 @@
 # TRON AML Service
 
+> Current UI workflow: ClickHouse evidence -> main VM Analytical Node -> one central Neo4j.
+> Export preserves the displayed snapshot. ML remains disabled; central evidence scoring is active.
+> Follow [Central investigations](../../docs/CENTRAL_INVESTIGATIONS_FA.md);
+> local projection and ML sections below are retained as legacy/reference material.
+
 > New location: `AML_Whole/dockerizd_tron/app`. The shared network selector and
 > startup commands are documented in [AML Whole](../../README.md).
 
@@ -19,12 +24,12 @@ processes and separate containers for each long-running responsibility.
 
 ### First installation on any machine
 
-Install Docker Desktop (or Docker Engine plus Compose v2), copy the repository,
+Install Docker Engine and Compose v2 on Linux, copy the repository,
 then run:
 
-```powershell
-cd D:\Sarbazi\dockerizd_eth_code\app
-Copy-Item .env.example .env
+```bash
+cd "$HOME/AML_Whole/dockerizd_tron/app"
+cp -n .env.example .env
 ```
 
 Edit `.env` and replace the ClickHouse and Neo4j passwords. Set `TRON_RPC_URL`
@@ -33,7 +38,7 @@ by Git and excluded from the Docker build context.
 
 Build and start all services:
 
-```powershell
+```bash
 docker compose up -d --build
 docker compose ps
 ```
@@ -59,8 +64,8 @@ host port `9000`.
 
 Readiness and logs:
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:4001/ready
+```bash
+curl --fail --silent --show-error http://127.0.0.1:4001/ready
 docker compose logs -f tron-api
 docker compose logs -f tron-ingestion
 docker compose logs -f tron-token-metadata-worker
@@ -68,14 +73,14 @@ docker compose logs -f tron-token-metadata-worker
 
 Rebuild only the Rust services after code changes:
 
-```powershell
+```bash
 docker compose build tron-api
 docker compose up -d tron-api tron-ingestion tron-token-metadata-worker
 ```
 
 Stop the stack without deleting data:
 
-```powershell
+```bash
 docker compose down
 ```
 
@@ -86,7 +91,7 @@ appropriate for disposable development data.
 
 To run Rust from RustRover or Cargo while keeping only the databases in Docker:
 
-```powershell
+```bash
 docker compose up -d clickhouse neo4j
 cargo run
 # Second terminal
@@ -103,7 +108,7 @@ DNS addresses (`clickhouse:8123` and `neo4j:7687`) directly from Compose.
 The image contains every release binary, so maintenance jobs do not require a
 Rust toolchain on the destination machine. For example:
 
-```powershell
+```bash
 docker compose run --rm tron-ingestion tron_replay_blocks 84890000 84890099
 docker compose run --rm tron-ingestion tron_propagate_exposure
 docker compose run --rm tron-ingestion tron_discover_address_clusters 0 1000000 5000
@@ -114,10 +119,9 @@ container path to the selected binary.
 
 ### Moving from TronGrid to a local Full Node
 
-Only `TRON_RPC_URL` changes. If the Full Node runs on the Docker host, Docker
-Desktop can use a URL based on `host.docker.internal`. If it runs as another
-Compose service on the same network, use that service's DNS name and internal
-port. No ClickHouse, classifier, or investigation code needs to change.
+Only `TRON_RPC_URL` changes. On Linux, use the node's reachable private IP.
+If the node runs as another Compose service on the same network, use that
+service's DNS name and internal port. No ClickHouse, classifier, or investigation code needs to change.
 
 ## Investigation APIs
 
@@ -137,9 +141,9 @@ route to project a wallet subgraph.
 
 Example:
 
-```powershell
-$address = "<TRON_WALLET_ADDRESS>"
-Invoke-RestMethod "http://127.0.0.1:4001/api/tron/wallet/$address/investigation?depth=3&limit=500"
+```bash
+address="TRON_WALLET_ADDRESS"
+curl --fail --silent --show-error "http://127.0.0.1:4001/api/tron/wallet/$address/investigation?depth=3&limit=500"
 ```
 
 ## Protocol and Contract Classification
@@ -169,23 +173,23 @@ in-memory cache every `TRON_PROTOCOL_REGISTRY_REFRESH_BLOCKS` blocks (default
 
 Register each governed intelligence source before importing its labels:
 
-```powershell
-cargo run --bin tron_register_intelligence_source -- .\source.json
+```bash
+cargo run --bin tron_register_intelligence_source -- ./source.json
 ```
 
 Submit replay-safe entity claims from JSONL. New claims remain pending unless
 the record contains an explicit independent reviewer:
 
-```powershell
-cargo run --bin tron_ingest_entity_labels -- .\labels.jsonl
+```bash
+cargo run --bin tron_ingest_entity_labels -- ./labels.jsonl
 ```
 
 Discover pending exchange-deposit and service cluster claims from stored
 canonical transfers, then approve or reject them explicitly:
 
-```powershell
+```bash
 cargo run --bin tron_discover_address_clusters -- 0 1000000 5000
-cargo run --bin tron_review_intelligence -- CLUSTER_CLAIM <claim_id> APPROVED <reviewer> "<reason>"
+cargo run --bin tron_review_intelligence -- CLUSTER_CLAIM CLAIM_ID APPROVED REVIEWER "Review reason"
 ```
 
 The unified investigation response and UI expose active attribution, cluster
@@ -195,7 +199,7 @@ and governance behavior are documented in
 
 Propagate exposure:
 
-```powershell
+```bash
 cargo run --bin tron_propagate_exposure
 ```
 
@@ -203,29 +207,29 @@ cargo run --bin tron_propagate_exposure
 
 Build one feature row per unique labeled wallet:
 
-```powershell
-cd D:\Sarbazi\dockerizd_eth_code
-python ml\tron_wallet_risk\build_training_csv_from_api.py `
-  --labels ml\tron_wallet_risk\my_labeled_wallets.csv `
-  --output ml\tron_wallet_risk\training.csv
+```bash
+cd "$HOME/AML_Whole/dockerizd_tron"
+python3 ml/tron_wallet_risk/build_training_csv_from_api.py \
+  --labels ml/tron_wallet_risk/my_labeled_wallets.csv \
+  --output ml/tron_wallet_risk/training.csv
 ```
 
 Train a candidate:
 
-```powershell
-python ml\tron_wallet_risk\train.py `
-  --input ml\tron_wallet_risk\training.csv `
-  --output-dir ml\tron_wallet_risk\artifacts\candidate_v1
+```bash
+python3 ml/tron_wallet_risk/train.py \
+  --input ml/tron_wallet_risk/training.csv \
+  --output-dir ml/tron_wallet_risk/artifacts/candidate_v1
 ```
 
 Review the untouched test metrics. `--activate` generates a production
 deployment only when the configured sample-count, AUC, and Brier gates pass:
 
-```powershell
-python ml\tron_wallet_risk\train.py `
-  --input ml\tron_wallet_risk\training.csv `
-  --output-dir ml\tron_wallet_risk\artifacts\model_v1 `
-  --model-version v1 `
+```bash
+python3 ml/tron_wallet_risk/train.py \
+  --input ml/tron_wallet_risk/training.csv \
+  --output-dir ml/tron_wallet_risk/artifacts/model_v1 \
+  --model-version v1 \
   --activate
 ```
 
@@ -250,7 +254,7 @@ resolution status.
 
 Replay one finalized block or an inclusive range:
 
-```powershell
+```bash
 cargo run --bin tron_replay_blocks -- 84890000
 cargo run --bin tron_replay_blocks -- 84890000 84890099
 ```
@@ -278,9 +282,9 @@ The detailed TRON completion checklist is
 Run bounded historical ingestion without replaying blocks already marked
 `COMPLETE`:
 
-```powershell
+```bash
 cargo run --bin tron_benchmark_ingestion -- 2036 2040
-cargo run --bin tron_benchmark_ingestion -- 2036 2040 <TRON_WALLET_ADDRESS>
+cargo run --bin tron_benchmark_ingestion -- 2036 2040 TRON_WALLET_ADDRESS
 ```
 
 The command accepts at most 10,000 blocks. It persists one compact row in

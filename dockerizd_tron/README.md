@@ -1,5 +1,9 @@
 # TRON AML Platform
 
+> Current deployment has no TRON-local Neo4j. The main VM stores temporary
+> investigations, makes them permanent through Export, and scores evidence without ML.
+> See [Central investigations](../docs/CENTRAL_INVESTIGATIONS_FA.md).
+
 > This project now lives at `AML_Whole/dockerizd_tron`. For the shared TRON/Ethereum
 > entry page and Docker launcher, use [AML Whole](../README.md).
 > Network-local commands still run from this project's `app` directory.
@@ -11,11 +15,11 @@ metadata enrichment, APIs, and the investigation UI.
 
 ## Run the Complete Stack
 
-Prerequisites: Docker Desktop with Docker Compose v2.
+Prerequisites: Docker Engine on Linux with Docker Compose v2.
 
-```powershell
-cd D:\Sarbazi\dockerizd_eth_code\app
-Copy-Item .env.example .env   # first installation only
+```bash
+cd "$HOME/AML_Whole/dockerizd_tron/app"
+cp -n .env.example .env   # first installation only
 # Edit .env and set the passwords and TRON RPC/API credentials.
 docker compose up -d --build
 docker compose ps
@@ -39,14 +43,14 @@ on the machine.
 
 Check readiness and logs:
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:4001/ready
+```bash
+curl --fail --silent --show-error http://127.0.0.1:4001/ready
 docker compose logs -f tron-api tron-ingestion tron-token-metadata-worker
 ```
 
 Stop containers while retaining ClickHouse and Neo4j data:
 
-```powershell
+```bash
 docker compose down
 ```
 
@@ -57,7 +61,7 @@ deleted.
 
 For local Rust development outside containers:
 
-```powershell
+```bash
 docker compose up -d clickhouse neo4j
 cargo run
 # In a second terminal:
@@ -83,8 +87,8 @@ Detailed commands and operating notes are in [`app/README.md`](app/README.md).
 
 Run these commands from the TRON application directory:
 
-```powershell
-cd D:\Sarbazi\dockerizd_eth_code\app
+```bash
+cd "$HOME/AML_Whole/dockerizd_tron/app"
 docker compose up -d
 docker compose ps
 ```
@@ -98,26 +102,24 @@ changed.
 
 Follow finalized-block ingestion in real time:
 
-```powershell
+```bash
 docker compose logs -f --tail 100 tron-ingestion
 ```
 
 Press `Ctrl+C` to stop following the output. This does not stop the container.
 The other service logs can be inspected separately:
 
-```powershell
+```bash
 docker compose logs -f --tail 100 tron-api
 docker compose logs -f --tail 100 tron-token-metadata-worker
 ```
 
 The API exposes both service readiness and detailed ingestion health:
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:4001/ready |
-    ConvertTo-Json -Depth 10
+```bash
+curl --fail --silent --show-error http://127.0.0.1:4001/ready | jq .
 
-Invoke-RestMethod http://127.0.0.1:4001/api/tron/ingestion/health |
-    ConvertTo-Json -Depth 10
+curl --fail --silent --show-error http://127.0.0.1:4001/api/tron/ingestion/health | jq .
 ```
 
 Important ingestion-health fields are:
@@ -136,7 +138,7 @@ Open the investigation UI at `http://127.0.0.1:4001/`.
 This command reads the credentials from the container environment and opens
 `tron_db`:
 
-```powershell
+```bash
 docker compose exec clickhouse sh -lc 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --database tron_db'
 ```
 

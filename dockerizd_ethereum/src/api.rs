@@ -17,7 +17,6 @@ use crate::{
     config::AppConfig,
     db::database_client,
     domain::{AddressId, NetworkId},
-    graph::EthereumGraph,
     investigation::{InvestigationService, PathDirection},
     risk::EvidenceRiskEngine,
 };
@@ -49,15 +48,10 @@ struct PathQuery {
 
 pub async fn build_router(config: AppConfig) -> anyhow::Result<Router> {
     let service_auth = ServiceAuth::from_env()?;
-    let graph = EthereumGraph::connect(
-        &config.neo4j_uri,
-        &config.neo4j_username,
-        &config.neo4j_password,
-    )
-    .await?;
+
     let investigation = InvestigationService::new(
         database_client(&config),
-        graph,
+        None,
         config.eth_network_id.clone(),
         config.eth_graph_max_edges,
         EvidenceRiskEngine::new(&config),
@@ -84,11 +78,11 @@ pub async fn build_router(config: AppConfig) -> anyhow::Result<Router> {
         )
         .route(
             "/ethereum/wallet/{address}/neo4j/import",
-            post(wallet_investigation_import),
+            post(central_projection_only),
         )
         .route(
             "/ethereum/wallet/{source}/paths/{target}/neo4j/import",
-            post(wallet_paths_import),
+            post(central_projection_only),
         )
         .route(
             "/api/ethereum/wallet/{address}/investigation",
@@ -100,11 +94,11 @@ pub async fn build_router(config: AppConfig) -> anyhow::Result<Router> {
         )
         .route(
             "/api/ethereum/wallet/{address}/neo4j/import",
-            post(wallet_investigation_import),
+            post(central_projection_only),
         )
         .route(
             "/api/ethereum/wallet/{source}/paths/{target}/neo4j/import",
-            post(wallet_paths_import),
+            post(central_projection_only),
         )
         .with_state(state)
         .layer(middleware::from_fn_with_state(
@@ -128,11 +122,8 @@ async fn readiness(State(state): State<ApiState>) -> Response {
         Duration::from_secs(4),
         state.investigation.probe_clickhouse(),
     );
-    let neo4j = timeout(Duration::from_secs(4), state.investigation.probe_neo4j());
-    let (clickhouse, neo4j) = tokio::join!(clickhouse, neo4j);
-    let clickhouse_ready = matches!(clickhouse, Ok(Ok(())));
-    let neo4j_ready = matches!(neo4j, Ok(Ok(())));
-    let ready = clickhouse_ready && neo4j_ready;
+    let clickhouse_ready = matches!(clickhouse.await, Ok(Ok(())));
+    let ready = clickhouse_ready;
 
     (
         if ready {
@@ -145,7 +136,7 @@ async fn readiness(State(state): State<ApiState>) -> Response {
             "network_id": state.config.eth_network_id,
             "dependencies": {
                 "clickhouse": if clickhouse_ready { "ready" } else { "unavailable" },
-                "neo4j": if neo4j_ready { "ready" } else { "unavailable" }
+                "graph_storage": "central_analytical_node"
             }
         })),
     )
@@ -175,18 +166,8 @@ async fn wallet_investigation(
     Ok(Json(investigation))
 }
 
-async fn wallet_investigation_import(
-    State(state): State<ApiState>,
-    Path(address): Path<String>,
-    Query(query): Query<InvestigationQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let address = normalize_address(&state.config, &address)?;
-    let investigation = state
-        .investigation
-        .investigate_wallet_and_project(&address, query.limit)
-        .await
-        .map_err(ApiError::internal)?;
-    Ok(Json(investigation))
+async fn central_projection_only() -> impl IntoResponse {
+    (StatusCode::GONE, Json(json!({"error":"Use the main VM investigation Export endpoint; chain APIs do not persist graphs."})))
 }
 
 async fn wallet_paths(
@@ -213,29 +194,7 @@ async fn wallet_paths(
     Ok(Json(paths))
 }
 
-async fn wallet_paths_import(
-    State(state): State<ApiState>,
-    Path((source, target)): Path<(String, String)>,
-    Query(query): Query<PathQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let source = normalize_address(&state.config, &source)?;
-    let target = normalize_address(&state.config, &target)?;
-    let direction =
-        PathDirection::parse(query.direction.as_deref()).map_err(ApiError::bad_request)?;
-    let paths = state
-        .investigation
-        .find_paths_and_project(
-            &source,
-            &target,
-            query.max_hops,
-            query.limit,
-            query.per_address_limit,
-            direction,
-        )
-        .await
-        .map_err(ApiError::internal)?;
-    Ok(Json(paths))
-}
+
 
 fn normalize_address(config: &AppConfig, value: &str) -> Result<String, ApiError> {
     let network = NetworkId::from_str(&config.eth_network_id).map_err(ApiError::bad_request)?;

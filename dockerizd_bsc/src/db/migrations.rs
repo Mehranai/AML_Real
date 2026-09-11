@@ -46,6 +46,18 @@ const MIGRATIONS: &[Migration] = &[
         description: "Add reviewed protocol registry and complete semantic evidence fields",
         sql_template: include_str!("../../sql/migrations/20260905_0006_semantic_evidence.sql"),
     },
+    Migration {
+        id: "20260909_0007_investigation_intelligence",
+        description: "Reviewed identity evidence and metadata provenance",
+        sql_template: include_str!(
+            "../../sql/migrations/20260909_0007_investigation_intelligence.sql"
+        ),
+    },
+    Migration {
+        id: "20260909_0008_semantic_read_contract",
+        description: "Expose added semantic columns through the revision-gated view",
+        sql_template: include_str!("../../sql/migrations/20260909_0008_semantic_read_contract.sql"),
+    },
 ];
 
 #[derive(Debug, Deserialize, clickhouse::Row)]
@@ -373,6 +385,8 @@ struct RequiredTable {
 }
 
 const REQUIRED_VIEWS: &[&str] = &[
+    "intelligence_claims_current",
+    "intelligence_active",
     "ingested_blocks_canonical",
     "transactions_canonical",
     "evm_logs_canonical",
@@ -390,6 +404,43 @@ const REQUIRED_VIEWS: &[&str] = &[
 
 fn required_tables() -> &'static [RequiredTable] {
     &[
+        RequiredTable {
+            name: "semantic_aml_events_canonical",
+            columns: &[
+                ("bridge_message_id", "String"),
+                ("remote_receiver", "String"),
+                ("remote_network_id", "String"),
+                ("counterparty_address", "String"),
+                ("bridge_direction", "LowCardinality(String)"),
+                ("event_index", "UInt32"),
+            ],
+        },
+        RequiredTable {
+            name: "intelligence_claims",
+            columns: &[
+                ("network_id", "LowCardinality(String)"),
+                ("claim_id", "String"),
+                ("address", "String"),
+                ("claim_kind", "LowCardinality(String)"),
+                ("entity_id", "String"),
+                ("entity_name", "String"),
+                ("entity_type", "LowCardinality(String)"),
+                ("address_role", "LowCardinality(String)"),
+                ("confidence", "Float64"),
+                ("risk_level", "UInt8"),
+                ("is_exposure_seed", "Bool"),
+                ("seed_category", "LowCardinality(String)"),
+                ("source_id", "String"),
+                ("source_reference", "String"),
+                ("evidence_refs", "Array(String)"),
+                ("review_status", "LowCardinality(String)"),
+                ("reviewed_by", "String"),
+                ("review_note", "String"),
+                ("revision", "UInt64"),
+                ("created_at_unix_ms", "UInt64"),
+                ("inserted_at", "DateTime64(3)"),
+            ],
+        },
         RequiredTable {
             name: "schema_migrations",
             columns: &[
@@ -585,6 +636,8 @@ fn required_tables() -> &'static [RequiredTable] {
         RequiredTable {
             name: "token_metadata",
             columns: &[
+                ("reviewed_by", "String"),
+                ("source_reference", "String"),
                 ("network_id", "LowCardinality(String)"),
                 ("token_address", "String"),
                 ("token_standard", "LowCardinality(String)"),

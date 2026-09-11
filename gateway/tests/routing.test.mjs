@@ -8,6 +8,9 @@ const ethereum = '0x0000000000000000000000000000000000000001';
 test('each wallet routes only to its explicit network', () => {
   assert.equal(investigationUrl('tron', tron), `/networks/tron/?address=${tron}`);
   assert.equal(investigationUrl('ethereum', ethereum), `/networks/ethereum/?address=${ethereum}`);
+  assert.equal(investigationUrl('bsc', ethereum), `/networks/bsc/?address=${ethereum}`);
+  assert.equal(getNetwork('bsc').chainId, 'eip155:56');
+  assert.throws(() => investigationUrl('bsc', tron), /BNB Smart Chain/);
 });
 test('whitespace is trimmed without corrupting address case', () => {
   assert.equal(validateAddress('tron', ` ${tron} `), tron);
