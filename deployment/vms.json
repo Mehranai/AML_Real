@@ -1,0 +1,10 @@
+{
+  "prefix": "aml-auto",
+  "ubuntu": "24.04",
+  "roles": {
+    "main": {"cpus": 2, "memory_gib": 4, "disk_gib": 30},
+    "tron": {"cpus": 2, "memory_gib": 3, "disk_gib": 50},
+    "ethereum": {"cpus": 2, "memory_gib": 3, "disk_gib": 50},
+    "bsc": {"cpus": 2, "memory_gib": 3, "disk_gib": 50}
+  }
+}

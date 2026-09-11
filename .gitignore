@@ -1,8 +1,10 @@
-# Local secrets and machine-specific configuration
-.env
-.env.*
+# Private settings stay ignored; only the four reviewed shared demo files are allowed.
 !.env.example
 !.env.*.example
+!/.env
+!/dockerizd_tron/app/.env
+!/dockerizd_ethereum/.env
+!/dockerizd_bsc/.env
 .envrc
 secrets/
 .secrets/
@@ -97,6 +99,7 @@ backups/
 exports/
 snapshots/
 deployment-artifacts/
+.local-vms/
 *.dump
 *.sql.gz
 *.parquet
