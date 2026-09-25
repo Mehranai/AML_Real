@@ -1,10 +1,9 @@
 use super::{PathOptions, SearchOptions, investigate, paths, status};
 use crate::{
-    config::{AppConfig, ClickHouseConfig, setting},
+    config::{ClickHouseConfig, setting},
     db::{validate_bsc_schema, warehouse::Warehouse},
     domain::normalize_evm_address,
-    intelligence,
-    metadata::{self, TokenRpc},
+    intelligence, metadata,
 };
 use anyhow::{Context, Result, ensure};
 use axum::{
@@ -142,7 +141,13 @@ async fn wallet(
 ) -> ApiResult {
     let address = address(&raw)?;
     options.validate().map_err(bad)?;
-    Ok(Json(investigate(&state.db, &address, &options).await?))
+    let (data, holdings) = tokio::join!(
+        investigate(&state.db, &address, &options),
+        metadata::snapshot(&state.db, &address)
+    );
+    let mut data = data?;
+    data["holdings"] = holdings;
+    Ok(Json(data))
 }
 async fn wallet_paths(
     State(state): State<ApiState>,
@@ -166,8 +171,7 @@ async fn wallet_paths(
 }
 async fn holdings(State(state): State<ApiState>, Path(raw): Path<String>) -> ApiResult {
     let address = address(&raw)?;
-    let rpc = TokenRpc::new(AppConfig::from_env().map_err(anyhow::Error::from)?)?;
-    Ok(Json(metadata::holdings(&state.db, &rpc, &address).await?))
+    Ok(Json(metadata::snapshot(&state.db, &address).await))
 }
 async fn candidates(State(state): State<ApiState>, Path(raw): Path<String>) -> ApiResult {
     let address = address(&raw)?;

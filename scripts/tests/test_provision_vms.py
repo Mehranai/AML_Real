@@ -210,6 +210,19 @@ class ProvisionTests(unittest.TestCase):
         self.assertFalse((self.root / ".local-vms").exists())
         self.assertFalse(self.launches())
 
+    def test_preflight_uses_full_vm_memory_not_fixed_two_gib(self):
+        with patch.object(vm, "available_memory", return_value=6 * vm.GIB):
+            with self.assertRaisesRegex(vm.DeploymentError, "Preflight"):
+                self.app().preflight()
+        self.assertFalse(self.launches())
+
+    def test_preflight_checks_explicit_storage_without_relocating_it(self):
+        with patch.object(vm.shutil, "disk_usage", return_value=shutil._ntuple_diskusage(
+                1000 * vm.GIB, 0, 1000 * vm.GIB)) as usage:
+            self.app().preflight()
+            usage.assert_called_once_with(self.root)
+        self.assertFalse(self.launches())
+
     def test_fresh_up_creates_exactly_four_and_preserves_source_env(self):
         original = (self.root / ".env").read_bytes()
         self.app().up()
@@ -220,6 +233,9 @@ class ProvisionTests(unittest.TestCase):
         self.assertEqual([call[call.index("up") - 1] for call in ups], ["tron", "ethereum", "bsc", "main"])
         for call in ups[:3]:
             self.assertIn("--api-only", call)
+        checks = [call for call in self.runner.calls if "check-runtime" in call]
+        self.assertTrue(checks)
+        self.assertTrue(all(call[call.index("check-runtime") - 1] == "main" for call in checks))
         self.assertTrue(all("--pull-never" in call for call in ups))
         self.assertEqual(len([call for call in self.runner.calls if "curl" in call]), 3)
         self.assertFalse(any(call[1] in ("delete", "purge") for call in self.runner.calls))
@@ -301,6 +317,9 @@ class ProvisionTests(unittest.TestCase):
         self.app().up()
         self.assertTrue(self.app().state["with_ingestion"])
         self.assertFalse(any("--api-only" in call for call in self.runner.calls))
+        checks = [call for call in self.runner.calls if "check-runtime" in call]
+        self.assertEqual({call[call.index("check-runtime") - 1] for call in checks}, set(vm.ROLES))
+        self.assertFalse(any("check" in call for call in self.runner.calls))
 
     def test_cloud_init_installs_docker_and_records_owner_without_secrets(self):
         data = json.loads(vm.cloud_config("deployment-id", "tron").split("\n", 1)[1])
@@ -343,6 +362,77 @@ class ProvisionTests(unittest.TestCase):
             {"Id": "test", "Os": "linux", "Architecture": "arm64"}]))
         with self.assertRaisesRegex(vm.DeploymentError, "linux/amd64"):
             app.inspect_image(vm.ALL_IMAGES[0])
+
+    def test_control_only_targets_one_running_owned_vm(self):
+        self.app().up()
+        state = (self.root / ".local-vms/state.json").read_bytes()
+        for action in vm.CHAIN_ACTIONS:
+            self.runner.calls.clear()
+            self.app().chain_control("ethereum", action)
+            calls = self.runner.calls
+            self.assertFalse(any(c[1] in ("launch", "start", "stop", "delete", "purge") for c in calls))
+            self.assertTrue(all(c[2] == "aml-test-ethereum" for c in calls if c[1] == "exec"))
+            self.assertEqual(calls[-1][-2:], ["ethereum", action])
+            self.assertTrue(all(v["state"] == "Running" for v in self.runner.instances.values()))
+            self.assertEqual((self.root / ".local-vms/state.json").read_bytes(), state)
+            self.assertNotIn(b"\r", (self.root / ".local-vms/control-vm.sh").read_bytes())
+
+    def test_control_query_is_a_single_argument_and_does_not_require_host_docker(self):
+        self.app().up()
+        sql = "SELECT 'spaces; $(not-a-command)' AS example"
+        self.runner.calls.clear()
+        with patch.object(vm.shutil, "which", return_value=None):
+            self.app().chain_control("bsc", "db", sql)
+        self.assertEqual(self.runner.calls[-1][-4:], ["bsc", "db", "--query", sql])
+        self.assertTrue(all(c[0] == "multipass" for c in self.runner.calls))
+        self.assertNotIn("test-password", json.dumps(self.runner.calls))
+
+    def test_control_refuses_missing_stopped_or_foreign_vm(self):
+        with self.assertRaisesRegex(vm.DeploymentError, "No managed"):
+            self.app().chain_control("tron", "pause")
+        self.app().up()
+        self.runner.instances["aml-test-tron"]["state"] = "Stopped"
+        self.runner.calls.clear()
+        with self.assertRaisesRegex(vm.DeploymentError, "Running"):
+            self.app().chain_control("tron", "resume")
+        self.assertFalse(any(c[1] != "list" for c in self.runner.calls))
+        self.runner.instances["aml-test-tron"]["state"] = "Running"
+        self.runner.instances["aml-test-tron"]["owner"]["owner"] = "someone-else"
+        self.runner.calls.clear()
+        with self.assertRaisesRegex(vm.DeploymentError, "Ownership"):
+            self.app().chain_control("tron", "pause")
+        self.assertFalse(any(c[1] == "transfer" for c in self.runner.calls))
+
+    def test_control_respects_operation_lock_and_validates_arguments(self):
+        self.app().up()
+        app = self.app()
+        with app.operation(), self.assertRaisesRegex(vm.DeploymentError, "Another"):
+            self.app().chain_control("tron", "pause")
+        for role, action, query in [("main", "pause", None), ("tron", "delete", None),
+                                    ("tron", "pause", "SELECT 1"), ("bsc", "db", " ")]:
+            with self.assertRaises(vm.DeploymentError):
+                app.chain_control(role, action, query)
+
+    def test_control_read_only_client_does_not_hold_deployment_lock(self):
+        self.app().up()
+        lock = self.root / ".local-vms/operation.lock"
+        original = self.runner
+
+        def runner(args, **kwargs):
+            if list(args)[-2:] == ["ethereum", "db"]:
+                self.assertFalse(lock.exists())
+                self.assertIsNone(kwargs["timeout"])
+            return original(args, **kwargs)
+
+        vm.Provisioner(self.args, self.root, runner).chain_control("ethereum", "db")
+
+    def test_control_cli_parses_and_rejects_ambiguous_actions(self):
+        args = vm.parser().parse_args(["db", "ethereum", "--query", "SHOW TABLES"])
+        self.assertEqual((args.role, args.query), ("ethereum", "SHOW TABLES"))
+        for arguments in (["pause"], ["stop", "ethereum"], ["resume", "tron", "--build"],
+                          ["ps", "bsc", "--query", "SELECT 1"]):
+            with patch.object(vm.sys, "argv", ["provision_vms.py", *arguments]), self.assertRaises(vm.DeploymentError):
+                vm.main()
 
     def test_instance_loaded_before_another_up_reloads_ownership_under_lock(self):
         stale = self.app()

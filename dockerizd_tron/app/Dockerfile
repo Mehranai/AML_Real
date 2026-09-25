@@ -31,7 +31,9 @@ RUN apt-get update \
         ca-certificates curl libssl3 tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid "${APP_GID}" tron \
-    && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home --shell /usr/sbin/nologin tron
+    && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home --shell /usr/sbin/nologin tron \
+    && mkdir -p /var/lib/tron-analytics \
+    && chown tron:tron /var/lib/tron-analytics
 COPY --from=builder /out/ /usr/local/bin/
 WORKDIR /app
 ENV RUST_BACKTRACE=1 TZ=UTC

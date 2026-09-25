@@ -56,7 +56,6 @@ impl ExtractedTransfer {
             token: self.asset_id.clone(),
             from: self.from_address.clone(),
             to: self.to_address.clone(),
-            amount: u128::try_from(self.amount).unwrap_or(u128::MAX),
             raw_amount: self.amount,
         }
     }

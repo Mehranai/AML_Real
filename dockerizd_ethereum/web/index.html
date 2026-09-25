@@ -227,6 +227,8 @@
       .brand { min-width: 0; flex: 1; }
       .service-status { flex-basis: 100%; }
     }
+    .holding-row .row-title code, .holding-amount { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+    .holding-amount { text-align: right; }
   </style>
 </head>
 <body>
@@ -542,10 +544,41 @@
       }
     });
 
+
+    function holdingAmount(asset) {
+      const raw = String(asset.amount ?? '');
+      if (asset.status !== 'available' || !/^\d+$/.test(raw)) return 'Unavailable';
+      const decimals = asset.decimals;
+      if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) return raw + ' raw units';
+      if (decimals === 0) return raw;
+      const padded = raw.padStart(decimals + 1, '0');
+      const fraction = padded.slice(-decimals).replace(/0+$/, '');
+      return padded.slice(0, -decimals) + (fraction ? '.' + fraction : '');
+    }
+
+    function holdingsMarkup(holdings) {
+      if (!holdings) return '<p class="empty">No holdings observation in this snapshot.</p>';
+      const assets = Array.isArray(holdings.assets) ? holdings.assets : [];
+      const rows = assets.map(asset => '<div class="data-row holding-row"><div class="row-title"><code title="' +
+        escapeHtml(asset.asset_id) + '">' + escapeHtml(asset.symbol || short(asset.asset_id)) +
+        '</code><strong class="holding-amount">' + escapeHtml(holdingAmount(asset)) + '</strong></div>' +
+        (asset.token_id ? '<div class="row-meta">Token ID <code>' + escapeHtml(asset.token_id) + '</code></div>' : '') +
+        '<div class="row-meta">' + escapeHtml(short(asset.asset_id)) +
+        (asset.amount !== null && asset.amount !== undefined ? ' / Raw: ' + escapeHtml(asset.amount) : ' / Balance unavailable') +
+        '</div></div>').join('');
+      return '<div class="coverage-note">' + (holdings.persisted ? 'Snapshot' : 'Live observation') +
+        ' / ' + escapeHtml(holdings.status || 'unknown') + '<br>Finalized block: ' +
+        (holdings.block_number === null || holdings.block_number === undefined ? 'Unavailable' : escapeHtml(holdings.block_number)) +
+        '<br>Observed: ' + escapeHtml(time(holdings.observed_at_unix_ms)) +
+        '<br>Current finalized state; not a historical graph-window balance.' +
+        (holdings.truncated ? '<br>Asset limit reached.' : '') + '</div><div class="data-list">' +
+        (rows || '<p class="empty">Balances unavailable. Missing data is not a zero balance.</p>') + '</div>';
+    }
+
     function renderInvestigation(data) {
       document.getElementById('evidence-subtitle').textContent = short(data.address);
       const f = data.fingerprint;
-      const assets = data.asset_flows.map(item => `<div class="data-row"><div class="row-title"><code title="${escapeHtml(item.asset_id)}">${escapeHtml(short(item.asset_id))}</code><span class="badge">${number(item.transfer_count)} flows</span></div><div class="row-meta">In ${escapeHtml(amount(item.inbound_amount))} � Out ${escapeHtml(amount(item.outbound_amount))}</div></div>`).join('');
+      const assets = data.asset_flows.map(item => `<div class="data-row"><div class="row-title"><code title="${escapeHtml(item.asset_id)}">${escapeHtml(short(item.asset_id))}</code><span class="badge">${number(item.transfer_count)} flows</span></div>${item.token_id ? `<div class="row-meta">Token ID <code>${escapeHtml(item.token_id)}</code></div>` : ''}<div class="row-meta">In ${escapeHtml(amount(item.inbound_amount))} / Out ${escapeHtml(amount(item.outbound_amount))}</div></div>`).join('');
       const counterparties = data.top_counterparties.map(item => `<div class="data-row"><div class="row-title"><code title="${escapeHtml(item.address)}">${escapeHtml(short(item.address))}</code><span class="badge info">${number(item.total_transfers)}</span></div><div class="row-meta">Received ${number(item.inbound_transfers)} � Sent ${number(item.outbound_transfers)} � ${escapeHtml(time(item.last_seen_unix_ms))}</div></div>`).join('');
       const events = data.semantic_events.map(item => `<div class="data-row"><div class="row-title"><code>${escapeHtml(item.event_type)}</code><span class="badge">${Math.round(item.confidence * 100)}%</span></div><div class="row-meta">${escapeHtml(item.protocol || 'unclassified protocol')} � block ${number(item.block_number)}<br>${escapeHtml(short(item.tx_hash))}${item.remote_network_id ? ` � remote ${escapeHtml(item.remote_network_id)}` : ''}</div></div>`).join('');
       const entities = data.entities.map(item => `<div class="data-row"><div class="row-title"><strong>${escapeHtml(item.entity_name)}</strong><span class="badge ${item.is_exposure_seed ? 'warning' : 'info'}">${escapeHtml(item.entity_type)}</span></div><div class="row-meta">${escapeHtml(item.address_role)} � confidence ${Math.round(item.confidence * 100)}% � risk ${number(item.risk_level)}${item.seed_category ? ` � ${escapeHtml(item.seed_category)}` : ''}</div></div>`).join('');
@@ -560,10 +593,11 @@
           ${metric('Transactions', f.transaction_count)}${metric('Fund flows', f.transfer_count)}${metric('Counterparties', f.unique_counterparties)}${metric('Contract calls', f.contract_calls)}${metric('Inbound', f.inbound_transfers)}${metric('Outbound', f.outbound_transfers)}${metric('Swaps', f.swap_events)}${metric('Bridges', f.bridge_events)}${metric('Mixer', f.mixer_events)}${metric('Liquidity', f.liquidity_events)}
         </div></section>
         <section class="evidence-section"><h3 class="section-title">Evidence risk</h3>${riskPanel}</section>
+        <section class="evidence-section"><h3 class="section-title">Holdings</h3>${holdingsMarkup(data.holdings)}</section>
         <section class="evidence-section"><h3 class="section-title">Entity intelligence</h3><div class="data-list">${entities || '<p class="empty">No approved entity label is attached to this address.</p>'}</div></section>
         <section class="evidence-section"><h3 class="section-title">Address clusters</h3><div class="data-list">${clusters || '<p class="empty">No reviewed entity cluster membership is available.</p>'}</div></section>
-        <section class="evidence-section"><h3 class="section-title">Exposure paths</h3><div class="data-list">${exposures || '<p class="empty">No path to an approved exposure seed exists in the latest propagation run.</p>'}</div></section>
-        <section class="evidence-section"><h3 class="section-title">Data coverage</h3><div class="coverage-note">Last synced block: <span class="mono">${number(data.data_coverage.last_synced_block)}</span><br>Receipt-complete blocks: ${number(data.data_coverage.receipt_complete_blocks)} / ${number(data.data_coverage.complete_blocks)}<br>Internal EVM traces: ${data.data_coverage.internal_transfer_coverage ? 'complete' : 'not available from the current RPC'}</div></section>
+        <section class="evidence-section"><h3 class="section-title">Exposure paths</h3><div class="data-list">${exposures || '<p class="empty">No exposure path was returned. Missing labels, history or query limits may hide paths.</p>'}</div></section>
+        <section class="evidence-section"><h3 class="section-title">Data coverage</h3><div class="coverage-note">Last synced block: <span class="mono">${number(data.data_coverage.last_synced_block)}</span><br>Receipt-complete blocks: ${number(data.data_coverage.receipt_complete_blocks)} / ${number(data.data_coverage.complete_blocks)}<br>Internal EVM traces: ${data.data_coverage.internal_transfer_coverage ? 'complete in indexed blocks' : 'incomplete or unavailable'}<br>Indexed history from genesis: ${data.data_coverage.history_from_genesis === true ? 'yes' : 'not complete'}</div></section>
         <section class="evidence-section"><h3 class="section-title">Asset flows</h3><div class="data-list">${assets || '<p class="empty">No stored asset flow was found.</p>'}</div></section>
         <section class="evidence-section"><h3 class="section-title">Top counterparties</h3><div class="data-list">${counterparties || '<p class="empty">No counterparty was found in the stored range.</p>'}</div></section>
         <section class="evidence-section"><h3 class="section-title">Semantic events</h3><div class="data-list">${events || '<p class="empty">No decoded swap, bridge, mixer, or liquidity event is stored for this wallet yet.</p>'}</div></section>

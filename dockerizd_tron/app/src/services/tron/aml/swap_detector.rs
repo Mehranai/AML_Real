@@ -22,16 +22,17 @@ pub fn detect_swaps(transfers: &[SimpleTransfer], actor: Option<&str>) -> Vec<Am
         let mut received = Vec::new();
 
         for (token, delta) in token_map {
-            if delta < 0 {
+            if delta.sign() == num_bigint::Sign::Minus {
                 sent.push(token.clone());
             }
 
-            if delta > 0 {
+            if delta.sign() == num_bigint::Sign::Plus {
                 received.push(token.clone());
             }
         }
 
-        if sent.is_empty() || received.is_empty() {
+        // Multi-asset net flows do not establish which input paid for which output.
+        if sent.len() != 1 || received.len() != 1 {
             continue;
         }
 

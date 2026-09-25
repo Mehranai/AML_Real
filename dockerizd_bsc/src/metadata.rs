@@ -10,6 +10,12 @@ mod integer {
 }
 use integer::U256;
 use serde_json::{Value, json};
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    sync::Semaphore,
+    task::JoinSet,
+    time::{Instant, timeout, timeout_at},
+};
 
 #[derive(Clone)]
 pub struct TokenRpc {
@@ -287,68 +293,132 @@ pub async fn import_metadata(db: &Warehouse, mut rows: Vec<Value>, dry_run: bool
 
 pub async fn holdings(db: &Warehouse, rpc: &TokenRpc, address: &str) -> Result<Value> {
     let block = rpc.finalized().await?;
-    let mut assets=db.rows("SELECT DISTINCT asset_id,token_id FROM address_relationships_canonical
-        WHERE from_address={address:String} OR to_address={address:String} ORDER BY asset_id,token_id LIMIT 101",&[("address",address)]).await?;
-    assets.retain(|v| v["asset_id"] != "eip155:56/native:bnb");
+    let mut assets=db.rows("SELECT r.asset_id AS asset_id,r.token_id AS token_id,m.symbol AS symbol,m.decimals AS decimals
+        FROM (SELECT DISTINCT network_id,asset_id,token_id FROM address_relationships_canonical
+        WHERE network_id='eip155:56' AND (from_address={address:String} OR to_address={address:String})
+        AND asset_id!='eip155:56/native:bnb' ORDER BY asset_id,token_id LIMIT 101) AS r
+        LEFT ANY JOIN token_metadata_current AS m ON r.network_id=m.network_id
+        AND arrayElement(splitByChar(':',r.asset_id),-1)=m.token_address
+        ORDER BY asset_id,token_id",&[("address",address)]).await?;
     let truncated = assets.len() > 100;
     assets.truncate(100);
-    assets.insert(0, json!({"asset_id":"eip155:56/native:bnb","token_id":""}));
+    assets.insert(
+        0,
+        json!({"asset_id":"eip155:56/native:bnb","token_id":"","symbol":"BNB","decimals":18}),
+    );
     let mut rows = Vec::new();
-    for asset in assets {
-        let id = asset["asset_id"].as_str().context("asset id")?;
-        let result: Result<String> = async {
-            if id.ends_with("/native:bnb") {
-                return Ok(quantity(
-                    rpc.call("eth_getBalance", json!([address, block["number"]]))
-                        .await?
-                        .as_str()
-                        .context("balance")?,
-                )?
-                .to_string());
-            }
-            let (_, part) = id.split_once('/').context("asset namespace")?;
-            let (standard, rest) = part.split_once(':').context("asset standard")?;
-            let token = normalize_evm_address(rest.split('/').next().context("token")?)?;
-            let wallet = format!("{:0>64}", address.trim_start_matches("0x"));
-            let data = match standard {
-                "erc20" => format!("0x70a08231{wallet}"),
-                "erc721" | "erc1155" => {
-                    let id =
-                        U256::from_str_radix(asset["token_id"].as_str().context("token id")?, 10)?;
-                    if standard == "erc721" {
-                        format!("0x6352211e{}", word(id))
-                    } else {
-                        format!("0x00fdd58e{wallet}{}", word(id))
-                    }
-                }
-                _ => bail!("unknown token standard"),
-            };
-            let raw = rpc.eth_call(&token, &data, &block).await?;
-            let value = abi_number(&raw)?;
-            if standard == "erc721" {
-                ensure!(value.bits() <= 160, "invalid ABI address");
-                let owner = format!("0x{:040x}", value);
-                Ok(if owner.eq_ignore_ascii_case(address) {
-                    "1"
-                } else {
-                    "0"
-                }
-                .to_owned())
-            } else {
-                Ok(value.to_string())
-            }
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let slots = Arc::new(Semaphore::new(4));
+    let mut jobs = JoinSet::new();
+    for (index, mut asset) in assets.into_iter().enumerate() {
+        if asset["asset_id"]
+            .as_str()
+            .is_some_and(|id| id.contains("/erc721:") || id.contains("/erc1155:"))
+        {
+            asset["decimals"] = json!(0);
         }
-        .await;
-        rows.push(match result {Ok(amount)=>json!({"asset_id":id,"token_id":asset["token_id"],"amount":amount,"status":"available"}),
-            Err(_)=>json!({"asset_id":id,"token_id":asset["token_id"],"amount":null,"status":"unavailable"})});
+        rows.push(json!({"asset_id":asset["asset_id"],"token_id":asset["token_id"],"symbol":asset["symbol"],
+            "decimals":asset["decimals"],"amount":null,"status":"unavailable","error_class":"deadline_exceeded"}));
+        let rpc = rpc.clone();
+        let block = block.clone();
+        let address = address.to_owned();
+        let slots = slots.clone();
+        jobs.spawn(async move {
+            let result = async {
+                let _permit = slots.acquire_owned().await?;
+                read_balance(&rpc, &block, &address, &asset).await
+            };
+            (index, timeout_at(deadline, result).await)
+        });
+    }
+    while let Some(result) = jobs.join_next().await {
+        let (index, result) = result.context("holdings worker failed")?;
+        match result {
+            Ok(Ok(amount)) => {
+                rows[index]["amount"] = json!(amount);
+                rows[index]["status"] = json!("available");
+                rows[index]["error_class"] = Value::Null;
+            }
+            _ => rows[index]["error_class"] = json!("rpc_reverted_invalid_or_timed_out"),
+        }
     }
     rpc.verify(&block).await?;
+    let unavailable = rows.iter().filter(|r| r["status"] != "available").count();
     Ok(
         json!({"network_id":BSC_NETWORK_ID,"address":address,"source":"finalized_rpc","block_number":block_height(&block)?,
+        "status":if unavailable == rows.len() {"unavailable"} else if unavailable > 0 || truncated {"partial"} else {"available"},
         "block_hash":block["hash"],"assets":rows,"truncated":truncated,"observed_at_unix_ms":now_ms(),
         "scope":"BNB plus assets discovered in stored wallet transfers; not all undiscovered tokens",
-        "persisted":false,"unavailable_is_not_zero":true}),
+        "observation_scope":"current_finalized_not_historical_window",
+        "unavailable_assets":unavailable,"persisted":false,"unavailable_is_not_zero":true}),
     )
+}
+
+async fn read_balance(
+    rpc: &TokenRpc,
+    block: &Value,
+    address: &str,
+    asset: &Value,
+) -> Result<String> {
+    let id = asset["asset_id"].as_str().context("asset id")?;
+    ensure!(
+        id.starts_with("eip155:56/"),
+        "asset belongs to another network"
+    );
+    if id.ends_with("/native:bnb") {
+        return Ok(quantity(
+            rpc.call("eth_getBalance", json!([address, block["number"]]))
+                .await?
+                .as_str()
+                .context("balance")?,
+        )?
+        .to_string());
+    }
+    let (_, part) = id.split_once('/').context("asset namespace")?;
+    let (standard, rest) = part.split_once(':').context("asset standard")?;
+    let token = normalize_evm_address(rest.split('/').next().context("token")?)?;
+    let wallet = format!("{:0>64}", address.trim_start_matches("0x"));
+    let data = match standard {
+        "erc20" => format!("0x70a08231{wallet}"),
+        "erc721" | "erc1155" => {
+            let id = U256::from_str_radix(asset["token_id"].as_str().context("token id")?, 10)?;
+            if standard == "erc721" {
+                format!("0x6352211e{}", word(id))
+            } else {
+                format!("0x00fdd58e{wallet}{}", word(id))
+            }
+        }
+        _ => bail!("unknown token standard"),
+    };
+    let raw = rpc.eth_call(&token, &data, &block).await?;
+    let value = abi_number(&raw)?;
+    if standard == "erc721" {
+        ensure!(value.bits() <= 160, "invalid ABI address");
+        let owner = format!("0x{:040x}", value);
+        Ok(if owner.eq_ignore_ascii_case(address) {
+            "1"
+        } else {
+            "0"
+        }
+        .to_owned())
+    } else {
+        Ok(value.to_string())
+    }
+}
+
+pub async fn snapshot(db: &Warehouse, address: &str) -> Value {
+    let read = async {
+        let rpc = TokenRpc::new(AppConfig::from_env()?)?;
+        holdings(db, &rpc, address).await
+    };
+    match timeout(Duration::from_secs(35), read).await {
+        Ok(Ok(value)) => value,
+        _ => json!({"network_id":BSC_NETWORK_ID,"address":address,"source":"finalized_rpc",
+            "status":"unavailable","error_class":"rpc_or_warehouse_unavailable_or_timed_out",
+            "assets":[],"block_number":null,"block_hash":null,"observed_at_unix_ms":now_ms(),
+            "scope":"native_and_discovered_assets","observation_scope":"current_finalized_not_historical_window",
+            "unavailable_is_not_zero":true,"persisted":false}),
+    }
 }
 
 #[cfg(test)]

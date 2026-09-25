@@ -60,7 +60,8 @@ pub fn clickhouse_client(config: &AppConfig) -> Arc<Client> {
             .with_url(&config.clickhouse_url)
             .with_user(&config.clickhouse_user)
             .with_password(&config.clickhouse_pass)
-            .with_database(&config.clickhouse_db_tron),
+            .with_database(&config.clickhouse_db_tron)
+            .with_option("join_algorithm", "auto"),
     )
 }
 

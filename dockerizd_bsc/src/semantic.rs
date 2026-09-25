@@ -18,7 +18,12 @@ use crate::{
 };
 
 const DETECTOR: &str = "bsc_semantic_classifier";
-const DETECTOR_VERSION: &str = "bsc_semantic_v1";
+const DETECTOR_VERSION: &str = "bsc_semantic_v2_exact_flows";
+mod flow_amount {
+    // At most 256 UInt256 legs are summed per bounded observation.
+    uint::construct_uint! { pub struct U512(8); }
+}
+use flow_amount::U512;
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 const SWAP_V2_TOPIC: &str = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822";
 const SWAP_V3_TOPIC: &str = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
@@ -729,6 +734,10 @@ fn push_registry_event(
             "topic0": log.map(|item| item.topic0.as_str()).unwrap_or(""),
             "log_index": log.map(|item| item.log_index),
             "flow_edges": flow.evidence_refs.len(),
+            "flow_boundary": flow.boundary,
+            "flow_truncated": flow.truncated,
+            "flow_evidence_refs_truncated": flow.evidence_refs.len() > 64,
+            "nft_legs_excluded": flow.nft_legs_excluded,
             "remote_receiver": remote_receiver,
             "bridge_message_id": bridge_message_id,
         }
@@ -991,6 +1000,9 @@ struct FlowSummary {
     amounts_out: String,
     evidence_refs: Vec<String>,
     recipient: Option<String>,
+    boundary: &'static str,
+    truncated: bool,
+    nft_legs_excluded: usize,
 }
 
 impl FlowSummary {
@@ -1025,23 +1037,40 @@ fn subject_flow(
     let mut outgoing = BTreeMap::new();
     let mut refs = Vec::new();
     let mut recipient = None;
+    // Prefer the protocol boundary; combining user AND pool boundaries double-counts routed legs.
+    let protocol_boundary = relationships
+        .iter()
+        .any(|r| r.from_address == protocol_contract || r.to_address == protocol_contract);
+    let mut nft_legs_excluded = 0;
     for relationship in relationships.iter().take(256) {
-        if (relationship.from_address == subject || relationship.to_address == protocol_contract)
-            && relationship.to_address != ZERO_ADDRESS
-        {
-            incoming.insert(
-                relationship.asset_id.clone(),
-                relationship.amount.decimal_string(),
-            );
+        if !relationship.token_id.is_empty() {
+            nft_legs_excluded += 1;
+            continue;
+        }
+        if relationship.from_address == relationship.to_address || relationship.amount.is_zero() {
+            continue;
+        }
+        let amount = U512::from_little_endian(&relationship.amount.as_clickhouse().to_le_bytes());
+        let inbound = if protocol_boundary {
+            relationship.to_address == protocol_contract
+        } else {
+            relationship.from_address == subject
+        };
+        let outbound = if protocol_boundary {
+            relationship.from_address == protocol_contract
+        } else {
+            relationship.to_address == subject
+        };
+        if inbound && relationship.to_address != ZERO_ADDRESS {
+            *incoming
+                .entry(relationship.asset_id.clone())
+                .or_insert(U512::zero()) += amount;
             refs.push(relationship.relationship_id.clone());
         }
-        if (relationship.to_address == subject || relationship.from_address == protocol_contract)
-            && relationship.from_address != ZERO_ADDRESS
-        {
-            outgoing.insert(
-                relationship.asset_id.clone(),
-                relationship.amount.decimal_string(),
-            );
+        if outbound && relationship.from_address != ZERO_ADDRESS {
+            *outgoing
+                .entry(relationship.asset_id.clone())
+                .or_insert(U512::zero()) += amount;
             refs.push(relationship.relationship_id.clone());
             if relationship.from_address == protocol_contract
                 && relationship.to_address != protocol_contract
@@ -1050,6 +1079,9 @@ fn subject_flow(
             }
         }
     }
+    let truncated = relationships.len() > 256 || incoming.len() > 32 || outgoing.len() > 32;
+    refs.sort();
+    refs.dedup();
     let (assets_in, amounts_in) = join_flows(incoming);
     let (assets_out, amounts_out) = join_flows(outgoing);
     FlowSummary {
@@ -1059,11 +1091,22 @@ fn subject_flow(
         amounts_out,
         evidence_refs: refs,
         recipient,
+        boundary: if protocol_boundary {
+            "protocol"
+        } else {
+            "subject"
+        },
+        truncated,
+        nft_legs_excluded,
     }
 }
 
-fn join_flows(flows: BTreeMap<String, String>) -> (String, String) {
-    let (assets, amounts): (Vec<_>, Vec<_>) = flows.into_iter().take(32).unzip();
+fn join_flows(flows: BTreeMap<String, U512>) -> (String, String) {
+    let (assets, amounts): (Vec<_>, Vec<_>) = flows
+        .into_iter()
+        .take(32)
+        .map(|(a, v)| (a, v.to_string()))
+        .unzip();
     (assets.join(","), amounts.join(","))
 }
 
@@ -1320,6 +1363,39 @@ mod tests {
             amount: amount(value),
             transfer_type,
         }
+    }
+
+    #[test]
+    fn flow_sums_repeated_assets_without_counting_router_legs_twice() {
+        let legs = vec![
+            relationship("a", SENDER, "router", "asset", "0xa", "erc20"),
+            relationship("b", "router", PROTOCOL, "asset", "0xa", "erc20"),
+            relationship("c", SENDER, PROTOCOL, "asset", "0x5", "erc20"),
+        ];
+        let refs = legs.iter().collect::<Vec<_>>();
+        let flow = subject_flow(SENDER, PROTOCOL, &refs);
+        assert_eq!(flow.amounts_in, "15");
+        assert_eq!(flow.evidence_refs, ["b", "c"]);
+        assert_eq!(flow.boundary, "protocol");
+        assert!(!flow.truncated);
+    }
+
+    #[test]
+    fn flow_total_can_exceed_uint256_and_nfts_are_not_fungible_amounts() {
+        let maximum = format!("0x{}", "f".repeat(64));
+        let mut legs = vec![
+            relationship("a", SENDER, PROTOCOL, "asset", &maximum, "erc20"),
+            relationship("b", SENDER, PROTOCOL, "asset", &maximum, "erc20"),
+            relationship("nft", SENDER, PROTOCOL, "nft-asset", "0x1", "erc1155"),
+        ];
+        legs[2].token_id = "12".into();
+        let flow = subject_flow(SENDER, PROTOCOL, &legs.iter().collect::<Vec<_>>());
+        let expected = U512::from_little_endian(&[255; 32]) * U512::from(2);
+        assert_eq!(flow.amounts_in, expected.to_string());
+        assert_eq!(flow.assets_in, "asset");
+        assert_eq!(flow.nft_legs_excluded, 1);
+        let many = vec![legs[0].clone(); 257];
+        assert!(subject_flow(SENDER, PROTOCOL, &many.iter().collect::<Vec<_>>()).truncated);
     }
 
     fn block(transaction: CanonicalTransaction, logs: Vec<CanonicalLog>) -> CanonicalBlock {

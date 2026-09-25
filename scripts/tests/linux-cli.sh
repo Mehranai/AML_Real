@@ -22,6 +22,11 @@ if [[ $1 == image && $2 == save ]]; then
   [[ $3 == --output ]]
   printf 'test image: %s\n' "$5" > "$4"
 fi
+if [[ $1 == compose && " $* " == *' ps --all --quiet '* ]]; then
+  [[ ${MOCK_MISSING_SERVICE:-} != "${!#}" ]] || exit 0
+  printf 'abc123\n'
+fi
+if [[ $1 == inspect ]]; then printf '%s\n' "${MOCK_RUNTIME_STATE:-running healthy}"; fi
 MOCK
 cat > "$work/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
@@ -125,6 +130,54 @@ expect_failure bash "$project/scripts/vm.sh" tron up --project
 [[ ! -s $MOCK_LOG ]]
 MOCK_DOCKER_EXIT=23 expect_failure bash "$project/scripts/vm.sh" tron up
 echo "PASS VM roles, quoting, option combinations, errors and volume preservation"
+
+for role in tron ethereum bsc; do
+  reset_log
+  bash "$project/scripts/vm.sh" "$role" pause >/dev/null
+  assert_log 'length == 1 and (.[0] | index("stop") != null and index("--timeout") != null and index("150") != null and index("clickhouse") == null and index("down") == null)'
+  jq -e --arg role "$role" 'index("aml-" + $role) != null and index($role + "-api") != null' "$MOCK_LOG" >/dev/null
+  if [[ $role == bsc ]]; then assert_log '.[0] | index("--profile") != null and index("runtime") != null'; fi
+  reset_log
+  bash "$project/scripts/vm.sh" "$role" pause-ingestion >/dev/null
+  jq -e --arg role "$role" 'index("stop") != null and index($role + "-api") == null and index("clickhouse") == null' "$MOCK_LOG" >/dev/null
+  reset_log
+  bash "$project/scripts/vm.sh" "$role" resume >/dev/null
+  assert_log 'length == 2 and (.[0] | index("exec") != null and index("clickhouse") != null) and (.[1] | index("up") != null and index("--no-deps") != null and index("--no-build") != null and index("never") != null and index("clickhouse") == null and index("down") == null)'
+done
+reset_log
+sql="SELECT 'a b; \$HOME' AS value"
+bash "$project/scripts/vm.sh" ethereum db --query "$sql" >/dev/null
+jq -e --arg sql "$sql" '.[-2:] == ["--query", $sql] and index("ethereum_aml") != null and any(.[]; contains("--readonly 1")) and any(.[]; contains("$CLICKHOUSE_PASSWORD"))' "$MOCK_LOG" >/dev/null
+assert_log 'length == 1 and (.[0] | index("exec") != null and index("-T") != null and index("clickhouse") != null)'
+reset_log
+bash "$project/scripts/vm.sh" tron db </dev/null >/dev/null
+assert_log 'length == 1 and (.[0] | index("tron_db") != null and index("--query") == null)'
+reset_log
+for action in pause pause-ingestion resume db; do expect_failure bash "$project/scripts/vm.sh" main "$action"; done
+expect_failure bash "$project/scripts/vm.sh" tron pause --api-only
+expect_failure bash "$project/scripts/vm.sh" tron resume --build
+expect_failure bash "$project/scripts/vm.sh" tron ps --query 'SELECT 1'
+expect_failure bash "$project/scripts/vm.sh" bsc db --query
+[[ ! -s $MOCK_LOG ]]
+MOCK_DOCKER_EXIT=23 expect_failure bash "$project/scripts/vm.sh" ethereum resume
+assert_log 'length == 1 and (.[0] | index("up") == null)'
+echo "PASS independent app controls, retained databases, read-only SQL and query quoting"
+for action in up pause pause-ingestion resume; do
+  reset_log
+  bash "$project/scripts/vm.sh" tron "$action" >/dev/null
+  assert_log '.[-1] | index("tron-analytics") != null'
+done
+echo "PASS TRON analytics participates in full startup, pause and resume"
+
+for role in main tron ethereum bsc; do
+  reset_log
+  bash "$project/scripts/vm.sh" "$role" check-runtime >/dev/null
+  assert_log 'any(.[]; index("inspect") != null) and any(.[]; index("exec") != null)'
+done
+MOCK_MISSING_SERVICE=tron-analytics expect_failure bash "$project/scripts/vm.sh" tron check-runtime
+MOCK_RUNTIME_STATE='exited unhealthy' expect_failure bash "$project/scripts/vm.sh" ethereum check-runtime
+MOCK_RUNTIME_STATE='running starting' expect_failure bash "$project/scripts/vm.sh" bsc check-runtime
+echo "PASS full runtime checks reject missing, stopped and unhealthy workers"
 
 reset_log
 bash "$project/scripts/aml.sh" up --build >/dev/null

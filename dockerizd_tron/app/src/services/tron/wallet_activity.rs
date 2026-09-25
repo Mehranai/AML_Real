@@ -236,7 +236,7 @@ async fn load_semantic_events(
                 detector_version,
                 confidence,
                 evidence_json
-            FROM semantic_aml_events FINAL
+            FROM semantic_aml_events_canonical
             WHERE subject_address = ?
               AND timestamp >= ?
             ORDER BY timestamp DESC, event_id
@@ -260,7 +260,7 @@ async fn load_semantic_event_count(
         .query(
             r#"
             SELECT count() AS value
-            FROM semantic_aml_events FINAL
+            FROM semantic_aml_events_canonical
             WHERE subject_address = ?
               AND timestamp >= ?
             "#,

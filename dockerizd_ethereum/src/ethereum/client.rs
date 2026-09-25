@@ -3,7 +3,7 @@ use std::time::Duration;
 use alloy::{
     eips::{BlockId, BlockNumberOrTag},
     network::TransactionResponse as _,
-    primitives::Address,
+    primitives::{Address, B256, U256},
     providers::{DynProvider, Provider, ProviderBuilder, ext::DebugApi},
     rpc::types::{
         Block, TransactionReceipt,
@@ -130,6 +130,25 @@ impl EthereumRpc {
         address: Address,
         calldata: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
+        self.call_contract_at_tag(address, calldata, "latest").await
+    }
+
+    pub async fn call_contract_at_block(
+        &self,
+        address: Address,
+        calldata: &[u8],
+        block: u64,
+    ) -> anyhow::Result<Vec<u8>> {
+        self.call_contract_at_tag(address, calldata, &format!("0x{block:x}"))
+            .await
+    }
+
+    async fn call_contract_at_tag(
+        &self,
+        address: Address,
+        calldata: &[u8],
+        block: &str,
+    ) -> anyhow::Result<Vec<u8>> {
         let request = serde_json::json!({
             "to": format!("{address:#x}"),
             "data": format!("0x{}", alloy::hex::encode(calldata)),
@@ -137,13 +156,61 @@ impl EthereumRpc {
         let encoded: String = timeout(
             self.deadline,
             self.provider
-                .raw_request("eth_call".into(), (request, "latest")),
+                .raw_request("eth_call".into(), (request, block)),
         )
         .await
         .context("Ethereum eth_call request timed out")?
         .with_context(|| format!("eth_call failed for {address:#x}"))?;
         alloy::hex::decode(encoded.strip_prefix("0x").unwrap_or(&encoded))
             .with_context(|| format!("eth_call returned invalid hex for {address:#x}"))
+    }
+
+    pub async fn holdings_block(&self) -> anyhow::Result<(u64, B256)> {
+        let block = timeout(
+            self.deadline,
+            self.provider
+                .get_block_by_number(BlockNumberOrTag::Finalized),
+        )
+        .await
+        .context("finalized balance block timed out")??
+        .context("finalized balance block unavailable")?;
+        Ok((block.header.number, block.header.hash))
+    }
+
+    pub async fn balance_at_block(&self, address: Address, block: u64) -> anyhow::Result<U256> {
+        let raw: String = timeout(
+            self.deadline,
+            self.provider.raw_request(
+                "eth_getBalance".into(),
+                (format!("{address:#x}"), format!("0x{block:x}")),
+            ),
+        )
+        .await
+        .context("balance request timed out")??;
+        let value = raw
+            .strip_prefix("0x")
+            .context("balance missing quantity prefix")?;
+        ensure!(
+            !value.is_empty() && value.len() <= 64 && value.bytes().all(|b| b.is_ascii_hexdigit()),
+            "invalid balance quantity"
+        );
+        U256::from_str_radix(value, 16).context("invalid balance")
+    }
+
+    pub async fn verify_block_hash(&self, height: u64, hash: B256) -> anyhow::Result<()> {
+        let block = timeout(
+            self.deadline,
+            self.provider
+                .get_block_by_number(BlockNumberOrTag::Number(height)),
+        )
+        .await
+        .context("balance block verification timed out")??
+        .context("balance block disappeared")?;
+        ensure!(
+            block.header.hash == hash,
+            "balance block changed during reads; retry"
+        );
+        Ok(())
     }
 
     pub async fn code_at(&self, address: Address) -> anyhow::Result<Vec<u8>> {
@@ -353,4 +420,110 @@ fn trace_mode_name(mode: TraceMode) -> &'static str {
 
 pub async fn probe_node(config: &AppConfig) -> anyhow::Result<EthereumNodeStatus> {
     EthereumRpc::connect(config).await?.status().await
+}
+
+#[cfg(test)]
+mod holdings_tests {
+    use super::*;
+    use axum::{Json, Router, extract::State, routing::post};
+    use serde_json::{Value, json};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    #[derive(Clone)]
+    struct RpcFixture {
+        requests: Arc<Mutex<Vec<Value>>>,
+        block: Value,
+        changed: Arc<AtomicBool>,
+    }
+
+    async fn respond(State(state): State<RpcFixture>, Json(request): Json<Value>) -> Json<Value> {
+        state.requests.lock().unwrap().push(request.clone());
+        let result = match request["method"].as_str().unwrap() {
+            "eth_chainId" => json!("0x1"),
+            "eth_getBalance" => json!(format!("0x{:x}", U256::MAX)),
+            "eth_call" => json!(format!("0x{:064x}", 5)),
+            "eth_getBlockByNumber" => {
+                let mut block = state.block.clone();
+                if state.changed.load(Ordering::SeqCst) {
+                    block["hash"] = json!(format!("{:#x}", B256::repeat_byte(2)));
+                }
+                block
+            }
+            _ => panic!("unexpected RPC method"),
+        };
+        Json(json!({"jsonrpc":"2.0","id":request["id"],"result":result}))
+    }
+
+    #[tokio::test]
+    async fn balances_use_fixed_block_and_detect_wrong_chain_and_changed_hash() {
+        let mut block: Block = Block::default();
+        block.header.number = 42;
+        block.header.hash = B256::repeat_byte(1);
+        let state = RpcFixture {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            block: serde_json::to_value(block).unwrap(),
+            changed: Arc::new(AtomicBool::new(false)),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route("/", post(respond))
+            .with_state(state.clone());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let provider = ProviderBuilder::new()
+            .connect(&format!("http://{addr}"))
+            .await
+            .unwrap()
+            .erased();
+        let rpc = EthereumRpc {
+            provider,
+            network_id: "eip155:1".into(),
+            rpc_provider: "test".into(),
+            expected_chain_id: 1,
+            finality_tag: FinalityTag::Finalized,
+            trace_mode: TraceMode::Disabled,
+            deadline: Duration::from_secs(3),
+            max_retries: 1,
+            retry_base_delay: Duration::from_millis(1),
+        };
+        rpc.validate_chain_id().await.unwrap();
+        let (height, hash) = rpc.holdings_block().await.unwrap();
+        assert_eq!(height, 42);
+        assert_eq!(
+            rpc.balance_at_block(Address::repeat_byte(3), height)
+                .await
+                .unwrap(),
+            U256::MAX
+        );
+        assert_eq!(
+            rpc.call_contract_at_block(Address::repeat_byte(4), &[1, 2, 3, 4], height)
+                .await
+                .unwrap()[31],
+            5
+        );
+        rpc.verify_block_hash(height, hash).await.unwrap();
+        for request in state
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r["method"] == "eth_call" || r["method"] == "eth_getBalance")
+        {
+            assert_eq!(request["params"][1], "0x2a");
+        }
+        state.changed.store(true, Ordering::SeqCst);
+        assert!(rpc.verify_block_hash(height, hash).await.is_err());
+        let wrong_chain = EthereumRpc {
+            expected_chain_id: 56,
+            ..rpc
+        };
+        assert!(wrong_chain.validate_chain_id().await.is_err());
+        server.abort();
+        let _ = server.await;
+    }
 }

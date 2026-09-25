@@ -5,7 +5,7 @@ use std::{
 };
 
 use alloy::{
-    primitives::{Address, B256, U256, keccak256},
+    primitives::{Address, B256, U256, U512, keccak256},
     rpc::types::Log,
 };
 use serde_json::json;
@@ -16,7 +16,7 @@ use crate::storage::{
 };
 
 const DETECTOR: &str = "ethereum_semantic_decoder";
-const DETECTOR_VERSION: &str = "ethereum_semantic_v2";
+const DETECTOR_VERSION: &str = "ethereum_semantic_v3_exact_flows";
 
 static SWAP_V2_EVENT: LazyLock<B256> =
     LazyLock::new(|| signature("Swap(address,uint256,uint256,uint256,uint256,address)"));
@@ -387,8 +387,16 @@ fn decode_op_bridge(
         protocol: contract.protocol.clone(),
         protocol_contract: format!("{:#x}", log.address()),
         counterparty_address: format!("{counterparty:#x}"),
-        asset_in: local_asset,
-        asset_out: String::new(),
+        asset_in: if direction == "outbound" {
+            local_asset.clone()
+        } else {
+            String::new()
+        },
+        asset_out: if direction == "inbound" {
+            local_asset
+        } else {
+            String::new()
+        },
         remote_network_id: contract.remote_network_id.clone(),
         remote_asset,
         bridge_direction: direction.to_string(),
@@ -596,7 +604,7 @@ fn directional_relationship_flows(
     inbound: bool,
 ) -> (String, String, usize) {
     let pool = format!("{pool:#x}");
-    let mut totals = HashMap::<String, U256>::new();
+    let mut totals = HashMap::<String, U512>::new();
 
     for relationship in relationships {
         let matches_direction = if inbound {
@@ -604,12 +612,12 @@ fn directional_relationship_flows(
         } else {
             relationship.from_address == pool && relationship.to_address != pool
         };
-        if !matches_direction {
+        if !matches_direction || !relationship.token_id.is_empty() {
             continue;
         }
-        let amount = U256::from_le_bytes(relationship.amount.to_le_bytes());
+        let amount = U512::from_le_slice(&relationship.amount.to_le_bytes());
         let total = totals.entry(relationship.asset_id.clone()).or_default();
-        *total = total.checked_add(amount).unwrap_or(U256::MAX);
+        *total += amount;
     }
 
     let mut totals = totals.into_iter().collect::<Vec<_>>();
@@ -770,8 +778,8 @@ fn infer_pool_flows(
     movements: &[ObservedMovement],
     pool: Address,
 ) -> Option<(String, String, String, String)> {
-    let mut incoming = HashMap::<&str, U256>::new();
-    let mut outgoing = HashMap::<&str, U256>::new();
+    let mut incoming = HashMap::<&str, U512>::new();
+    let mut outgoing = HashMap::<&str, U512>::new();
     for movement in movements {
         if movement.to == pool && movement.from != pool {
             add_amount(&mut incoming, &movement.asset_id, movement.amount);
@@ -793,9 +801,9 @@ fn infer_pool_flows(
     ))
 }
 
-fn add_amount<'a>(amounts: &mut HashMap<&'a str, U256>, asset: &'a str, amount: U256) {
+fn add_amount<'a>(amounts: &mut HashMap<&'a str, U512>, asset: &'a str, amount: U256) {
     let total = amounts.entry(asset).or_default();
-    *total = total.checked_add(amount).unwrap_or(U256::MAX);
+    *total += U512::from_le_slice(&amount.to_le_bytes::<32>());
 }
 
 fn word(log: &Log, index: usize) -> Option<&[u8]> {
@@ -882,6 +890,16 @@ mod tests {
     #[test]
     fn recognizes_supported_swap_signature() {
         assert_eq!(swap_family(&BALANCER_SWAP_EVENT), Some("balancer_vault"));
+    }
+
+    #[test]
+    fn repeated_full_width_amounts_are_not_saturated() {
+        let mut totals = std::collections::HashMap::new();
+        super::add_amount(&mut totals, "asset", U256::MAX);
+        super::add_amount(&mut totals, "asset", U256::MAX);
+        let expected =
+            alloy::primitives::U512::from_le_slice(&[255; 32]) * alloy::primitives::U512::from(2);
+        assert_eq!(totals["asset"], expected);
     }
 
     #[test]

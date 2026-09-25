@@ -229,6 +229,8 @@
       .brand { min-width: 0; flex: 1; }
       .service-status { flex-basis: 100%; }
     }
+    .holding-row .row-title code, .holding-amount { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+    .holding-amount { text-align: right; }
   </style>
 </head>
 <body>
@@ -555,6 +557,37 @@
       }
     });
 
+
+    function holdingAmount(asset) {
+      const raw = String(asset.amount ?? '');
+      if (asset.status !== 'available' || !/^\d+$/.test(raw)) return 'Unavailable';
+      const decimals = asset.decimals;
+      if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) return raw + ' raw units';
+      if (decimals === 0) return raw;
+      const padded = raw.padStart(decimals + 1, '0');
+      const fraction = padded.slice(-decimals).replace(/0+$/, '');
+      return padded.slice(0, -decimals) + (fraction ? '.' + fraction : '');
+    }
+
+    function holdingsMarkup(holdings) {
+      if (!holdings) return '<p class="empty">No holdings observation in this snapshot.</p>';
+      const assets = Array.isArray(holdings.assets) ? holdings.assets : [];
+      const rows = assets.map(asset => '<div class="data-row holding-row"><div class="row-title"><code title="' +
+        escapeHtml(asset.asset_id) + '">' + escapeHtml(asset.symbol || short(asset.asset_id)) +
+        '</code><strong class="holding-amount">' + escapeHtml(holdingAmount(asset)) + '</strong></div>' +
+        (asset.token_id ? '<div class="row-meta">Token ID <code>' + escapeHtml(asset.token_id) + '</code></div>' : '') +
+        '<div class="row-meta">' + escapeHtml(short(asset.asset_id)) +
+        (asset.amount !== null && asset.amount !== undefined ? ' / Raw: ' + escapeHtml(asset.amount) : ' / Balance unavailable') +
+        '</div></div>').join('');
+      return '<div class="coverage-note">' + (holdings.persisted ? 'Snapshot' : 'Live observation') +
+        ' / ' + escapeHtml(holdings.status || 'unknown') + '<br>Finalized block: ' +
+        (holdings.block_number === null || holdings.block_number === undefined ? 'Unavailable' : escapeHtml(holdings.block_number)) +
+        '<br>Observed: ' + escapeHtml(time(holdings.observed_at_unix_ms)) +
+        '<br>Current finalized state; not a historical graph-window balance.' +
+        (holdings.truncated ? '<br>Asset limit reached.' : '') + '</div><div class="data-list">' +
+        (rows || '<p class="empty">Balances unavailable. Missing data is not a zero balance.</p>') + '</div>';
+    }
+
     function renderInvestigation(data) {
       document.getElementById('evidence-subtitle').textContent = short(data.address);
       const f = data.fingerprint;
@@ -567,7 +600,7 @@
           metric('Inbound',f.inbound_transfers)+metric('Outbound',f.outbound_transfers)+metric('Failed',f.failed_transactions)+
           metric('Swaps',f.swap_events)+metric('Bridges',f.bridge_events)+metric('Mixer',f.mixer_events)+metric('Liquidity',f.liquidity_events)+'</div>') +
         section('Evidence risk',riskPanel) +
-        section('Holdings','<button id="load-holdings" type="button" title="Read discovered asset balances at a finalized block">Read finalized balances</button><div id="holdings-result" role="status">Not requested</div>') +
+        section('Holdings','<button id="load-holdings" type="button" title="Live refresh does not change the saved investigation">Refresh finalized balances</button><div id="holdings-result" role="status">'+holdingsMarkup(data.holdings)+'</div>') +
         section('Data coverage','<div class="coverage-note">Indexed blocks: '+number(data.data_coverage.first_synced_block)+' to '+number(data.data_coverage.last_synced_block)+
           '<br>Complete blocks: '+number(data.data_coverage.complete_blocks)+'<br>Internal traces: '+(data.data_coverage.internal_transfer_coverage?'complete in indexed range':'incomplete')+
           '<br>History from genesis: '+(data.data_coverage.history_from_genesis?'yes':'no')+'<br>Graph truncated: '+(data.graph.truncated?'yes':'no')+
@@ -594,10 +627,7 @@
         });
       };
       load('load-holdings','holdings-result','holdings',result =>
-        '<p>Finalized block '+number(result.block_number)+' | '+escapeHtml(result.scope)+'</p>'+
-        '<p>Live read; not part of the exported investigation snapshot. Raw token units.</p>'+
-        (result.truncated?'<p>Asset safety limit reached.</p>':'')+
-        details(result.assets,v => short(v.asset_id)+' | '+(v.amount === null ? 'Unavailable' : v.amount)));
+        '<p>Live refresh; the saved investigation is unchanged.</p>'+holdingsMarkup(result));
       load('load-candidates','candidate-result','cluster-candidates',result =>
         '<p>Unreviewed leads, not common-ownership claims.</p>'+details(result.candidates,v => short(v.destination)+' | '+v.distinct_senders+' senders'));
     }

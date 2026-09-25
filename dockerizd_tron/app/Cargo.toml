@@ -5,6 +5,7 @@ edition = "2024"
 default-run = "arz_axum_for_services"
 
 [dependencies]
+num-bigint = "0.4.6"
 anyhow = "1.0.100"
 axum = "0.8.7"
 clickhouse = { version = "0.14.1" , features= ["native-tls"]}

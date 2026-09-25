@@ -85,6 +85,7 @@ pub struct CounterpartySummary {
 #[derive(Debug, Clone, Serialize)]
 pub struct AssetFlow {
     pub asset_id: String,
+    pub token_id: String,
     pub inbound_amount: String,
     pub outbound_amount: String,
     pub inbound_transfers: u64,
@@ -105,6 +106,9 @@ pub struct SemanticEvent {
     pub asset_in: String,
     pub asset_out: String,
     pub remote_network_id: String,
+    pub remote_asset: String,
+    pub correlation_key: String,
+    pub detector_version: String,
     pub bridge_direction: String,
     pub amount_in: String,
     pub amount_out: String,
@@ -115,6 +119,10 @@ pub struct SemanticEvent {
 #[derive(Debug, Clone, Serialize)]
 pub struct DataCoverage {
     pub last_synced_block: u64,
+    pub first_indexed_block: Option<u64>,
+    pub last_indexed_block: Option<u64>,
+    pub contiguous_indexed_range: bool,
+    pub history_from_genesis: bool,
     pub complete_blocks: u64,
     pub receipt_complete_blocks: u64,
     pub trace_complete_blocks: u64,
@@ -131,6 +139,11 @@ pub struct WalletEntity {
     pub risk_level: u8,
     pub is_exposure_seed: bool,
     pub seed_category: String,
+    pub source_label_id: String,
+    pub source_id: String,
+    pub source_record_id: String,
+    pub review_status: String,
+    pub evidence_refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -279,6 +292,7 @@ struct SemanticCountRow {
 #[derive(Debug, Deserialize, Row)]
 struct AssetFlowRow {
     asset_id: String,
+    token_id: String,
     inbound_amount: String,
     outbound_amount: String,
     inbound_transfers: u64,
@@ -299,6 +313,9 @@ struct SemanticEventRow {
     asset_in: String,
     asset_out: String,
     remote_network_id: String,
+    remote_asset: String,
+    correlation_key: String,
+    detector_version: String,
     bridge_direction: String,
     amount_in: String,
     amount_out: String,
@@ -316,6 +333,11 @@ struct WalletEntityRow {
     risk_level: u8,
     is_exposure_seed: u8,
     seed_category: String,
+    source_label_id: String,
+    source_id: String,
+    source_record_id: String,
+    review_status: String,
+    evidence_refs: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Row)]
@@ -347,6 +369,8 @@ struct WalletExposurePathRow {
 #[derive(Debug, Deserialize, Row)]
 struct CoverageRow {
     complete_blocks: u64,
+    first_indexed_block: u64,
+    last_indexed_block: u64,
     receipt_complete_blocks: u64,
     trace_complete_blocks: u64,
 }
@@ -397,7 +421,11 @@ impl InvestigationService {
     }
 
     pub async fn probe_neo4j(&self) -> anyhow::Result<()> {
-        self.graph.as_ref().context("Graph storage is managed by the main VM")?.probe().await
+        self.graph
+            .as_ref()
+            .context("Graph storage is managed by the main VM")?
+            .probe()
+            .await
     }
 
     pub async fn investigate_wallet(
@@ -450,7 +478,10 @@ impl InvestigationService {
         let graph = build_wallet_graph(address, edges, limit as usize);
 
         let projection = if project_to_neo4j {
-            let store = self.graph.as_ref().context("Graph storage is managed by the main VM")?;
+            let store = self
+                .graph
+                .as_ref()
+                .context("Graph storage is managed by the main VM")?;
             store.project_wallet(&self.network_id, address).await?;
             store.project_edges(&graph.edges).await?
         } else {
@@ -629,7 +660,11 @@ impl InvestigationService {
         edges.sort_by_key(|edge| (edge.block_number, edge.id.clone()));
         let nodes = build_nodes(source, &edges);
         let projection = if project_to_neo4j {
-            self.graph.as_ref().context("Graph storage is managed by the main VM")?.project_edges(&edges).await?
+            self.graph
+                .as_ref()
+                .context("Graph storage is managed by the main VM")?
+                .project_edges(&edges)
+                .await?
         } else {
             ProjectionSummary::default()
         };
@@ -809,6 +844,7 @@ impl InvestigationService {
                 r#"
                 SELECT
                     asset_id,
+                    token_id,
                     toString(sumIf(amount, to_address = ?)) AS inbound_amount,
                     toString(sumIf(amount, from_address = ?)) AS outbound_amount,
                     countIf(to_address = ?) AS inbound_transfers,
@@ -817,8 +853,8 @@ impl InvestigationService {
                 FROM address_relationships_canonical
                 WHERE network_id = ?
                   AND (from_address = ? OR to_address = ?)
-                GROUP BY asset_id
-                ORDER BY transfer_count DESC, asset_id
+                GROUP BY asset_id, token_id
+                ORDER BY transfer_count DESC, asset_id, token_id
                 LIMIT 100
                 "#,
             )
@@ -837,6 +873,7 @@ impl InvestigationService {
             .into_iter()
             .map(|row| AssetFlow {
                 asset_id: row.asset_id,
+                token_id: row.token_id,
                 inbound_amount: row.inbound_amount,
                 outbound_amount: row.outbound_amount,
                 inbound_transfers: row.inbound_transfers,
@@ -867,6 +904,9 @@ impl InvestigationService {
                     asset_in,
                     asset_out,
                     remote_network_id,
+                    remote_asset,
+                    correlation_key,
+                    detector_version,
                     bridge_direction,
                     amount_in,
                     amount_out,
@@ -899,6 +939,9 @@ impl InvestigationService {
                 asset_in: row.asset_in,
                 asset_out: row.asset_out,
                 remote_network_id: row.remote_network_id,
+                remote_asset: row.remote_asset,
+                correlation_key: row.correlation_key,
+                detector_version: row.detector_version,
                 bridge_direction: row.bridge_direction,
                 amount_in: row.amount_in,
                 amount_out: row.amount_out,
@@ -914,17 +957,25 @@ impl InvestigationService {
             .query(
                 r#"
                 SELECT
-                    entity_id,
-                    entity_name,
-                    entity_type,
-                    address_role,
-                    confidence,
-                    risk_level,
-                    is_exposure_seed,
-                    seed_category
-                FROM address_entities_active
-                WHERE network_id = ? AND address = ?
-                ORDER BY confidence DESC, entity_id
+                    e.entity_id AS entity_id,
+                    e.entity_name AS entity_name,
+                    e.entity_type AS entity_type,
+                    e.address_role AS address_role,
+                    e.confidence AS confidence,
+                    e.risk_level AS risk_level,
+                    e.is_exposure_seed AS is_exposure_seed,
+                    e.seed_category AS seed_category,
+                    e.source_label_id AS source_label_id,
+                    l.source_id AS source_id,
+                    l.source_record_id AS source_record_id,
+                    l.review_status AS review_status,
+                    l.evidence_refs AS evidence_refs
+                FROM address_entities_active AS e
+                INNER JOIN (SELECT * FROM entity_labels FINAL) AS l
+                    ON e.network_id = l.network_id AND e.address = l.address
+                    AND e.source_label_id = l.label_id
+                WHERE e.network_id = ? AND e.address = ? AND l.review_status = 'APPROVED'
+                ORDER BY e.confidence DESC, e.entity_id
                 LIMIT 25
                 "#,
             )
@@ -945,6 +996,11 @@ impl InvestigationService {
                 risk_level: row.risk_level,
                 is_exposure_seed: row.is_exposure_seed == 1,
                 seed_category: row.seed_category,
+                source_label_id: row.source_label_id,
+                source_id: row.source_id,
+                source_record_id: row.source_record_id,
+                review_status: row.review_status,
+                evidence_refs: row.evidence_refs,
             })
             .collect())
     }
@@ -983,6 +1039,11 @@ impl InvestigationService {
         address: &str,
         limit: u64,
     ) -> anyhow::Result<Vec<WalletExposurePath>> {
+        let Some(run_id) =
+            crate::exposure::latest_complete_run(&self.clickhouse, &self.network_id).await?
+        else {
+            return Ok(Vec::new());
+        };
         let rows = self
             .clickhouse
             .query(
@@ -1006,11 +1067,11 @@ impl InvestigationService {
                 WHERE network_id = ?
                   AND subject_address = ?
                   AND direction != 'SEED'
-                  AND run_id =
+                  AND run_id = ?
+                  AND (seed_address, seed_entity_id) IN
                   (
-                      SELECT argMax(run_id, completed_at_unix_ms)
-                      FROM exposure_runs
-                      WHERE network_id = ? AND status = 'COMPLETE'
+                      SELECT address, entity_id FROM address_entities_active
+                      WHERE network_id = ? AND is_exposure_seed = 1 AND risk_level > 0
                   )
                 ORDER BY exposure_score DESC, hop_count
                 LIMIT ?
@@ -1018,6 +1079,7 @@ impl InvestigationService {
             )
             .bind(&self.network_id)
             .bind(address)
+            .bind(&run_id)
             .bind(&self.network_id)
             .bind(limit)
             .fetch_all::<WalletExposurePathRow>()
@@ -1052,16 +1114,19 @@ impl InvestigationService {
                 r#"
                 SELECT
                     count() AS complete_blocks,
+                    min(block_number) AS first_indexed_block,
+                    max(block_number) AS last_indexed_block,
                     countIf(receipt_data_complete = 1) AS receipt_complete_blocks,
                     countIf(trace_data_complete = 1) AS trace_complete_blocks
                 FROM
                 (
                     SELECT *
                     FROM ingested_blocks
-                    WHERE network_id = ? AND ingestion_status = 'complete'
+                    WHERE network_id = ?
                     ORDER BY updated_at DESC
                     LIMIT 1 BY network_id, block_number
                 )
+                WHERE ingestion_status = 'complete'
                 "#,
             )
             .bind(&self.network_id)
@@ -1072,6 +1137,21 @@ impl InvestigationService {
 
         Ok(DataCoverage {
             last_synced_block,
+            first_indexed_block: (coverage.complete_blocks > 0)
+                .then_some(coverage.first_indexed_block),
+            last_indexed_block: (coverage.complete_blocks > 0)
+                .then_some(coverage.last_indexed_block),
+            contiguous_indexed_range: contiguous_range(
+                coverage.complete_blocks,
+                coverage.first_indexed_block,
+                coverage.last_indexed_block,
+            ),
+            history_from_genesis: coverage.first_indexed_block == 0
+                && contiguous_range(
+                    coverage.complete_blocks,
+                    coverage.first_indexed_block,
+                    coverage.last_indexed_block,
+                ),
             complete_blocks: coverage.complete_blocks,
             receipt_complete_blocks: coverage.receipt_complete_blocks,
             trace_complete_blocks: coverage.trace_complete_blocks,
@@ -1116,6 +1196,10 @@ impl From<FlowEdgeRow> for FlowEdge {
             transfer_type: row.transfer_type,
         }
     }
+}
+
+fn contiguous_range(count: u64, first: u64, last: u64) -> bool {
+    count > 0 && last.checked_sub(first).and_then(|n| n.checked_add(1)) == Some(count)
 }
 
 fn build_wallet_graph(address: &str, edges: Vec<FlowEdge>, limit: usize) -> WalletGraph {
@@ -1200,7 +1284,16 @@ fn counterparties(address: &str, edges: &[FlowEdge], limit: usize) -> Vec<Counte
 
 #[cfg(test)]
 mod tests {
-    use super::{FlowEdge, PathDirection, build_nodes, counterparties};
+    use super::{FlowEdge, PathDirection, build_nodes, contiguous_range, counterparties};
+
+    #[test]
+    fn missing_or_replayed_blocks_are_not_full_history() {
+        assert!(!contiguous_range(0, 0, 0));
+        assert!(!contiguous_range(9, 0, 9));
+        assert!(contiguous_range(10, 0, 9));
+        assert!(contiguous_range(10, 50, 59));
+        assert!(!contiguous_range(1, 0, u64::MAX));
+    }
 
     fn edge(id: &str, from: &str, to: &str) -> FlowEdge {
         FlowEdge {

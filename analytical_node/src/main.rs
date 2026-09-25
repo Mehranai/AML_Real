@@ -338,6 +338,11 @@ async fn create(
     if target.is_none() {
         // The chain supplies evidence. A single centrally versioned policy scores both networks.
         data["risk_engine"] = risk::assess(&network, &data);
+        if let Some(holdings) = data.get_mut("holdings").and_then(Value::as_object_mut) {
+            // Returned only after Store::create commits the complete payload.
+            holdings.insert("persisted".into(), json!(true));
+            holdings.insert("storage".into(), json!("central_investigation_snapshot"));
+        }
     }
     let id = nanoid!(32);
     let (nodes, edges) = normalize_graph(&id, network_id, &network, &data).map_err(internal)?;

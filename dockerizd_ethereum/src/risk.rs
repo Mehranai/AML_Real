@@ -65,11 +65,6 @@ struct CheckpointRow {
 }
 
 #[derive(Debug, Deserialize, Row)]
-struct RunIdRow {
-    run_id: String,
-}
-
-#[derive(Debug, Deserialize, Row)]
 struct EntityEvidenceRow {
     risk_level: u8,
     is_exposure_seed: u8,
@@ -407,21 +402,7 @@ impl EvidenceRiskEngine {
     }
 
     async fn load_exposure_run(&self) -> anyhow::Result<Option<String>> {
-        Ok(self
-            .client
-            .query(
-                r#"
-                SELECT run_id
-                FROM exposure_runs FINAL
-                WHERE network_id = ? AND status = 'COMPLETE'
-                ORDER BY completed_at_unix_ms DESC
-                LIMIT 1
-                "#,
-            )
-            .bind(&self.network_id)
-            .fetch_optional::<RunIdRow>()
-            .await?
-            .map(|row| row.run_id))
+        crate::exposure::latest_complete_run(&self.client, &self.network_id).await
     }
 
     async fn load_entity_evidence(
@@ -466,6 +447,11 @@ impl EvidenceRiskEngine {
                 FROM address_exposure_best_paths
                 WHERE network_id = ? AND run_id = ? AND subject_address = ?
                   AND direction != 'SEED'
+                  AND (seed_address, seed_entity_id) IN
+                  (
+                      SELECT address, entity_id FROM address_entities_active
+                      WHERE network_id = ? AND is_exposure_seed = 1 AND risk_level > 0
+                  )
                 ORDER BY exposure_score DESC
                 LIMIT 100
                 "#,
@@ -473,6 +459,7 @@ impl EvidenceRiskEngine {
             .bind(&self.network_id)
             .bind(run_id)
             .bind(address)
+            .bind(&self.network_id)
             .fetch_all::<ExposurePathRow>()
             .await
             .context("failed to load Ethereum exposure evidence")

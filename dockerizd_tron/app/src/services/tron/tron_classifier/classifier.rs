@@ -270,14 +270,12 @@ mod tests {
                 token: "TRX".to_string(),
                 from: "wallet".to_string(),
                 to: "pool".to_string(),
-                amount: 10,
                 raw_amount: UInt256::from(10_u64),
             },
             SimpleTransfer {
                 token: "USDT".to_string(),
                 from: "pool".to_string(),
                 to: "wallet".to_string(),
-                amount: 5,
                 raw_amount: UInt256::from(5_u64),
             },
         ];

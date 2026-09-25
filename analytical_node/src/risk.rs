@@ -1,7 +1,8 @@
+use num_bigint::BigUint;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-pub const POLICY: &str = "aml_evidence_v1";
+pub const POLICY: &str = "aml_evidence_v2_verified_inputs";
 
 pub fn assess(network: &str, data: &Value) -> Value {
     let mut signals = Vec::new();
@@ -24,18 +25,14 @@ pub fn assess(network: &str, data: &Value) -> Value {
             .pointer("/intelligence/active_entity/source_label_id")
             .and_then(Value::as_str);
         for claim in array(data.pointer("/intelligence/entity_claims")) {
-            if active.is_some()
-                && claim["label_id"].as_str() == active
-                && claim["review_status"] == "APPROVED"
-                && !array(Some(&claim["evidence_refs"])).is_empty()
-            {
+            if active.is_some() && claim["label_id"].as_str() == active && approved_label(claim) {
                 identity_score = (number(&claim["risk_percent"]) / 100.0).clamp(0.0, 1.0) * 70.0;
                 identity_evidence = claim.clone();
             }
         }
     } else {
         for entity in array(data.get("entities")) {
-            if entity["is_exposure_seed"] == true {
+            if entity["is_exposure_seed"] == true && approved_label(entity) {
                 let score = (number(&entity["risk_level"]) / 100.0).clamp(0.0, 1.0) * 70.0;
                 if score > identity_score {
                     identity_score = score;
@@ -62,6 +59,15 @@ pub fn assess(network: &str, data: &Value) -> Value {
         data.get("exposure_paths")
     };
     for path in array(paths) {
+        if !has_path_evidence(path, tron) {
+            limitations
+                .push("Exposure without transaction references and seed identity is not scored.");
+            continue;
+        }
+        if network == "bsc" && !approved_label(&path["seed_claim"]) {
+            limitations.push("Exposure without an approved seed claim is not scored.");
+            continue;
+        }
         if path["service_mediated"] == true {
             limitations.push(
                 "Service-mediated exposure is shown as context and does not increase this score.",
@@ -129,7 +135,9 @@ pub fn assess(network: &str, data: &Value) -> Value {
     let mixer: Vec<_> = array(events)
         .iter()
         .filter(|event| {
-            text(&event["event_type"]).starts_with("mixer_") && number(&event["confidence"]) >= 0.8
+            text(&event["event_type"]).starts_with("mixer_")
+                && number(&event["confidence"]) >= 0.8
+                && has_mixer_evidence(event)
         })
         .take(10)
         .cloned()
@@ -144,10 +152,11 @@ pub fn assess(network: &str, data: &Value) -> Value {
             .is_some_and(|v| !v.is_null())
     } else {
         array(data.get("entities")).iter().any(|e| {
-            matches!(
-                text(&e["entity_type"]).to_ascii_lowercase().as_str(),
-                "exchange" | "dex" | "bridge" | "custodian"
-            )
+            approved_label(e)
+                && matches!(
+                    text(&e["entity_type"]).to_ascii_lowercase().as_str(),
+                    "exchange" | "dex" | "bridge" | "custodian"
+                )
         })
     };
     let pairs = pass_through(data, tron);
@@ -166,9 +175,9 @@ pub fn assess(network: &str, data: &Value) -> Value {
     if transfers < 3 {
         limitations.push("Fewer than three wallet transfers are available.");
     }
-    if network == "bsc" {
+    if matches!(network, "bsc" | "ethereum") {
         if data.pointer("/data_coverage/history_from_genesis") != Some(&json!(true)) {
-            limitations.push("BSC history is not complete from genesis; missing periods are not evidence of low risk.");
+            limitations.push("EVM history is not complete from genesis; missing periods are not evidence of low risk.");
         }
         if data.pointer("/exposure_coverage/truncated") == Some(&json!(true)) {
             limitations
@@ -222,8 +231,66 @@ fn array(value: Option<&Value>) -> &[Value] {
         .unwrap_or(&[])
 }
 
+fn approved_label(claim: &Value) -> bool {
+    let refs = array(claim.get("evidence_refs"));
+    text(&claim["review_status"]).eq_ignore_ascii_case("approved")
+        && !text(&claim["source_id"]).trim().is_empty()
+        && !refs.is_empty()
+        && refs.iter().all(|r| !text(r).trim().is_empty())
+}
+
+fn has_path_evidence(path: &Value, tron: bool) -> bool {
+    if tron {
+        return !text(&path["source_address"]).is_empty()
+            && !text(&path["last_tx_hash"]).is_empty()
+            && !text(&path["propagation_run_id"]).is_empty();
+    }
+    let hops = path["hop_count"].as_u64().unwrap_or(0);
+    let txs = array(path.get("tx_hashes"));
+    let ids = array(path.get("relationship_ids"));
+    let addresses = array(path.get("path_addresses"));
+    (1..=10).contains(&hops)
+        && !text(&path["seed_address"]).is_empty()
+        && txs.len() == hops as usize
+        && ids.len() == txs.len()
+        && addresses.len() == txs.len() + 1
+        && txs
+            .iter()
+            .chain(ids)
+            .chain(addresses)
+            .all(|v| !text(v).is_empty())
+}
+
+fn has_mixer_evidence(event: &Value) -> bool {
+    if text(&event["tx_hash"]).is_empty() || text(&event["protocol_contract"]).is_empty() {
+        return false;
+    }
+    let evidence = if event["evidence_json"].is_object() {
+        event["evidence_json"].clone()
+    } else {
+        serde_json::from_str::<Value>(text(&event["evidence_json"])).unwrap_or(Value::Null)
+    };
+    // Both EVM decoders include a registry source and a concrete receipt-log reference.
+    (!text(&evidence["registry_source"]).is_empty() && evidence["log_index"].as_u64().is_some())
+        || (text(&evidence["registry"]["review_status"]).eq_ignore_ascii_case("approved")
+            && !text(&evidence["registry"]["source_id"]).is_empty()
+            && evidence["signal"]["log_index"].as_u64().is_some())
+}
+
+fn raw_amount(value: &Value) -> Option<BigUint> {
+    let value = value.as_str()?;
+    if value.is_empty() || value.len() > 78 || !value.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let number = BigUint::parse_bytes(value.as_bytes(), 10)?;
+    (number.bits() <= 256).then_some(number)
+}
+
 fn pass_through(data: &Value, tron: bool) -> Vec<Value> {
     let address = text(&data["address"]);
+    if address.is_empty() {
+        return Vec::new();
+    }
     let edges = array(data.pointer("/graph/edges"));
     let from = if tron { "from" } else { "from_address" };
     let to = if tron { "to" } else { "to_address" };
@@ -236,10 +303,12 @@ fn pass_through(data: &Value, tron: bool) -> Vec<Value> {
     let mut used = HashSet::new();
     let mut pairs = Vec::new();
     for incoming in edges.iter().filter(|e| text(&e[to]) == address).take(500) {
-        let Ok(amount) = text(&incoming["amount"]).parse::<u128>() else {
+        let Some(amount) = raw_amount(&incoming["amount"]) else {
             continue;
         };
-        if amount == 0
+        if amount == BigUint::from(0u8)
+            || text(&incoming[asset]).is_empty()
+            || text(&incoming["tx_hash"]).is_empty()
             || text(&incoming[from]) == address
             || used.contains(text(&incoming["tx_hash"]))
         {
@@ -253,6 +322,7 @@ fn pass_through(data: &Value, tron: bool) -> Vec<Value> {
                 continue;
             };
             if text(&outgoing[to]) == address
+                || text(&outgoing["tx_hash"]).is_empty()
                 || text(&incoming[asset]) != text(&outgoing[asset])
                 || text(&incoming["token_id"]) != text(&outgoing["token_id"])
                 || text(&incoming["tx_hash"]) == text(&outgoing["tx_hash"])
@@ -262,10 +332,15 @@ fn pass_through(data: &Value, tron: bool) -> Vec<Value> {
             {
                 continue;
             }
-            let Ok(out_amount) = text(&outgoing["amount"]).parse::<u128>() else {
+            let Some(out_amount) = raw_amount(&outgoing["amount"]) else {
                 continue;
             };
-            if amount.abs_diff(out_amount) > amount / 10 {
+            let difference = if amount >= out_amount {
+                &amount - &out_amount
+            } else {
+                &out_amount - &amount
+            };
+            if difference > &amount / 10u8 {
                 continue;
             }
             used.insert(text(&incoming["tx_hash"]).to_string());
@@ -284,6 +359,15 @@ fn pass_through(data: &Value, tron: bool) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn label() -> Value {
+        json!({"review_status":"approved","source_id":"reviewed-source","evidence_refs":["case:123"],
+            "is_exposure_seed":true,"risk_level":100})
+    }
+    fn exposure_path() -> Value {
+        json!({"hop_count":1,"direction":"RECEIVED_FROM_SEED","exposure_score":1,
+            "seed_address":"seed","path_addresses":["seed","wallet"],
+            "relationship_ids":["edge-1"],"tx_hashes":["tx-1"],"seed_claim":label()})
+    }
     fn forwarding_fixture() -> Value {
         let mut edges = Vec::new();
         for index in 0..3 {
@@ -329,7 +413,10 @@ mod tests {
     #[test]
     fn known_exchange_forwarding_not_scored() {
         let mut data = forwarding_fixture();
-        data["entities"] = json!([{"entity_type":"exchange"}]);
+        let mut entity = label();
+        entity["entity_type"] = json!("exchange");
+        entity["is_exposure_seed"] = json!(false);
+        data["entities"] = json!([entity]);
         assert_eq!(assess("ethereum", &data)["risk_score"], 0.0);
     }
     #[test]
@@ -361,20 +448,19 @@ mod tests {
     }
     #[test]
     fn approved_seed_scored_without_transaction_history() {
-        let risk = assess(
-            "ethereum",
-            &json!({"entities":[{"is_exposure_seed":true,"risk_level":100}]}),
-        );
+        let risk = assess("ethereum", &json!({"entities":[label()]}));
         assert_eq!(risk["risk_score"], 70.0);
     }
     #[test]
     fn service_mediated_does_not_raise_score() {
-        let data = json!({"exposure_paths":[{"service_mediated":true,"hop_count":1,"direction":"RECEIVED_FROM_SEED","exposure_score":1}]});
+        let mut path = exposure_path();
+        path["service_mediated"] = json!(true);
+        let data = json!({"exposure_paths":[path]});
         assert!(assess("ethereum", &data)["risk_score"].is_null());
     }
     #[test]
     fn duplicate_paths_not_double_counted() {
-        let path = json!({"hop_count":1,"direction":"RECEIVED_FROM_SEED","exposure_score":1});
+        let path = exposure_path();
         assert_eq!(
             assess("ethereum", &json!({"exposure_paths":[path.clone(),path]}))["risk_score"],
             55.0
@@ -383,6 +469,7 @@ mod tests {
     #[test]
     fn tron_outgoing_seed_propagation_means_received_exposure() {
         let data = json!({"exposure":{"top_sources":[{"hop_distance":2,
+            "source_address":"seed","last_tx_hash":"tx-1","propagation_run_id":"run-1",
             "exposure_type":"DIRECTED_FUND_FLOW","effective_score":0.5}]}});
         assert_eq!(assess("tron", &data)["risk_score"], 12.5);
     }
@@ -391,5 +478,56 @@ mod tests {
         let data = json!({"fingerprint":{"transfer_count":10},"entities":[{"entity_type":"exchange"}],
             "semantic_events":[{"event_type":"bridge_transfer","confidence":1}]});
         assert_eq!(assess("ethereum", &data)["risk_score"], 0.0);
+    }
+
+    #[test]
+    fn full_uint256_forwarding_works_for_each_network() {
+        for network in ["ethereum", "bsc", "tron"] {
+            let mut data = forwarding_fixture();
+            let large = ((BigUint::from(1u8) << 256usize) - BigUint::from(1u8)).to_string();
+            for edge in data["graph"]["edges"].as_array_mut().unwrap() {
+                edge["amount"] = json!(large);
+                if network == "tron" {
+                    edge["from"] = edge["from_address"].clone();
+                    edge["to"] = edge["to_address"].clone();
+                    edge["timestamp"] = edge["block_timestamp_unix_ms"].clone();
+                    edge["token_address"] = edge["asset_id"].clone();
+                }
+            }
+            assert_eq!(pass_through(&data, network == "tron").len(), 3);
+        }
+        assert!(raw_amount(&json!((BigUint::from(1u8) << 256usize).to_string())).is_none());
+        assert!(raw_amount(&json!("1e18")).is_none());
+        assert!(raw_amount(&json!("-1")).is_none());
+    }
+
+    #[test]
+    fn unreviewed_and_sourceless_evidence_cannot_make_risk() {
+        for network in ["ethereum", "bsc"] {
+            for bad in [
+                json!({"is_exposure_seed":true,"risk_level":100}),
+                json!({"is_exposure_seed":true,"risk_level":100,"review_status":"approved","source_id":"s","evidence_refs":[" "]}),
+            ] {
+                assert!(assess(network, &json!({"entities":[bad]}))["risk_score"].is_null());
+            }
+            assert!(assess(network, &json!({"exposure_paths":[{"hop_count":1,"direction":"RECEIVED_FROM_SEED","exposure_score":1}]}))["risk_score"].is_null());
+            assert_eq!(
+                assess(network, &json!({"exposure_paths":[exposure_path()]}))["risk_score"],
+                55.0
+            );
+        }
+    }
+
+    #[test]
+    fn mixer_requires_a_real_log_and_registry_provenance() {
+        let mut event = json!({"event_type":"mixer_deposit","confidence":1.0});
+        assert!(!has_mixer_evidence(&event));
+        event["tx_hash"] = json!("tx");
+        event["protocol_contract"] = json!("contract");
+        event["evidence_json"] =
+            json!(json!({"registry_source":"official","log_index":0}).to_string());
+        assert!(has_mixer_evidence(&event));
+        event["evidence_json"] = json!({"registry":{"source_id":"s","review_status":"approved"},"signal":{"log_index":0}});
+        assert!(has_mixer_evidence(&event));
     }
 }

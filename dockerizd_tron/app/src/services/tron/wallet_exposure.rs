@@ -218,7 +218,7 @@ pub async fn load_wallet_exposure_summary(
                     risk_level,
                     source
                 FROM exposure_seeds FINAL
-                WHERE risk_level > 0
+                WHERE risk_level > 0 AND is_active = 1
             ) AS seed
                 ON seed.address = ae.source_address
             WHERE ae.exposed_address = ?

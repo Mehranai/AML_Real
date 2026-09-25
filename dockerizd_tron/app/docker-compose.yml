@@ -134,7 +134,34 @@ services:
       retries: 3
       start_period: 20s
 
+  tron-analytics:
+    <<: *tron-service
+    command: ["tron_analytics_worker"]
+    environment:
+      <<: *tron-environment
+      TRON_ANALYTICS_STATE_DIR: /var/lib/tron-analytics
+      TRON_ANALYTICS_INTERVAL_SECONDS: ${TRON_ANALYTICS_INTERVAL_SECONDS:-60}
+      TRON_ANALYTICS_EXPOSURE_INTERVAL_SECONDS: ${TRON_ANALYTICS_EXPOSURE_INTERVAL_SECONDS:-3600}
+      TRON_ANALYTICS_BATCH_BLOCKS: ${TRON_ANALYTICS_BATCH_BLOCKS:-100000}
+      TRON_ANALYTICS_OVERLAP_BLOCKS: ${TRON_ANALYTICS_OVERLAP_BLOCKS:-10000}
+      TRON_ANALYTICS_MAX_CLAIMS: ${TRON_ANALYTICS_MAX_CLAIMS:-5000}
+    volumes:
+      - tron_analytics_state:/var/lib/tron-analytics
+    mem_limit: 768m
+    cpus: 1
+    pids_limit: 128
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "tron_analytics_worker", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 volumes:
+  tron_analytics_state:
   clickhouse_data:
 
 

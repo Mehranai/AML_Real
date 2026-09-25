@@ -80,14 +80,8 @@ impl IngestionService {
         max_blocks: Option<u64>,
     ) -> anyhow::Result<IngestionReport> {
         ensure!(max_blocks != Some(0), "max-blocks must be positive");
-        let initial_finalized = self.rpc.finalized_block_number().await?;
-        let mut next_block = if let Some(start) = requested_start {
-            start
-        } else if let Some((checkpoint, _)) = self.store.checkpoint().await? {
-            checkpoint.saturating_add(1)
-        } else {
-            initial_finalized.max(self.config.eth_start_block)
-        };
+        let checkpoint = self.store.checkpoint().await?.map(|(block, _)| block);
+        let mut next_block = follow_start(requested_start, checkpoint, self.config.eth_start_block);
 
         let started = Instant::now();
         let mut report = IngestionReport {
@@ -279,6 +273,12 @@ impl IngestionReport {
     }
 }
 
+fn follow_start(requested_start: Option<u64>, checkpoint: Option<u64>, configured_start: u64) -> u64 {
+    requested_start.unwrap_or_else(|| {
+        checkpoint.map_or(configured_start, |block| block.saturating_add(1))
+    })
+}
+
 fn unix_time_millis() -> anyhow::Result<u64> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -294,7 +294,17 @@ fn elapsed_millis(started: Instant) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::IngestionReport;
+    use super::{IngestionReport, follow_start};
+
+    #[test]
+    fn follow_honors_initial_history_and_resumes_checkpoint() {
+        assert_eq!(follow_start(None, None, 0), 0);
+        assert_eq!(follow_start(None, None, 1_000), 1_000);
+        assert_eq!(follow_start(None, Some(2_094), 0), 2_095);
+        assert_eq!(follow_start(None, Some(2_094), 5_000), 2_095);
+        assert_eq!(follow_start(Some(10), Some(2_094), 0), 10);
+        assert_eq!(follow_start(Some(10), None, 0), 10);
+    }
 
     #[test]
     fn aggregates_completed_and_skipped_blocks() {

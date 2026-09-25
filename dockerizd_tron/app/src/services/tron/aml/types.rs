@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use clickhouse::types::UInt256;
 
@@ -9,7 +9,6 @@ pub struct SimpleTransfer {
     pub token: String,
     pub from: String,
     pub to: String,
-    pub amount: u128,
     pub raw_amount: UInt256,
 }
 
@@ -54,4 +53,4 @@ pub enum AmlEvent {
     },
 }
 
-pub type FlowMap = HashMap<String, HashMap<String, i128>>;
+pub type FlowMap = BTreeMap<String, BTreeMap<String, num_bigint::BigInt>>;

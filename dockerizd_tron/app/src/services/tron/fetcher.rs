@@ -22,6 +22,7 @@ use crate::services::tron::ingestion_state::{
 // aml section
 use crate::services::tron::aml::bridge_detector::detect_bridges;
 use crate::services::tron::aml::liquidity_detector::detect_liquidity_events;
+use crate::services::tron::aml::receipt_swap::decode_v2_swaps;
 use crate::services::tron::aml::swap_detector::detect_swaps;
 use crate::services::tron::aml::types::SimpleTransfer;
 
@@ -174,9 +175,31 @@ async fn process_tx(loader: Arc<LoaderTron>, tx: Value, block_number: u64) -> Re
     // AML features
     if !semantic_transfers.is_empty() {
         let semantic_actor = (!initiator_address.is_empty()).then_some(initiator_address.as_str());
-        let liquidity_events = detect_liquidity_events(&semantic_transfers, semantic_actor);
-        let raw_swaps = detect_swaps(&semantic_transfers, semantic_actor);
-        let swaps = if liquidity_events.is_empty() {
+        let decoded_swaps = decode_v2_swaps(
+            &txid,
+            block_number,
+            timestamp,
+            &initiator_address,
+            &receipt,
+            &canonical_transfers,
+        );
+        let dex_context = classification.category == ContractCategory::Dex;
+        let liquidity_events = if dex_context {
+            detect_liquidity_events(&semantic_transfers, semantic_actor)
+        } else {
+            Vec::new()
+        };
+        let raw_swaps = if dex_context {
+            detect_swaps(&semantic_transfers, semantic_actor)
+        } else {
+            Vec::new()
+        };
+        let swaps = if !decoded_swaps.is_empty() {
+            decoded_swaps
+                .iter()
+                .map(|swap| swap.event.clone())
+                .collect()
+        } else if liquidity_events.is_empty() {
             raw_swaps
         } else {
             Vec::new()
@@ -186,7 +209,12 @@ async fn process_tx(loader: Arc<LoaderTron>, tx: Value, block_number: u64) -> Re
         let bridges = detect_bridges(&semantic_transfers, bridge_protocol_hint);
 
         let mut aml_events = Vec::new();
-        aml_events.extend(swaps.clone());
+        if decoded_swaps.is_empty() {
+            aml_events.extend(swaps.clone());
+        }
+        for swap in decoded_swaps {
+            loader.semantic_event_batcher.push(swap.row).await?;
+        }
         aml_events.extend(bridges.clone());
         aml_events.extend(mint_burns.clone());
         aml_events.extend(liquidity_events.clone());
@@ -199,6 +227,7 @@ async fn process_tx(loader: Arc<LoaderTron>, tx: Value, block_number: u64) -> Re
             &classification.protocol,
             &classification.detection_source,
             classification.confidence,
+            &canonical_transfers,
         ) {
             loader.semantic_event_batcher.push(event).await?;
         }

@@ -11,8 +11,14 @@ pub fn analyze_flows(transfers: &[SimpleTransfer]) -> Option<ProtocolInfo> {
     let flows = compute_net_flows(transfers);
 
     for token_map in flows.into_values() {
-        let sent_asset_count = token_map.values().filter(|delta| **delta < 0).count();
-        let received_asset_count = token_map.values().filter(|delta| **delta > 0).count();
+        let sent_asset_count = token_map
+            .values()
+            .filter(|delta| delta.sign() == num_bigint::Sign::Minus)
+            .count();
+        let received_asset_count = token_map
+            .values()
+            .filter(|delta| delta.sign() == num_bigint::Sign::Plus)
+            .count();
 
         if sent_asset_count >= 1 && received_asset_count >= 1 && token_map.len() >= 2 {
             return Some(ProtocolInfo {

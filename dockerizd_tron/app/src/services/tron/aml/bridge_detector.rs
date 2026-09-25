@@ -20,7 +20,7 @@ pub fn detect_bridges(transfers: &[SimpleTransfer], bridge_protocol_hint: bool) 
             //
             // bridge in
             //
-            if delta > 0
+            if delta.sign() == num_bigint::Sign::Plus
                 && transfers
                     .iter()
                     .any(|t| t.from == ZERO_ADDRESS && t.to == address && t.token == token)
@@ -34,7 +34,7 @@ pub fn detect_bridges(transfers: &[SimpleTransfer], bridge_protocol_hint: bool) 
             //
             // bridge out
             //
-            if delta < 0
+            if delta.sign() == num_bigint::Sign::Minus
                 && transfers
                     .iter()
                     .any(|t| t.to == ZERO_ADDRESS && t.from == address && t.token == token)

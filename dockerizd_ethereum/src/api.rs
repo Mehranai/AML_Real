@@ -17,6 +17,7 @@ use crate::{
     config::AppConfig,
     db::database_client,
     domain::{AddressId, NetworkId},
+    ethereum::holdings,
     investigation::{InvestigationService, PathDirection},
     risk::EvidenceRiskEngine,
 };
@@ -68,6 +69,11 @@ pub async fn build_router(config: AppConfig) -> anyhow::Result<Router> {
         .with_state(state.clone());
     let protected_routes = Router::new()
         .route("/status", get(status))
+        .route(
+            "/api/ethereum/wallet/{address}/holdings",
+            get(wallet_holdings),
+        )
+        .route("/ethereum/wallet/{address}/holdings", get(wallet_holdings))
         .route(
             "/ethereum/wallet/{address}/investigation",
             get(wallet_investigation),
@@ -158,16 +164,40 @@ async fn wallet_investigation(
     Query(query): Query<InvestigationQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let address = normalize_address(&state.config, &address)?;
-    let investigation = state
-        .investigation
-        .investigate_wallet(&address, query.limit)
-        .await
+    let db = database_client(&state.config);
+    let (investigation, holdings) = tokio::join!(
+        state
+            .investigation
+            .investigate_wallet(&address, query.limit),
+        holdings::snapshot(&state.config, &db, &address)
+    );
+    let mut data = serde_json::to_value(investigation.map_err(ApiError::internal)?)
         .map_err(ApiError::internal)?;
-    Ok(Json(investigation))
+    data["holdings"] = holdings;
+    Ok(Json(data))
+}
+
+async fn wallet_holdings(
+    State(state): State<ApiState>,
+    Path(address): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let address = normalize_address(&state.config, &address)?;
+    let data = holdings::snapshot(&state.config, &database_client(&state.config), &address).await;
+    let status = if data["status"] == "unavailable" {
+        StatusCode::SERVICE_UNAVAILABLE
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(data)))
 }
 
 async fn central_projection_only() -> impl IntoResponse {
-    (StatusCode::GONE, Json(json!({"error":"Use the main VM investigation Export endpoint; chain APIs do not persist graphs."})))
+    (
+        StatusCode::GONE,
+        Json(
+            json!({"error":"Use the main VM investigation Export endpoint; chain APIs do not persist graphs."}),
+        ),
+    )
 }
 
 async fn wallet_paths(
@@ -193,8 +223,6 @@ async fn wallet_paths(
         .map_err(ApiError::internal)?;
     Ok(Json(paths))
 }
-
-
 
 fn normalize_address(config: &AppConfig, value: &str) -> Result<String, ApiError> {
     let network = NetworkId::from_str(&config.eth_network_id).map_err(ApiError::bad_request)?;

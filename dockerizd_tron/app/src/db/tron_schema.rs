@@ -11,8 +11,57 @@ const CREATE_PREFIXES: [&str; 3] = [
 ];
 
 pub async fn validate_tron_schema(client: &Client) -> anyhow::Result<()> {
+    upgrade_committed_views(client).await?;
     validate_baseline_schemas(client).await?;
     validate_retired_objects_absent(client).await?;
+    Ok(())
+}
+
+// Only ordinary read views are replaced. Raw facts, materialized views and volumes stay intact.
+const COMMITTED_VIEWS: [&str; 4] = [
+    "address_relationships_canonical",
+    "transactions_canonical",
+    "wallet_asset_balances",
+    "semantic_aml_events_canonical",
+];
+
+fn committed_view_ddl(name: &str) -> anyhow::Result<String> {
+    let prefix = format!("CREATE VIEW IF NOT EXISTS tron_db.{name}\n");
+    let normalized = BASELINE_SQL.replace("\r\n", "\n");
+    let statement = normalized
+        .split(';')
+        .map(str::trim)
+        .find(|statement| statement.starts_with(&prefix))
+        .ok_or_else(|| anyhow!("missing ordinary view {name} in TRON baseline"))?;
+    Ok(statement.replacen("CREATE VIEW IF NOT EXISTS", "CREATE OR REPLACE VIEW", 1))
+}
+
+async fn upgrade_committed_views(client: &Client) -> anyhow::Result<()> {
+    // Old volumes retain their initial SQL; inspect behavior as well as the column types.
+    for name in COMMITTED_VIEWS {
+        let definition = client
+            .query("SELECT create_table_query FROM system.tables WHERE database = ? AND name = ?")
+            .bind(TRON_DB)
+            .bind(name)
+            .fetch_optional::<String>()
+            .await?;
+        if definition.as_deref().is_some_and(|sql| {
+            sql.contains("ingested_blocks")
+                && sql.contains("ingestion_status")
+                && sql.contains("COMPLETE")
+        }) {
+            continue;
+        }
+        client
+            .query(&committed_view_ddl(name)?)
+            .execute()
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to upgrade committed-only TRON view {name}; no raw table was dropped"
+                )
+            })?;
+    }
     Ok(())
 }
 
@@ -250,6 +299,17 @@ pub fn retired_tron_objects() -> &'static [&'static str] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn committed_view_upgrades_are_non_destructive_and_guarded() {
+        for name in COMMITTED_VIEWS {
+            let sql = committed_view_ddl(name).unwrap();
+            assert!(sql.starts_with(&format!("CREATE OR REPLACE VIEW tron_db.{name}")));
+            assert!(sql.contains("ingestion_status = 'COMPLETE'"));
+            assert!(!sql.contains("MATERIALIZED"));
+            assert!(!sql.contains("DROP "));
+        }
+    }
 
     #[test]
     fn baseline_parser_reads_every_declared_object_exactly() {

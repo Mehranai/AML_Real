@@ -15,7 +15,8 @@ async fn main() -> anyhow::Result<()> {
     initialize_ethereum_schema(&config).await?;
 
     loop {
-        match discover_address_clusters(&config).await {
+        let clustering = discover_address_clusters(&config).await;
+        match &clustering {
             Ok(report) => tracing::info!(
                 run_id = %report.run_id,
                 entity_memberships = report.entity_memberships,
@@ -31,7 +32,11 @@ async fn main() -> anyhow::Result<()> {
             time_half_life_days: config.eth_exposure_time_half_life_days,
             max_paths_per_subject: config.eth_exposure_max_paths_per_subject,
         };
-        match propagate_exposure(&config, options).await {
+        let exposure = propagate_exposure(&config, options).await;
+        match &exposure {
+            Ok(report) if report.seed_count == 0 => {
+                tracing::warn!(run_id = %report.run_id, "Ethereum exposure not assessed: no active risk seeds")
+            }
             Ok(report) => tracing::info!(
                 run_id = %report.run_id,
                 seeds = report.seed_count,
@@ -42,6 +47,13 @@ async fn main() -> anyhow::Result<()> {
                 error = %error,
                 "Ethereum exposure propagation skipped or failed"
             ),
+        }
+
+        if clustering.is_err() || exposure.is_err() {
+            // Exit visibly for restart/monitoring, without a tight retry loop.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            clustering?;
+            exposure?;
         }
 
         tokio::time::sleep(Duration::from_secs(config.eth_analytics_interval_seconds)).await;

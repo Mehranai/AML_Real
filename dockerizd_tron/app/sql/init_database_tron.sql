@@ -717,15 +717,15 @@ CREATE VIEW IF NOT EXISTS tron_db.address_relationships_canonical
     `inserted_at` DateTime64(3)
 ) AS
 SELECT
-    transfer.relationship_id,
-    transfer.from_address,
-    transfer.to_address,
-    transfer.token_address,
-    transfer.tx_hash,
-    transfer.block_number,
-    transfer.timestamp,
-    transfer.amount,
-    transfer.transfer_type,
+    transfer.relationship_id AS relationship_id,
+    transfer.from_address AS from_address,
+    transfer.to_address AS to_address,
+    transfer.token_address AS token_address,
+    transfer.tx_hash AS tx_hash,
+    transfer.block_number AS block_number,
+    transfer.timestamp AS timestamp,
+    transfer.amount AS amount,
+    transfer.transfer_type AS transfer_type,
     multiIf(ifNull(feature.is_swap, toUInt8(0)) > 0, 'swap', ifNull(feature.is_bridge, toUInt8(0)) > 0, 'bridge', ifNull(feature.is_liquidity_add, toUInt8(0)) > 0, 'liquidity_add', ifNull(feature.is_liquidity_remove, toUInt8(0)) > 0, 'liquidity_remove', ifNull(feature.is_mint, toUInt8(0)) > 0, 'mint', ifNull(feature.is_burn, toUInt8(0)) > 0, 'burn', ifNull(feature.transaction_type, '') NOT IN ('', 'unknown', 'exchange_flow'), feature.transaction_type, transfer.transfer_type) AS operation_type,
     ifNull(feature.protocol, '') AS protocol,
     ifNull(feature.transaction_type, '') AS transaction_type,
@@ -734,8 +734,14 @@ SELECT
     ifNull(feature.classification_source, '') AS classification_source,
     ifNull(feature.method_id, '') AS method_id,
     ifNull(feature.is_contract_call, toUInt8(0)) AS is_contract_call,
-    transfer.inserted_at
+    transfer.inserted_at AS inserted_at
 FROM tron_db.address_relationships AS transfer FINAL
+INNER JOIN
+(
+    SELECT block_number
+    FROM tron_db.ingested_blocks FINAL
+    WHERE chain = 'tron' AND ingestion_status = 'COMPLETE'
+) AS committed ON committed.block_number = transfer.block_number
 LEFT JOIN
 (
     SELECT
@@ -843,6 +849,12 @@ SELECT
     status,
     inserted_at
 FROM tron_db.transactions FINAL
+INNER JOIN
+(
+    SELECT block_number
+    FROM tron_db.ingested_blocks FINAL
+    WHERE chain = 'tron' AND ingestion_status = 'COMPLETE'
+) AS committed USING (block_number)
 ;
 
 CREATE VIEW IF NOT EXISTS tron_db.wallet_asset_balances
@@ -889,6 +901,12 @@ FROM
         toUInt8(sumIf(amount_raw, direction = 1) < sumIf(amount_raw, direction = -1)) AS balance_incomplete
     FROM tron_db.wallet_asset_balance_deltas_v3
     FINAL
+    INNER JOIN
+    (
+        SELECT block_number
+        FROM tron_db.ingested_blocks FINAL
+        WHERE chain = 'tron' AND ingestion_status = 'COMPLETE'
+    ) AS committed USING (block_number)
     GROUP BY
         address,
         asset_type,
@@ -896,4 +914,34 @@ FROM
     HAVING (balance_raw > 0) OR (balance_incomplete = 1)
 ) AS balances
 LEFT JOIN latest_metadata ON (balances.asset_type = 'trc20') AND (balances.asset_id = latest_metadata.token_address)
+;
+
+CREATE VIEW IF NOT EXISTS tron_db.semantic_aml_events_canonical
+(
+    `event_id` String,
+    `chain` LowCardinality(String),
+    `tx_hash` String,
+    `block_number` UInt64,
+    `timestamp` UInt64,
+    `event_type` LowCardinality(String),
+    `subject_address` String,
+    `protocol` String,
+    `asset_in` String,
+    `asset_out` String,
+    `detector` String,
+    `detector_version` String,
+    `confidence` Float32,
+    `evidence_json` String,
+    `inserted_at` DateTime64(3)
+) AS
+SELECT event_id, chain, tx_hash, block_number, timestamp, event_type,
+       subject_address, protocol, asset_in, asset_out, detector,
+       detector_version, confidence, evidence_json, inserted_at
+FROM tron_db.semantic_aml_events FINAL
+INNER JOIN
+(
+    SELECT block_number
+    FROM tron_db.ingested_blocks FINAL
+    WHERE chain = 'tron' AND ingestion_status = 'COMPLETE'
+) AS committed USING (block_number)
 ;

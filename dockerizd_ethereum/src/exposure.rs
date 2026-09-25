@@ -60,6 +60,24 @@ struct CountRow {
     count: u64,
 }
 
+#[derive(Debug, Deserialize, Row)]
+struct RunState {
+    run_id: String,
+    status: String,
+}
+
+pub(crate) async fn latest_complete_run(
+    client: &Client,
+    network: &str,
+) -> anyhow::Result<Option<String>> {
+    // A newer failed or unfinished run invalidates the old published result.
+    let latest = client.query("SELECT run_id, status FROM exposure_runs FINAL WHERE network_id = ? ORDER BY started_at_unix_ms DESC, completed_at_unix_ms DESC, run_id DESC LIMIT 1")
+        .bind(network).fetch_optional::<RunState>().await?;
+    Ok(latest
+        .filter(|run| run.status == "COMPLETE")
+        .map(|run| run.run_id))
+}
+
 pub async fn propagate_exposure(
     config: &AppConfig,
     options: ExposureOptions,
@@ -84,7 +102,11 @@ pub async fn propagate_exposure(
                 &client,
                 config,
                 &run_id,
-                "COMPLETE",
+                if report.seed_count == 0 {
+                    "NO_SEEDS"
+                } else {
+                    "COMPLETE"
+                },
                 options,
                 report.seed_count,
                 report.path_count,
@@ -137,10 +159,14 @@ async fn propagate(
         .context("failed to count Ethereum exposure seeds")?
         .count;
 
-    ensure!(
-        seed_count > 0,
-        "no approved address_entities rows are marked is_exposure_seed=1"
-    );
+    if seed_count == 0 {
+        return Ok(ExposurePropagationReport {
+            run_id: run_id.to_string(),
+            seed_count: 0,
+            path_count: 0,
+            max_hops: options.max_hops,
+        });
+    }
 
     for hop in 1..=options.max_hops {
         expand_hop(
@@ -470,6 +496,48 @@ fn unix_time_millis() -> anyhow::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::ExposureOptions;
+
+    #[tokio::test]
+    #[ignore = "requires AML_TEST_CLICKHOUSE_URL; creates and removes an isolated test database"]
+    async fn newer_unsuccessful_run_hides_previous_exposure() -> anyhow::Result<()> {
+        use super::latest_complete_run;
+        let admin = clickhouse::Client::default()
+            .with_url(std::env::var("AML_TEST_CLICKHOUSE_URL")?)
+            .with_user(
+                std::env::var("AML_TEST_CLICKHOUSE_USER").unwrap_or_else(|_| "default".into()),
+            )
+            .with_password(std::env::var("AML_TEST_CLICKHOUSE_PASSWORD").unwrap_or_default());
+        let database = format!(
+            "eth_exposure_test_{}_{}",
+            std::process::id(),
+            super::unix_time_millis()?
+        );
+        admin
+            .query(&format!("CREATE DATABASE {database}"))
+            .execute()
+            .await?;
+        let client = admin.clone().with_database(&database);
+        let result: anyhow::Result<()> = async {
+            client.query("CREATE TABLE exposure_runs (network_id String, run_id String, status String, started_at_unix_ms UInt64, completed_at_unix_ms UInt64, updated_at UInt64) ENGINE=ReplacingMergeTree(updated_at) ORDER BY (network_id,run_id)").execute().await?;
+            anyhow::ensure!(latest_complete_run(&client, "eip155:1").await?.is_none());
+            client.query("INSERT INTO exposure_runs VALUES ('eip155:1','old','COMPLETE',1,2,1), ('eip155:56','other','FAILED',999,1000,1)").execute().await?;
+            anyhow::ensure!(latest_complete_run(&client, "eip155:1").await?.as_deref() == Some("old"));
+            for (version, status) in [(1u64,"RUNNING"),(2,"FAILED"),(3,"COMPLETE"),(4,"NO_SEEDS")] {
+                client.query("INSERT INTO exposure_runs VALUES ('eip155:1','new',?,3,?,?)")
+                    .bind(status).bind(version + 3).bind(version).execute().await?;
+                let expected = if status == "COMPLETE" { Some("new") } else { None };
+                anyhow::ensure!(latest_complete_run(&client, "eip155:1").await?.as_deref() == expected, "unexpected exposure visibility for {status}");
+            }
+            Ok(())
+        }.await;
+        let cleanup = admin
+            .query(&format!("DROP DATABASE {database}"))
+            .execute()
+            .await;
+        result?;
+        cleanup?;
+        Ok(())
+    }
 
     #[test]
     fn validates_exposure_bounds() {

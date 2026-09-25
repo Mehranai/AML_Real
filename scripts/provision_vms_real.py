@@ -27,7 +27,6 @@ DIRECTORIES = {
     "ethereum": "dockerizd_ethereum", "bsc": "dockerizd_bsc",
 }
 PORTS = {"tron": 4001, "ethereum": 5001, "bsc": 6001}
-CHAIN_ACTIONS = ("pause", "pause-ingestion", "resume", "db", "ps", "logs")
 IMAGES = {
     "main": ("aml-whole-gateway:local", "aml-analytical-node:local", "neo4j:5.26-community"),
     "tron": ("tron-aml-service:local", "clickhouse/clickhouse-server:23.8"),
@@ -318,26 +317,20 @@ class Provisioner:
                 errors.append(f"{name} is not Running/Stopped; inspect it with multipass info")
         needed_ram = sum(self.config["roles"][role]["memory_gib"] for role in ROLES
                          if inventory.get(self.names[role], {}).get("state") != "Running")
-
         free_ram = available_memory() / GIB
         if free_ram < needed_ram + 1:
             errors.append(f"Free RAM {free_ram:.1f} GiB; need {needed_ram + 1} GiB to start remaining VMs")
-        # Multipass owns VM disks separately from the repository checkout.
-        storage = self.args.storage_path
-        if storage is None:
-            storage = (Path(os.environ.get("ProgramData", "C:/ProgramData")) / "Multipass"
-                       if os.name == "nt" else Path("/var/snap/multipass/common/data/multipassd"))
-            while not storage.exists() and storage.parent != storage:
-                storage = storage.parent
-        try:
-            free_disk = shutil.disk_usage(storage).free / GIB
-            required_disk = 10 + sum(self.config["roles"][role]["disk_gib"] for role in ROLES
-                                     if self.names[role] not in inventory)
-            print(f"VM storage check: {storage}; free {free_disk:.1f} GiB, reserve {required_disk} GiB")
-            if free_disk < required_disk:
-                errors.append("Insufficient VM storage. --storage-path checks the actual Multipass disk location; it does NOT move storage")
-        except OSError:
-            errors.append("Cannot check VM storage; --storage-path must be an existing Multipass storage directory")
+        storage = self.args.storage_path or Path(os.environ.get("SystemDrive", "C:") + "/"
+                                                 if os.name == "nt" else "/var/snap/multipass/common")
+        needed_disk = 10 + sum(self.config["roles"][role]["disk_gib"] for role in ROLES
+                               if self.names[role] not in inventory)
+        free_disk = shutil.disk_usage(existing_parent(storage)).free / GIB
+        print(f"VM storage check: {storage}; free {free_disk:.1f} GiB, reserve {needed_disk} GiB")
+        if free_disk < needed_disk:
+            errors.append("Insufficient VM storage. --storage-path checks a custom Multipass storage location; it does NOT move storage")
+        staging_gib = 20 if self.args.build else 5
+        if shutil.disk_usage(self.root).free < staging_gib * GIB:
+            errors.append(f"Need at least {staging_gib} GiB free in the project drive for build/image transfer cache")
         if self.args.bundle:
             try:
                 self.bundle_entries = verify_bundle(self.args.bundle)
@@ -404,77 +397,19 @@ class Provisioner:
 
     def ensure_vm(self, role, inventory):
         name = self.names[role]
-
         if name not in inventory:
             path = self.work / f"{role}-cloud-init.yaml"
-
-            path.write_text(
-                cloud_config(self.state["owner"], role),
-                encoding="utf-8",
-            )
-
+            path.write_text(cloud_config(self.state["owner"], role), encoding="utf-8")
             size = self.config["roles"][role]
-
-            self.mp(
-                "launch",
-                self.config["ubuntu"],
-                "--name",
-                name,
-                "--cpus",
-                size["cpus"],
-                "--memory",
-                f"{size['memory_gib']}G",
-                "--disk",
-                f"{size['disk_gib']}G",
-                "--cloud-init",
-                path,
-                "--timeout",
-                "1800",
-                timeout=1900,
-                live=True,
-            )
-
+            self.mp("launch", self.config["ubuntu"], "--name", name,
+                    "--cpus", size["cpus"], "--memory", f"{size['memory_gib']}G",
+                    "--disk", f"{size['disk_gib']}G", "--cloud-init", path,
+                    "--timeout", "1800", timeout=1900, live=True)
         elif inventory[name]["state"] == "Stopped":
-            self.mp(
-                "start",
-                name,
-                timeout=600,
-                live=True,
-            )
-
-        # Wait for cloud-init, but don't abort immediately on degraded status.
-        try:
-            self.guest(
-                role,
-                "sudo",
-                "cloud-init",
-                "status",
-                "--wait",
-                timeout=1800,
-                live=True,
-            )
-        except DeploymentError:
-            print(
-                f"[WARN] cloud-init reported degraded status for {name}; "
-                "verifying runtime dependencies..."
-            )
-
+            self.mp("start", name, timeout=600, live=True)
+        self.guest(role, "sudo", "cloud-init", "status", "--wait", timeout=1800, live=True)
         self.assert_owner(role)
-
-        self.guest(
-            role,
-            "sudo",
-            "docker",
-            "--version",
-        )
-
-        self.guest(
-            role,
-            "sudo",
-            "docker",
-            "compose",
-            "version",
-        )
+        self.guest(role, "sudo", "docker", "compose", "version")
 
     def addresses(self):
         result = {}
@@ -542,8 +477,7 @@ class Provisioner:
         self.guest(role, *arguments, timeout=900, live=True)
         for attempt in range(30):
             try:
-                action = "check-runtime" if role == "main" or self.state["with_ingestion"] else "check"
-                self.guest(role, "sudo", "bash", f"{GUEST}/scripts/vm.sh", role, action, timeout=60)
+                self.guest(role, "sudo", "bash", f"{GUEST}/scripts/vm.sh", role, "check", timeout=60)
                 return
             except DeploymentError:
                 if attempt == 29:
@@ -580,44 +514,12 @@ class Provisioner:
         if addresses != self.state.get("addresses"):
             raise DeploymentError("VM IPs changed; run up to refresh guest .env files and firewall rules")
         for role in ROLES:
-            action = "check-runtime" if role == "main" or self.state["with_ingestion"] else "check"
-            self.guest(role, "sudo", "bash", f"{GUEST}/scripts/vm.sh", role, action, timeout=60, live=True)
+            self.guest(role, "sudo", "bash", f"{GUEST}/scripts/vm.sh", role, "check", timeout=60, live=True)
         for role, port in PORTS.items():
             self.guest("main", "curl", "--fail", "--silent", "--show-error", "--connect-timeout", "5",
                        "--max-time", "20", f"http://{addresses[role]}:{port}/ready")
         print(f"Ready: http://{addresses['main']}:8080")
         print("Readiness does not mean blockchain history has been ingested.")
-
-    def chain_control(self, role, action, query=None):
-        if role not in PORTS or action not in CHAIN_ACTIONS:
-            raise DeploymentError("Expected a chain role and a supported chain action")
-        if query is not None and (action != "db" or not query.strip()):
-            raise DeploymentError("A non-empty --query is valid only with db")
-        with self.operation():
-            if not self.state:
-                raise DeploymentError("No managed VM ownership state; deploy with up first")
-            entry = self.inventory().get(self.names[role], {})
-            if entry.get("state") != "Running":
-                raise DeploymentError(f"{self.names[role]} must already be Running; no VM was started")
-            self.assert_owner(role)
-            # Upgrade only the small control script, including on already deployed VMs.
-            script = self.root / "scripts/vm.sh"
-            if not script.is_file() or script.is_symlink():
-                raise DeploymentError("Missing or symlinked scripts/vm.sh")
-            local = self.work / "control-vm.sh"
-            local.write_bytes(script.read_text(encoding="utf-8-sig").replace("\r\n", "\n").encode())
-            remote = "/home/ubuntu/aml-control-vm.sh"
-            self.mp("transfer", local, f"{self.names[role]}:{remote}")
-            self.guest(role, "sudo", "install", "-m", "755", remote, f"{GUEST}/scripts/vm.sh")
-            arguments = ["sudo", "bash", f"{GUEST}/scripts/vm.sh", role, action]
-            if query is not None:
-                arguments.extend(["--query", query])
-            if action in ("pause", "pause-ingestion", "resume"):
-                self.guest(role, *arguments, timeout=900, live=True)
-                return
-        # An interactive read-only client must not lock all other VM operations.
-        self.guest(role, *arguments, timeout=None if action == "db" and query is None else 900,
-                   live=True)
 
     def stop(self):
         with self.operation():
@@ -636,9 +538,7 @@ class Provisioner:
 
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("action", choices=("doctor", "up", "status", "check", "stop", *CHAIN_ACTIONS))
-    result.add_argument("role", nargs="?", choices=tuple(PORTS), help="Chain for pause/resume/db/ps/logs")
-    result.add_argument("--query", help="Read-only SQL for db; omit for an interactive client")
+    result.add_argument("action", choices=("doctor", "up", "status", "check", "stop"))
     result.add_argument("--config", type=Path, default=ROOT / "deployment/vms.json")
     result.add_argument("--bundle", type=Path, help="Verified seven-image bundle; host Docker is then unnecessary")
     result.add_argument("--docker-context", default="desktop-linux" if os.name == "nt" else None)
@@ -650,10 +550,6 @@ def parser():
 
 def main():
     args = parser().parse_args()
-    if (args.action in CHAIN_ACTIONS) != (args.role is not None):
-        raise DeploymentError("Specify a chain only for pause, pause-ingestion, resume, db, ps or logs")
-    if args.query is not None and (args.action != "db" or not args.query.strip()):
-        raise DeploymentError("A non-empty --query is valid only with db")
     if args.bundle and args.build:
         raise DeploymentError("--bundle and --build are mutually exclusive")
     if args.action not in ("up", "doctor") and (args.build or args.with_ingestion):
@@ -667,8 +563,6 @@ def main():
         app.check()
     elif args.action == "stop":
         app.stop()
-    elif args.action in CHAIN_ACTIONS:
-        app.chain_control(args.role, args.action, args.query)
     else:
         inventory = app.inventory()
         for role, name in app.names.items():
