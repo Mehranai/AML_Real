@@ -1,0 +1,21 @@
+[package]
+name = "bitcoin_aml"
+version = "0.1.0"
+edition = "2024"
+default-run = "bitcoin_aml"
+
+[dependencies]
+aml_warehouse = { path = "../shared/warehouse" }
+anyhow = "1.0"
+axum = "0.8"
+bitcoin = "0.32"
+dotenvy = "0.15"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["arbitrary_precision"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync", "signal"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+

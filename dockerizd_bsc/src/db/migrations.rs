@@ -8,6 +8,8 @@ use crate::config::ClickHouseConfig;
 
 use super::sql::run_sql;
 
+aml_warehouse::clickhouse_connection!(SharedWarehouseConnection);
+
 #[derive(Clone, Copy)]
 struct Migration {
     id: &'static str,
@@ -89,13 +91,28 @@ pub async fn initialize_bsc_schema(
     config: &ClickHouseConfig,
 ) -> Result<SchemaSummary, SchemaError> {
     let admin = admin_client(config);
-    initialize_database(&admin, config.database(), MIGRATIONS).await
+    let summary = initialize_database(&admin, config.database(), MIGRATIONS).await?;
+    aml_warehouse::initialize(
+        &SharedWarehouseConnection(&admin),
+        config.database(),
+        aml_warehouse::Network::Bsc,
+    )
+    .await
+    .map_err(|error| SchemaError::SharedWarehouse(format!("{error:#}")))?;
+    Ok(summary)
 }
 
 pub async fn validate_bsc_schema(config: &ClickHouseConfig) -> Result<SchemaSummary, SchemaError> {
     let admin = admin_client(config);
     validate_migration_ledger(&admin, config.database(), MIGRATIONS).await?;
     validate_schema_contract(&admin, config.database()).await?;
+    aml_warehouse::validate(
+        &SharedWarehouseConnection(&admin),
+        config.database(),
+        aml_warehouse::Network::Bsc,
+    )
+    .await
+    .map_err(|error| SchemaError::SharedWarehouse(format!("{error:#}")))?;
     Ok(SchemaSummary {
         database: config.database().to_string(),
         migration_count: MIGRATIONS.len(),
@@ -740,6 +757,8 @@ fn required_tables() -> &'static [RequiredTable] {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SchemaError {
+    #[error("shared warehouse schema: {0}")]
+    SharedWarehouse(String),
     #[error("unsafe ClickHouse database name")]
     UnsafeDatabaseName,
     #[error("migration contains an unresolved database placeholder")]

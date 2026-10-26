@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 {up|down|ps|logs|check} [--build] [--with-ingestion] [--with-bsc] [--gateway-only] [--pull-never] [--tron-project NAME] [--ethereum-project NAME] [--main-project NAME]"
+  echo "Usage: $0 {up|down|ps|logs|check} [--build] [--with-ingestion] [--with-bsc] [--with-bitcoin] [--gateway-only] [--pull-never] [--tron-project NAME] [--ethereum-project NAME] [--main-project NAME]"
 }
 if [[ ${1:-} == --help || ${1:-} == -h ]]; then usage; exit 0; fi
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -11,6 +11,7 @@ action=${1:-up}
 build=false
 with_ingestion=false
 with_bsc=false
+with_bitcoin=false
 gateway_only=false
 pull_never=false
 # Preserve the project identities of the original single-host launcher.
@@ -22,6 +23,7 @@ while [[ $# -gt 0 ]]; do
     --build) build=true; shift ;;
     --with-ingestion) with_ingestion=true; shift ;;
     --with-bsc) with_bsc=true; shift ;;
+    --with-bitcoin) with_bitcoin=true; shift ;;
     --gateway-only) gateway_only=true; shift ;;
     --pull-never) pull_never=true; shift ;;
     --tron-project|--ethereum-project|--main-project)
@@ -41,8 +43,9 @@ if [[ $action != up ]] && { $build || $with_ingestion || $pull_never; }; then
 fi
 roles=(tron ethereum main)
 if $with_bsc; then roles=(tron ethereum bsc main); fi
+if $with_bitcoin; then roles=("${roles[@]:0:${#roles[@]}-1}" bitcoin main); fi
 if $gateway_only; then roles=(main); elif [[ $action == down ]]; then
-  if $with_bsc; then roles=(main bsc ethereum tron); else roles=(main ethereum tron); fi
+  reversed=(); for ((i=${#roles[@]}-1;i>=0;i--)); do reversed+=("${roles[i]}"); done; roles=("${reversed[@]}")
 fi
 # Validate every selected role before starting any containers.
 for role in "${roles[@]}"; do
@@ -51,11 +54,12 @@ for role in "${roles[@]}"; do
     tron) directory=$root/dockerizd_tron/app ;;
     ethereum) directory=$root/dockerizd_ethereum ;;
     bsc) directory=$root/dockerizd_bsc ;;
+    bitcoin) directory=$root/dockerizd_bitcoin ;;
   esac
   [[ -f $directory/.env ]] || { echo "Configure $directory/.env first" >&2; exit 2; }
 done
 for role in "${roles[@]}"; do
-  case "$role" in main) project=$main_project ;; tron) project=$tron_project ;; ethereum) project=$ethereum_project ;; bsc) project=dockerizd_bsc ;; esac
+  case "$role" in main) project=$main_project ;; tron) project=$tron_project ;; ethereum) project=$ethereum_project ;; bsc) project=dockerizd_bsc ;; bitcoin) project=dockerizd_bitcoin ;; esac
   arguments=("$role" "$action" --project "$project")
   if [[ $action == up ]]; then
     if $build; then arguments+=(--build); fi

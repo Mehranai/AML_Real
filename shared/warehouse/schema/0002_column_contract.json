@@ -1,0 +1,1190 @@
+{
+  "version": 2,
+  "migration_id": "20261026_0002_column_contract",
+  "description": "Canonical column values, exact amounts and network capabilities enforced in Rust and ClickHouse; legacy cutover remains separate.",
+  "baseline_checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224",
+  "rules": [
+    {
+      "table": "aml_schema_migrations",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_schema_migrations",
+      "column": "migration_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_schema_migrations",
+      "column": "schema_version",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_schema_migrations",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_warehouse_identity",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_warehouse_identity",
+      "column": "schema_version",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_warehouse_identity",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_sync_state",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_sync_state",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_sync_state",
+      "column": "initialized",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_sync_state",
+      "column": "last_block_hash",
+      "kind": "state_hash"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "parent_hash",
+      "kind": "parent_hash"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "canonical",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "ingestion_status",
+      "kind": "enum",
+      "values": [
+        "processing",
+        "complete",
+        "failed",
+        "orphaned"
+      ]
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "receipt_coverage",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "receipt_coverage",
+      "kind": "capability"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "trace_coverage",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "trace_coverage",
+      "kind": "capability"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "prevout_coverage",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "prevout_coverage",
+      "kind": "capability"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "block_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "tx_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "amount_raw",
+      "kind": "bitcoin_amount"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "fee_raw",
+      "kind": "bitcoin_amount"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "asset_id",
+      "kind": "asset"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "decimals",
+      "kind": "native_decimals"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "status",
+      "kind": "enum",
+      "values": [
+        "confirmed",
+        "success",
+        "failed",
+        "unknown"
+      ]
+    },
+    {
+      "table": "aml_transactions",
+      "column": "coinbase",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_transactions",
+      "column": "asset_id",
+      "kind": "bitcoin_transaction"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "block_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "relationship_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "asset_id",
+      "kind": "transfer_asset"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "amount_raw",
+      "kind": "bitcoin_amount"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "decimals",
+      "kind": "native_decimals"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "confidence",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "prev_tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_transaction_features",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_transaction_features",
+      "column": "block_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_transaction_features",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_transaction_features",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_transaction_features",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_transaction_features",
+      "column": "feature_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_transaction_features",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_transaction_features",
+      "column": "features_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_transaction_features",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "block_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "event_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "confidence",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "asset_in",
+      "kind": "asset"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "asset_out",
+      "kind": "asset"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "amount_in",
+      "kind": "bitcoin_amount"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "amount_out",
+      "kind": "bitcoin_amount"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "asset_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "asset_id",
+      "kind": "asset"
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "decimals",
+      "kind": "native_decimals"
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "review_status",
+      "kind": "enum",
+      "values": [
+        "pending",
+        "approved",
+        "rejected",
+        "revoked"
+      ]
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "reviewed_by",
+      "kind": "review_actor"
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_metadata_jobs",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_metadata_jobs",
+      "column": "job_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_metadata_jobs",
+      "column": "asset_id",
+      "kind": "asset"
+    },
+    {
+      "table": "aml_metadata_jobs",
+      "column": "status",
+      "kind": "enum",
+      "values": [
+        "pending",
+        "running",
+        "retry",
+        "complete",
+        "failed",
+        "dead_letter",
+        "cancelled"
+      ]
+    },
+    {
+      "table": "aml_metadata_jobs",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_ingestion_failures",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_ingestion_failures",
+      "column": "failure_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_ingestion_failures",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_ingestion_failures",
+      "column": "status",
+      "kind": "enum",
+      "values": [
+        "retry",
+        "dead_letter",
+        "repairing",
+        "gap",
+        "resolved"
+      ]
+    },
+    {
+      "table": "aml_ingestion_failures",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_ingestion_benchmarks",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_ingestion_benchmarks",
+      "column": "benchmark_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_ingestion_benchmarks",
+      "column": "settings_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_ingestion_benchmarks",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_intelligence_sources",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_intelligence_sources",
+      "column": "source_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_intelligence_sources",
+      "column": "is_active",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_intelligence_sources",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_intelligence_claims",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_intelligence_claims",
+      "column": "claim_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_intelligence_claims",
+      "column": "confidence",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_intelligence_claims",
+      "column": "is_exposure_seed",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_intelligence_claims",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_intelligence_claims",
+      "column": "review_status",
+      "kind": "enum",
+      "values": [
+        "pending",
+        "approved",
+        "rejected",
+        "revoked"
+      ]
+    },
+    {
+      "table": "aml_intelligence_claims",
+      "column": "reviewed_by",
+      "kind": "review_actor"
+    },
+    {
+      "table": "aml_intelligence_claims",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_intelligence_reviews",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_intelligence_reviews",
+      "column": "review_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_intelligence_reviews",
+      "column": "decision",
+      "kind": "enum",
+      "values": [
+        "approved",
+        "rejected",
+        "revoked"
+      ]
+    },
+    {
+      "table": "aml_intelligence_reviews",
+      "column": "reviewed_by",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_intelligence_reviews",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_intelligence_reviews",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_cluster_claims",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_cluster_claims",
+      "column": "claim_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_cluster_claims",
+      "column": "confidence",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_cluster_claims",
+      "column": "review_status",
+      "kind": "enum",
+      "values": [
+        "pending",
+        "approved",
+        "rejected",
+        "revoked"
+      ]
+    },
+    {
+      "table": "aml_cluster_claims",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_cluster_claims",
+      "column": "evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_cluster_claims",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_cluster_memberships",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_cluster_memberships",
+      "column": "cluster_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_cluster_memberships",
+      "column": "cluster_version",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_cluster_memberships",
+      "column": "subject_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_cluster_memberships",
+      "column": "status",
+      "kind": "enum",
+      "values": [
+        "pending",
+        "active",
+        "inactive",
+        "revoked"
+      ]
+    },
+    {
+      "table": "aml_cluster_memberships",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_cluster_runs",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_cluster_runs",
+      "column": "run_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_cluster_runs",
+      "column": "status",
+      "kind": "enum",
+      "values": [
+        "pending",
+        "waiting",
+        "running",
+        "complete",
+        "failed",
+        "stale",
+        "cancelled",
+        "truncated"
+      ]
+    },
+    {
+      "table": "aml_cluster_runs",
+      "column": "cursor_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_cluster_runs",
+      "column": "truncated",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_cluster_runs",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_exposure_seeds",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_exposure_seeds",
+      "column": "seed_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_exposure_seeds",
+      "column": "is_active",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_exposure_seeds",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_exposure_runs",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_exposure_runs",
+      "column": "run_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_exposure_runs",
+      "column": "status",
+      "kind": "enum",
+      "values": [
+        "pending",
+        "waiting",
+        "running",
+        "complete",
+        "failed",
+        "stale",
+        "cancelled",
+        "truncated"
+      ]
+    },
+    {
+      "table": "aml_exposure_runs",
+      "column": "truncated",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_exposure_runs",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "path_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "run_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "asset_id",
+      "kind": "asset"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "amount_raw",
+      "kind": "bitcoin_amount"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "amount_share",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "exposure_score",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "fund_continuity_claimed",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_risk_policies",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_risk_policies",
+      "column": "policy_version",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_risk_policies",
+      "column": "enabled",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_risk_policies",
+      "column": "medium_threshold",
+      "kind": "score"
+    },
+    {
+      "table": "aml_risk_policies",
+      "column": "high_threshold",
+      "kind": "score"
+    },
+    {
+      "table": "aml_risk_policies",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_risk_policy_rules",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_risk_policy_rules",
+      "column": "policy_version",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_risk_policy_rules",
+      "column": "rule_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_risk_policy_rules",
+      "column": "max_contribution",
+      "kind": "score"
+    },
+    {
+      "table": "aml_risk_policy_rules",
+      "column": "enabled",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_risk_policy_rules",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_wallet_risk_signals",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_wallet_risk_signals",
+      "column": "signal_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_wallet_risk_signals",
+      "column": "assessment_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_wallet_risk_signals",
+      "column": "contribution",
+      "kind": "score"
+    },
+    {
+      "table": "aml_wallet_risk_signals",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_wallet_risk_signals",
+      "column": "evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_wallet_risk_signals",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_wallet_risk_assessments",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_wallet_risk_assessments",
+      "column": "assessment_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_wallet_risk_assessments",
+      "column": "risk_score",
+      "kind": "score"
+    },
+    {
+      "table": "aml_wallet_risk_assessments",
+      "column": "risk_level",
+      "kind": "enum",
+      "values": [
+        "UNKNOWN",
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "CRITICAL"
+      ]
+    },
+    {
+      "table": "aml_wallet_risk_assessments",
+      "column": "probability_claimed",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_wallet_risk_assessments",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_bitcoin_inputs",
+      "column": "network_id",
+      "kind": "enum",
+      "values": [
+        "bip122:000000000019d6689c085ae165831e93"
+      ]
+    },
+    {
+      "table": "aml_bitcoin_inputs",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_bitcoin_inputs",
+      "column": "block_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_bitcoin_inputs",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_bitcoin_inputs",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_bitcoin_inputs",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_bitcoin_inputs",
+      "column": "tx_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_bitcoin_inputs",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_bitcoin_inputs",
+      "column": "script_hex",
+      "kind": "hex_bytes"
+    },
+    {
+      "table": "aml_bitcoin_inputs",
+      "column": "value_sats",
+      "kind": "satoshis"
+    },
+    {
+      "table": "aml_bitcoin_inputs",
+      "column": "prev_tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_bitcoin_outputs",
+      "column": "network_id",
+      "kind": "enum",
+      "values": [
+        "bip122:000000000019d6689c085ae165831e93"
+      ]
+    },
+    {
+      "table": "aml_bitcoin_outputs",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_bitcoin_outputs",
+      "column": "block_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_bitcoin_outputs",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_bitcoin_outputs",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_bitcoin_outputs",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_bitcoin_outputs",
+      "column": "tx_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_bitcoin_outputs",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_bitcoin_outputs",
+      "column": "script_hex",
+      "kind": "hex_bytes"
+    },
+    {
+      "table": "aml_bitcoin_outputs",
+      "column": "value_sats",
+      "kind": "satoshis"
+    },
+    {
+      "table": "aml_bitcoin_outputs",
+      "column": "coinbase",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_evm_logs",
+      "column": "network_id",
+      "kind": "enum",
+      "values": [
+        "eip155:1",
+        "eip155:56"
+      ]
+    },
+    {
+      "table": "aml_evm_logs",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_evm_logs",
+      "column": "block_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_evm_logs",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_evm_logs",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_evm_logs",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_evm_logs",
+      "column": "tx_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_evm_logs",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_tron_contracts",
+      "column": "network_id",
+      "kind": "enum",
+      "values": [
+        "tron:mainnet"
+      ]
+    },
+    {
+      "table": "aml_tron_contracts",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_tron_contracts",
+      "column": "block_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_tron_contracts",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_tron_contracts",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_tron_contracts",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_tron_contracts",
+      "column": "tx_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_tron_contracts",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_tron_contracts",
+      "column": "payload_json",
+      "kind": "json"
+    }
+  ]
+}

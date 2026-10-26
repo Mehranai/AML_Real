@@ -1,12 +1,12 @@
 # راهنمای کار روزمره شبکه‌ها و ClickHouse
 
-این راهنما برای استقرار چهار VM با `scripts/provision_vms.py` است. فرمان‌های Python را روی میزبان Linux، از ریشه پروژه اجرا کنید، نه داخل VM اصلی:
+این راهنما برای استقرار پنج VM با `scripts/provision_vms.py` است. فرمان‌های Python را روی میزبان Linux، از ریشه پروژه اجرا کنید، نه داخل VM اصلی:
 
 ```bash
 cd "$HOME/AML_Whole"
 ```
 
-نام شبکه یکی از `tron`، `ethereum` یا `bsc` است. ابزار نام VM را از تنظیمات پروژه می‌گیرد؛ لازم نیست IP یا رمز را در ترمینال وارد کنید. VM انتخاب‌شده باید قبلاً ساخته شده و Running باشد. این فرمان‌های کنترلی VM جدید نمی‌سازند و Docker میزبان را لازم ندارند؛ از Docker داخل VM استفاده می‌کنند.
+نام شبکه یکی از `tron`، `ethereum`، `bsc` یا `bitcoin` است. ابزار نام VM را از تنظیمات پروژه می‌گیرد؛ لازم نیست IP یا رمز را در ترمینال وارد کنید. VM انتخاب‌شده باید قبلاً ساخته شده و Running باشد. این فرمان‌های کنترلی VM جدید نمی‌سازند و Docker میزبان را لازم ندارند؛ از Docker داخل VM استفاده می‌کنند.
 
 ## ۱. پس از همگام‌سازی چه اتفاقی می‌افتد؟
 
@@ -27,7 +27,7 @@ cd "$HOME/AML_Whole"
 
 در Ethereum یک اشکال اصلاح شد: دیتابیس خالی اکنون واقعاً از `ETH_START_BLOCK` شروع می‌کند، نه از آخرین بلاک شبکه. اگر checkpoint موجود باشد، همان ادامه پیدا می‌کند؛ `--start-block` صریح در ابزار تخصصی همچنان اولویت دارد. این اصلاح، بازه تاریخی جاافتاده در دیتابیس قبلی را خودکار پر نمی‌کند. برای آن باید بازه جاافتاده جداگانه و کنترل‌شده backfill شود؛ checkpoint را دستی پاک نکنید.
 
-اجرای اولیه همراه ingestion هر سه شبکه، در صورتی که هنوز استقرار انجام نشده:
+اجرای اولیه همراه ingestion هر چهار شبکه، در صورتی که هنوز استقرار انجام نشده:
 
 ```bash
 python3 scripts/provision_vms.py up --build --with-ingestion
@@ -201,3 +201,37 @@ python3 scripts/provision_vms.py logs ethereum
 تست‌های کنترلی با فرمان‌های جداشده از Docker واقعی و با VM شبیه‌سازی‌شده اجرا می‌شوند و ماشین واقعی نمی‌سازند. Docker Engine محلی هنگام توسعه این تغییر در دسترس نبود؛ تست زنده توقف سرویس، احراز هویت ClickHouse و resume روی سرور مقصد همچنان لازم است.
 
 منابع رفتار زیرساخت: [توقف و شروع Compose](https://docs.docker.com/compose/support-and-feedback/faq/)، [اجرای سرویس بدون وابستگی‌ها](https://docs.docker.com/reference/cli/docker/compose/up/).
+
+
+بیت‌کوین از یک worker به نام `bitcoin-ingestion` و دیتابیس مستقل `bitcoin_aml` استفاده می‌کند. checkpoint در `aml_sync_state_current` و داده قابل تحقیق در viewهای `*_canonical` است. [راه‌اندازی و محدودیت‌های بیت‌کوین](../dockerizd_bitcoin/README.md).
+
+## بررسی آمادگی RPC بیت‌کوین
+
+روی VM بیت‌کوین، پس از ساخت image جدید و تنظیم RPC،
+`bash scripts/vm.sh bitcoin probe` را اجرا کنید. این ابزار فقط‌خواندنی و
+یک‌بارمصرف است؛ دیتابیس و ingestion را راه‌اندازی نمی‌کند. برای deployment
+موجود همان `--project NAME` را حفظ کنید. خروجی JSON وضعیت `ready`، `degraded`
+یا `unready` و علت آن را می‌دهد؛ کد خروج به‌ترتیب ۰، ۲ و ۱ است.
+این گزارش از بازهٔ تنظیم‌شده نمونه می‌گیرد و checkpoint دیتابیس را بررسی
+نمی‌کند. [دامنه و تفسیر دقیق گزارش](../dockerizd_bitcoin/README.md).
+
+## مشاهده و repair خطاهای بیت‌کوین
+
+روی VM بیت‌کوین و با image جدید:
+
+```bash
+bash scripts/vm.sh bitcoin failures --status dead_letter --limit 50
+bash scripts/vm.sh bitcoin pause-ingestion
+bash scripts/vm.sh bitcoin scan-gaps --from-block 100 --to-block 199 --max-blocks 100
+bash scripts/vm.sh bitcoin repair --failure-id bitcoin:block:12345 --max-blocks 1
+bash scripts/vm.sh bitcoin resume
+```
+
+بازه و شناسه را از تاریخچه و failure واقعی خود انتخاب کنید؛ این اعداد مثال‌اند.
+در deployment موجود `--project NAME` را حفظ کنید. این ابزارها وابستگی‌ها را
+بالا نمی‌آورند و ClickHouse باید از قبل روشن باشد. repair و اسکن از همان قفل
+writer استفاده می‌کنند؛ وجود ingestion فعال باعث رد مالک دوم می‌شود.
+شمارندهٔ تلاش پس از restart صفر نمی‌شود. repair فقط بلاک بعدیِ انتخاب‌شده را
+منتشر می‌کند؛ gap تاریخی را ثبت و با `historical_gap_requires_replay` متوقف
+می‌شود. بازپخش مستقل تاریخچه در ING-04 است. جزئیات و API مشاهدهٔ خطاها:
+[راهنمای بیت‌کوین](../dockerizd_bitcoin/README.md).

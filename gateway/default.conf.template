@@ -13,6 +13,7 @@ server {
     set $tron_upstream "${AML_TRON_UPSTREAM}";
     set $ethereum_upstream "${AML_ETHEREUM_UPSTREAM}";
     set $bsc_upstream "${AML_BSC_UPSTREAM}";
+    set $bitcoin_upstream "${AML_BITCOIN_UPSTREAM}";
     set $analytical_upstream "http://analytical-node:7001";
     proxy_connect_timeout 5s;
     proxy_read_timeout 300s;
@@ -69,9 +70,13 @@ server {
     location = /networks/bsc/ { try_files /networks/bsc/index.html =404; }
     location = /networks/bsc/ready { proxy_pass $bsc_upstream/ready; }
     location = /networks/bsc/status { proxy_pass $bsc_upstream/status; }
+    location = /networks/bitcoin { return 308 /networks/bitcoin/$is_args$args; }
+    location = /networks/bitcoin/ { try_files /networks/bitcoin/index.html =404; }
+    location = /networks/bitcoin/ready { proxy_pass $bitcoin_upstream/ready; }
+    location = /networks/bitcoin/status { proxy_pass $bitcoin_upstream/status; }
 
     # Investigation responses are snapshotted centrally before reaching the browser.
-    location ~ ^/api/(tron|ethereum|bsc)/wallet/[^/]+/(investigation|paths/[^/]+)$ {
+    location ~ ^/api/(tron|ethereum|bsc|bitcoin)/wallet/[^/]+/(investigation|paths/[^/]+)$ {
         limit_req zone=aml_api burst=10 nodelay;
         limit_conn aml_connections 10;
         proxy_pass $analytical_upstream$request_uri;
@@ -86,6 +91,11 @@ server {
         return 410 '{"error":"Export the current investigation by its ID on the main VM."}';
     }
     # Other warehouse APIs remain on their respective chain VM.
+    location /api/bitcoin/ {
+        limit_req zone=aml_api burst=30 nodelay;
+        limit_conn aml_connections 20;
+        proxy_pass $bitcoin_upstream$request_uri;
+    }
     location /api/bsc/ {
         limit_req zone=aml_api burst=30 nodelay;
         limit_conn aml_connections 20;

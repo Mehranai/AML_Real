@@ -1,0 +1,143 @@
+name: aml-bitcoin
+
+x-database: &database
+  BITCOIN_CLICKHOUSE_URL: ${BITCOIN_CLICKHOUSE_URL:-http://clickhouse:8123}
+  BITCOIN_CLICKHOUSE_DATABASE: bitcoin_aml
+  BITCOIN_CLICKHOUSE_USER: ${BITCOIN_CLICKHOUSE_USER:-bitcoin_admin}
+  BITCOIN_CLICKHOUSE_PASSWORD: ${BITCOIN_CLICKHOUSE_PASSWORD:?Set BITCOIN_CLICKHOUSE_PASSWORD}
+  BITCOIN_WRITER_LOCK_DIR: /var/lock/bitcoin
+
+x-app: &app
+  image: bitcoin-aml-service:${BITCOIN_APP_IMAGE_TAG:-local}
+  build:
+    context: .
+    dockerfile: Dockerfile
+    additional_contexts:
+      warehouse_source: ../shared/warehouse
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+x-rpc: &rpc
+  BITCOIN_RPC_URL: ${BITCOIN_RPC_URL:-http://host.docker.internal:8332}
+  BITCOIN_RPC_USER: ${BITCOIN_RPC_USER:-}
+  BITCOIN_RPC_PASSWORD: ${BITCOIN_RPC_PASSWORD:-}
+  BITCOIN_RPC_TIMEOUT_SECONDS: ${BITCOIN_RPC_TIMEOUT_SECONDS:-60}
+  BITCOIN_RPC_FALLBACK_URLS: ${BITCOIN_RPC_FALLBACK_URLS:-}
+  BITCOIN_RPC_MAX_ATTEMPTS: ${BITCOIN_RPC_MAX_ATTEMPTS:-4}
+  BITCOIN_RPC_RETRY_BASE_MS: ${BITCOIN_RPC_RETRY_BASE_MS:-250}
+  BITCOIN_RPC_REQUEST_INTERVAL_MS: ${BITCOIN_RPC_REQUEST_INTERVAL_MS:-50}
+  BITCOIN_RPC_MAX_RESPONSE_BYTES: ${BITCOIN_RPC_MAX_RESPONSE_BYTES:-67108864}
+  BITCOIN_RPC_BATCH_ENABLED: ${BITCOIN_RPC_BATCH_ENABLED:-true}
+  BITCOIN_BLOCK_BATCH_SIZE: ${BITCOIN_BLOCK_BATCH_SIZE:-2}
+  BITCOIN_BLOCK_FETCH_CONCURRENCY: ${BITCOIN_BLOCK_FETCH_CONCURRENCY:-2}
+  BITCOIN_PREVOUT_BATCH_SIZE: ${BITCOIN_PREVOUT_BATCH_SIZE:-128}
+  BITCOIN_PREVOUT_CONCURRENCY: ${BITCOIN_PREVOUT_CONCURRENCY:-2}
+  BITCOIN_MAX_PREVOUTS_PER_BLOCK: ${BITCOIN_MAX_PREVOUTS_PER_BLOCK:-100000}
+  BITCOIN_MAX_RESOLVED_BYTES: ${BITCOIN_MAX_RESOLVED_BYTES:-67108864}
+  BITCOIN_FALLBACK_COOLDOWN_SECONDS: ${BITCOIN_FALLBACK_COOLDOWN_SECONDS:-30}
+  BITCOIN_BLOCK_VERBOSITY: ${BITCOIN_BLOCK_VERBOSITY:-3}
+  BITCOIN_START_BLOCK: ${BITCOIN_START_BLOCK:-0}
+  BITCOIN_END_BLOCK: ${BITCOIN_END_BLOCK:-}
+  BITCOIN_CONFIRMATIONS: ${BITCOIN_CONFIRMATIONS:-6}
+  BITCOIN_REORG_MAX_DEPTH: ${BITCOIN_REORG_MAX_DEPTH:-144}
+  BITCOIN_POLL_SECONDS: ${BITCOIN_POLL_SECONDS:-10}
+  BITCOIN_FAILURE_MAX_ATTEMPTS: ${BITCOIN_FAILURE_MAX_ATTEMPTS:-10}
+  BITCOIN_FAILURE_RETRY_SECONDS: ${BITCOIN_FAILURE_RETRY_SECONDS:-1}
+
+services:
+  clickhouse:
+    image: ${BITCOIN_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:23.8}
+    restart: unless-stopped
+    ports:
+      - "${DATABASE_BIND_ADDRESS:-127.0.0.1}:${BITCOIN_CLICKHOUSE_HTTP_PORT:-48123}:8123"
+      - "${DATABASE_BIND_ADDRESS:-127.0.0.1}:${BITCOIN_CLICKHOUSE_NATIVE_PORT:-49000}:9000"
+    environment:
+      CLICKHOUSE_DB: bitcoin_aml
+      CLICKHOUSE_USER: ${BITCOIN_CLICKHOUSE_USER:-bitcoin_admin}
+      CLICKHOUSE_PASSWORD: ${BITCOIN_CLICKHOUSE_PASSWORD:?Set BITCOIN_CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes: ["bitcoin_clickhouse_data:/var/lib/clickhouse"]
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user \"$$CLICKHOUSE_USER\" --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+
+  bitcoin-schema:
+    <<: *app
+    command: ["bitcoin_init_schema"]
+    restart: "no"
+    environment: *database
+    volumes: ["bitcoin_writer_lock:/var/lock/bitcoin"]
+    depends_on:
+      clickhouse: {condition: service_healthy}
+
+  bitcoin-api:
+    <<: *app
+    command: ["bitcoin_aml", "api"]
+    restart: unless-stopped
+    environment:
+      <<: *database
+      BITCOIN_API_ADDR: 0.0.0.0:6101
+      AML_SERVICE_KEY: ${AML_SERVICE_KEY:?Set AML_SERVICE_KEY}
+    ports: ["${BITCOIN_API_BIND_ADDRESS:-127.0.0.1}:${BITCOIN_API_PORT:-6101}:6101"]
+    depends_on:
+      bitcoin-schema: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "bitcoin_aml", "--healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  bitcoin-ingestion:
+    <<: *app
+    command: ["bitcoin_aml", "ingest"]
+    restart: unless-stopped
+    stop_grace_period: 150s
+    # Kernel lock shared by all mutating commands on this VM.
+    deploy:
+      replicas: 1
+    environment:
+      <<: [*database, *rpc]
+    volumes: ["bitcoin_writer_lock:/var/lock/bitcoin"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      bitcoin-schema: {condition: service_completed_successfully}
+
+  bitcoin-failures:
+    <<: *app
+    profiles: ["tools"]
+    command: ["bitcoin_aml", "failures"]
+    restart: "no"
+    environment: *database
+
+  bitcoin-repair:
+    <<: *app
+    profiles: ["tools"]
+    command: ["bitcoin_aml", "repair"]
+    restart: "no"
+    environment:
+      <<: [*database, *rpc]
+    volumes: ["bitcoin_writer_lock:/var/lock/bitcoin"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  bitcoin-rpc-probe:
+    <<: *app
+    profiles: ["tools"]
+    command: ["bitcoin_aml", "probe"]
+    restart: "no"
+    environment: *rpc
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+volumes:
+  bitcoin_clickhouse_data:
+  bitcoin_writer_lock:
+    # Stable across Compose project names on the same Bitcoin VM.
+    name: aml_bitcoin_writer_lock

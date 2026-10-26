@@ -159,7 +159,12 @@ pub fn assess(network: &str, data: &Value) -> Value {
                 )
         })
     };
-    let pairs = pass_through(data, tron);
+    // UTXO inputs and outputs are distinct legs, not allocated account transfers.
+    let pairs = if network == "bitcoin" {
+        Vec::new()
+    } else {
+        pass_through(data, tron)
+    };
     if pairs.len() >= 3 && !known_service {
         signals.push(signal("RAPID_SAME_ASSET_FORWARDING", 5.0,
             "At least three distinct receipts closely followed by a similar-sized outgoing transfer of the same asset. This is a timing pattern, not proven fund continuity.", json!(pairs)));
@@ -169,7 +174,9 @@ pub fn assess(network: &str, data: &Value) -> Value {
     if truncated {
         limitations.push("Graph or fingerprint was truncated by query safety limits.");
     }
-    if !tron && data.pointer("/data_coverage/internal_transfer_coverage") != Some(&json!(true)) {
+    if matches!(network, "ethereum" | "bsc")
+        && data.pointer("/data_coverage/internal_transfer_coverage") != Some(&json!(true))
+    {
         limitations.push("Internal EVM transfer coverage is incomplete.");
     }
     if transfers < 3 {
@@ -184,6 +191,13 @@ pub fn assess(network: &str, data: &Value) -> Value {
                 .push("BSC exposure traversal reached safety limits; additional paths may exist.");
         }
     }
+    if network == "bitcoin" {
+        limitations.push("Bitcoin transaction connectivity does not allocate particular inputs to outputs or prove fund continuity.");
+        limitations.push("Bitcoin ownership, change and CoinJoin classifications are not inferred; reviewed risk labels and exposure evidence are not yet supplied by this adapter.");
+        if data.pointer("/data_coverage/history_from_genesis") != Some(&json!(true)) {
+            limitations.push("Bitcoin history is partial or empty; observed UTXOs are not a complete wallet balance.");
+        }
+    }
     limitations.sort_unstable();
     limitations.dedup();
     signals.sort_by(|a, b| number(&b["contribution"]).total_cmp(&number(&a["contribution"])));
@@ -192,7 +206,7 @@ pub fn assess(network: &str, data: &Value) -> Value {
         .map(|s| number(&s["contribution"]))
         .sum::<f64>()
         .min(100.0);
-    let available = !signals.is_empty() || transfers >= 3;
+    let available = !signals.is_empty() || (network != "bitcoin" && transfers >= 3);
     let level = if !available {
         "UNKNOWN"
     } else if score >= 60.0 {
@@ -358,6 +372,15 @@ fn pass_through(data: &Value, tron: bool) -> Vec<Value> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bitcoin_utxo_legs_do_not_become_evm_risk_or_a_zero_risk_claim() {
+        let data = serde_json::json!({"fingerprint":{"transfer_count":100},"graph":{"edges":[]},
+            "data_coverage":{"history_from_genesis":true}});
+        let risk = super::assess("bitcoin", &data);
+        assert!(risk["risk_score"].is_null());
+        assert_eq!(risk["risk_level"], "UNKNOWN");
+        assert!(!risk["limitations"].to_string().contains("EVM"));
+    }
     use super::*;
     fn label() -> Value {
         json!({"review_status":"approved","source_id":"reviewed-source","evidence_refs":["case:123"],

@@ -4,6 +4,19 @@ import { getNetwork, investigationUrl, validateAddress } from '../web/assets/net
 
 const tron = 'TB16q6kpSEW2WqvTJ9ua7HAoP9ugQ2HdHZ';
 const ethereum = '0x0000000000000000000000000000000000000001';
+const bitcoin = '1BoatSLRHtKNngkdXEeobR76b53LETtpyT';
+
+test('Bitcoin has an explicit mainnet route without altering Base58 case', () => {
+  assert.equal(investigationUrl('bitcoin', bitcoin), `/networks/bitcoin/?address=${bitcoin}`);
+  assert.equal(validateAddress('bitcoin', ` ${bitcoin} `), bitcoin);
+  assert.equal(getNetwork('bitcoin').chainId, 'bip122:000000000019d6689c085ae165831e93');
+  const taproot = 'bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr';
+  assert.equal(validateAddress('bitcoin', taproot), taproot);
+  assert.equal(validateAddress('bitcoin', taproot.toUpperCase()), taproot.toUpperCase());
+  for (const invalid of [ethereum, tron, 'tb1qtest', 'bc1Qmixedcase', '../ready', bitcoin + '?x=y']) {
+    assert.throws(() => validateAddress('bitcoin', invalid), /Bitcoin/);
+  }
+});
 
 test('each wallet routes only to its explicit network', () => {
   assert.equal(investigationUrl('tron', tron), `/networks/tron/?address=${tron}`);

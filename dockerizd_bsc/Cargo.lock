@@ -12,6 +12,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "aml_warehouse"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -129,6 +139,7 @@ checksum = "119771309b95163ec7aaf79810da82f7cd0599c19722d48b9c03894dca833966"
 name = "bsc_aml"
 version = "0.1.0"
 dependencies = [
+ "aml_warehouse",
  "anyhow",
  "axum",
  "clickhouse",

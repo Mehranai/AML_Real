@@ -6,7 +6,7 @@ for tool in bash jq openssl tar sha256sum; do command -v "$tool" >/dev/null || {
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 project=$work/project\ with\ spaces
-mkdir -p "$project/scripts" "$project/dockerizd_tron/app" "$project/dockerizd_ethereum/scripts" "$project/dockerizd_bsc/scripts" "$work/bin"
+mkdir -p "$project/scripts" "$project/dockerizd_tron/app" "$project/dockerizd_ethereum/scripts" "$project/dockerizd_bsc/scripts" "$project/dockerizd_bitcoin" "$work/bin"
 cp "$root"/scripts/*.sh "$project/scripts/"
 cp "$root"/dockerizd_ethereum/scripts/*.sh "$project/dockerizd_ethereum/scripts/"
 cp "$root"/dockerizd_bsc/scripts/*.sh "$project/dockerizd_bsc/scripts/"
@@ -97,7 +97,7 @@ for file in "$project"/scripts/*.sh "$project"/dockerizd_{ethereum,bsc}/scripts/
 done
 expect_failure bash "$project/scripts/vm.sh" tron up
 [[ ! -s $MOCK_LOG ]]
-for directory in "$project" "$project/dockerizd_tron/app" "$project/dockerizd_ethereum" "$project/dockerizd_bsc"; do
+for directory in "$project" "$project/dockerizd_tron/app" "$project/dockerizd_ethereum" "$project/dockerizd_bsc" "$project/dockerizd_bitcoin"; do
   printf '# Test configuration\n' > "$directory/.env"
 done
 
@@ -129,9 +129,57 @@ expect_failure bash "$project/scripts/vm.sh" tron logs --build
 expect_failure bash "$project/scripts/vm.sh" tron up --project
 [[ ! -s $MOCK_LOG ]]
 MOCK_DOCKER_EXIT=23 expect_failure bash "$project/scripts/vm.sh" tron up
+reset_log
+bash "$project/scripts/vm.sh" bitcoin up --api-only >/dev/null
+assert_log '.[0] | index("bitcoin-api") != null and index("bitcoin-ingestion") == null'
+reset_log
+bash "$project/scripts/vm.sh" bitcoin check >/dev/null
+assert_log '.[0][-4:] == ["-T","bitcoin-api","bitcoin_aml","--healthcheck"]'
+reset_log
+bash "$project/scripts/aml.sh" up --with-bsc --with-bitcoin --with-ingestion >/dev/null
+assert_log 'length == 5 and (.[3] | index("bitcoin-api") != null and index("bitcoin-ingestion") != null) and (.[4] | index("gateway") != null)'
+reset_log
+for role in tron ethereum bsc bitcoin; do
+  reset_log
+  bash "$project/scripts/vm.sh" "$role" check-schema >/dev/null
+  jq -e --arg role "$role" 'index("exec") != null and index($role + "-api") != null and .[-1] == "--check" and index("up") == null' "$MOCK_LOG" >/dev/null
+  if [[ $role == bitcoin ]]; then assert_log '.[0] | index("bitcoin_init_schema") != null and index("schema") == null'; fi
+done
+reset_log
+expect_failure bash "$project/scripts/vm.sh" main check-schema
+[[ ! -s $MOCK_LOG ]]
+reset_log
+bash "$project/scripts/vm.sh" bitcoin probe --project existing-bitcoin >/dev/null
+assert_log 'length == 1 and (.[0] | index("existing-bitcoin") != null and index("tools") != null and .[-6:] == ["run","--rm","--no-deps","--pull","never","bitcoin-rpc-probe"] and index("up") == null and index("exec") == null and index("--build") == null)'
+reset_log
+for role in main tron ethereum bsc; do expect_failure bash "$project/scripts/vm.sh" "$role" probe; done
+expect_failure bash "$project/scripts/vm.sh" bitcoin probe --build
+expect_failure bash "$project/scripts/vm.sh" bitcoin probe --query 'SELECT 1'
+[[ ! -s $MOCK_LOG ]]
 echo "PASS VM roles, quoting, option combinations, errors and volume preservation"
 
-for role in tron ethereum bsc; do
+reset_log
+bash "$project/scripts/vm.sh" bitcoin failures --status dead_letter --limit 2 --after-block 7 --project existing-bitcoin >/dev/null
+assert_log 'length == 1 and (.[0] | index("tools") != null and index("existing-bitcoin") != null and index("bitcoin-failures") != null and .[-6:] == ["--status","dead_letter","--limit","2","--after-block","7"] and index("--no-deps") != null and index("up") == null)'
+reset_log
+bash "$project/scripts/vm.sh" bitcoin repair --failure-id bitcoin:block:3 --failure-id bitcoin:block:4 --max-blocks 2 >/dev/null
+assert_log 'length == 1 and (.[0] | index("bitcoin-repair") != null and .[-8:] == ["bitcoin_aml","repair","--failure-id","bitcoin:block:3","--failure-id","bitcoin:block:4","--max-blocks","2"] and index("--no-deps") != null and index("up") == null)'
+reset_log
+bash "$project/scripts/vm.sh" bitcoin scan-gaps --from-block 0 --to-block 9 --max-blocks 10 >/dev/null
+assert_log 'length == 1 and (.[0] | index("bitcoin-repair") != null and .[-8:] == ["bitcoin_aml","scan-gaps","--from-block","0","--to-block","9","--max-blocks","10"] and index("--no-deps") != null and index("up") == null)'
+reset_log
+for action in failures repair scan-gaps; do
+  for role in main tron ethereum bsc; do expect_failure bash "$project/scripts/vm.sh" "$role" "$action"; done
+done
+expect_failure bash "$project/scripts/vm.sh" bitcoin up --failure-id bitcoin:block:1
+expect_failure bash "$project/scripts/vm.sh" bitcoin repair --limit 3
+expect_failure bash "$project/scripts/vm.sh" bitcoin scan-gaps --failure-id bitcoin:block:1
+expect_failure bash "$project/scripts/vm.sh" bitcoin failures --build
+expect_failure bash "$project/scripts/vm.sh" bitcoin failures --status
+[[ ! -s $MOCK_LOG ]]
+echo "PASS Bitcoin failure/repair/gap commands, selection flags and no dependency startup"
+
+for role in tron ethereum bsc bitcoin; do
   reset_log
   bash "$project/scripts/vm.sh" "$role" pause >/dev/null
   assert_log 'length == 1 and (.[0] | index("stop") != null and index("--timeout") != null and index("150") != null and index("clickhouse") == null and index("down") == null)'
@@ -169,7 +217,7 @@ for action in up pause pause-ingestion resume; do
 done
 echo "PASS TRON analytics participates in full startup, pause and resume"
 
-for role in main tron ethereum bsc; do
+for role in main tron ethereum bsc bitcoin; do
   reset_log
   bash "$project/scripts/vm.sh" "$role" check-runtime >/dev/null
   assert_log 'any(.[]; index("inspect") != null) and any(.[]; index("exec") != null)'

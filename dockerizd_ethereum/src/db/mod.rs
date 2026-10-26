@@ -1,4 +1,4 @@
 mod migrations;
 mod sql;
 
-pub use migrations::{database_client, initialize_ethereum_schema};
+pub use migrations::{check_ethereum_schema, database_client, initialize_ethereum_schema};

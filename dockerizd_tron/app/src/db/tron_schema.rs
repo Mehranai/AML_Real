@@ -3,6 +3,7 @@ use clickhouse::Client;
 use serde::Deserialize;
 
 const TRON_DB: &str = "tron_db";
+aml_warehouse::clickhouse_connection!(SharedWarehouseConnection);
 const BASELINE_SQL: &str = include_str!("../../sql/init_database_tron.sql");
 const CREATE_PREFIXES: [&str; 3] = [
     "CREATE TABLE IF NOT EXISTS tron_db.",
@@ -14,6 +15,26 @@ pub async fn validate_tron_schema(client: &Client) -> anyhow::Result<()> {
     upgrade_committed_views(client).await?;
     validate_baseline_schemas(client).await?;
     validate_retired_objects_absent(client).await?;
+    aml_warehouse::initialize(
+        &SharedWarehouseConnection(client),
+        TRON_DB,
+        aml_warehouse::Network::Tron,
+    )
+    .await
+    .context("shared TRON warehouse schema failed")?;
+    Ok(())
+}
+
+/// Explicit read-only operation, unlike startup's legacy view upgrade path.
+pub async fn check_tron_schema(client: &Client) -> anyhow::Result<()> {
+    validate_baseline_schemas(client).await?;
+    validate_retired_objects_absent(client).await?;
+    aml_warehouse::validate(
+        &SharedWarehouseConnection(client),
+        TRON_DB,
+        aml_warehouse::Network::Tron,
+    )
+    .await?;
     Ok(())
 }
 

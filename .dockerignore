@@ -16,3 +16,7 @@
 !dockerizd_bsc/
 !dockerizd_bsc/web/
 !dockerizd_bsc/web/index.html
+!dockerizd_bitcoin/
+!dockerizd_bitcoin/web/
+!dockerizd_bitcoin/web/index.html
+!dockerizd_bitcoin/web/bitcoin.js

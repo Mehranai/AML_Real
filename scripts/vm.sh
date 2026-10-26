@@ -2,7 +2,10 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 {main|tron|ethereum|bsc} {up|down|ps|logs|check|check-runtime|pause|pause-ingestion|resume|db} [--build] [--api-only] [--offline] [--pull-never] [--project NAME] [--query SQL]"
+  echo "Usage: $0 {main|tron|ethereum|bsc|bitcoin} {up|down|ps|logs|check|check-runtime|check-schema|probe|failures|scan-gaps|repair|pause|pause-ingestion|resume|db} [--build] [--api-only] [--offline] [--pull-never] [--project NAME] [--query SQL]"
+  echo "Bitcoin probe: read-only RPC diagnostics; no database or ingestion is started."
+  echo "Bitcoin failures: [--status STATUS] [--from-block N] [--to-block N] [--after-block N] [--limit N]."
+  echo "Bitcoin scan-gaps: --from-block N --to-block M --max-blocks N; repair: --failure-id bitcoin:block:N [--failure-id bitcoin:block:M] --max-blocks N. Pause ingestion first."
   echo "Chain controls: pause stops apps only; pause-ingestion stops background workers; resume starts apps without touching database containers; db is read-only."
 }
 fail() { echo "$*" >&2; exit 2; }
@@ -19,6 +22,7 @@ pull_never=false
 project_override=
 query=
 query_set=false
+tool_args=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build) build=true; shift ;;
@@ -31,14 +35,22 @@ while [[ $# -gt 0 ]]; do
     --project)
       [[ $# -ge 2 && $2 =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail "--project requires a valid Compose project name"
       project_override=$2; shift 2 ;;
+    --failure-id|--max-blocks|--from-block|--to-block|--after-block|--status|--limit)
+      [[ $# -ge 2 && -n $2 && $2 != --* ]] || fail "$1 requires a value"
+      case "$action:$1" in
+        repair:--failure-id|repair:--max-blocks|scan-gaps:--from-block|scan-gaps:--to-block|scan-gaps:--max-blocks|failures:--from-block|failures:--to-block|failures:--after-block|failures:--status|failures:--limit) ;;
+        *) fail "$1 is not valid with $action" ;;
+      esac
+      tool_args+=("$1" "$2"); shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) fail "Unknown option: $1" ;;
   esac
 done
-case "$action" in up|down|ps|logs|check|check-runtime|pause|pause-ingestion|resume|db) ;; *) fail "Unknown action: $action" ;; esac
+case "$action" in up|down|ps|logs|check|check-runtime|check-schema|probe|failures|scan-gaps|repair|pause|pause-ingestion|resume|db) ;; *) fail "Unknown action: $action" ;; esac
+case "$action" in probe|failures|scan-gaps|repair) [[ $role == bitcoin ]] || fail "$action currently supports only bitcoin" ;; esac
 [[ $query_set == false || $action == db ]] || fail "--query is valid only with db"
 case "$action" in
-  pause|pause-ingestion|resume|db) [[ $role != main ]] || fail "$action requires a chain role" ;;
+  pause|pause-ingestion|resume|db|check-schema) [[ $role != main ]] || fail "$action requires a chain role" ;;
 esac
 if [[ $action != up ]] && { $build || $api_only || $pull_never; }; then
   fail "Build, API-only and pull options are valid only with up"
@@ -54,19 +66,29 @@ case "$role" in
     database=tron_db; workers=(tron-ingestion tron-token-metadata-worker tron-analytics)
     services=(tron-api tron-ingestion tron-token-metadata-worker tron-analytics); probe_service=tron-api
     probe=(curl --fail --silent --show-error http://127.0.0.1:4001/ready)
+    schema_check=(tron_schema --check)
     if $api_only; then services=(tron-api); fi ;;
   ethereum)
     directory=$root/dockerizd_ethereum; file=docker-compose.yml; project=aml-ethereum
     database=ethereum_aml; workers=(ethereum-ingestion ethereum-token-metadata ethereum-analytics)
     services=(ethereum-api ethereum-ingestion ethereum-token-metadata ethereum-analytics); probe_service=ethereum-api
     probe=(ethereum_healthcheck)
+    schema_check=(ethereum_init_schema --check)
     if $api_only; then services=(ethereum-api); fi ;;
   bsc)
     directory=$root/dockerizd_bsc; file=docker-compose.yml; project=aml-bsc
     database=bsc_aml; workers=(bsc-follow bsc-token-metadata)
     services=(bsc-api bsc-follow bsc-token-metadata); probe_service=bsc-api
     probe=(bsc_api --healthcheck)
+    schema_check=(bsc_schema --check)
     if $api_only; then services=(bsc-api); fi ;;
+  bitcoin)
+    directory=$root/dockerizd_bitcoin; file=docker-compose.yml; project=aml-bitcoin
+    database=bitcoin_aml; workers=(bitcoin-ingestion)
+    services=(bitcoin-api bitcoin-ingestion); probe_service=bitcoin-api
+    probe=(bitcoin_aml --healthcheck)
+    schema_check=(bitcoin_init_schema --check)
+    if $api_only; then services=(bitcoin-api); fi ;;
   *) fail "Unknown role: $role" ;;
 esac
 [[ $role != main || $api_only == false ]] || fail "--api-only requires a chain role"
@@ -77,6 +99,7 @@ env_file=$directory/.env
 command -v docker >/dev/null || fail "Docker with Compose v2 is required"
 compose=(docker compose --project-directory "$directory" --project-name "$project" --file "$directory/$file" --env-file "$env_file")
 if [[ $role == bsc ]]; then compose+=(--profile runtime); fi
+case "$action" in probe|failures|scan-gaps|repair) compose+=(--profile tools) ;; esac
 if $offline; then compose+=(--file "$directory/docker-compose.offline.yml"); fi
 db_client() {
   local options=(exec)
@@ -110,6 +133,10 @@ case "$action" in
     echo "$role apps started using existing images and checkpoints. Database containers were not restarted." ;;
   db)
     if $query_set; then db_client --query "$query"; else db_client; fi ;;
+  check-schema) "${compose[@]}" exec -T "$probe_service" "${schema_check[@]}" ;;
+  probe) "${compose[@]}" run --rm --no-deps --pull never bitcoin-rpc-probe ;;
+  failures) "${compose[@]}" run --rm --no-deps --pull never bitcoin-failures bitcoin_aml failures "${tool_args[@]}" ;;
+  repair|scan-gaps) "${compose[@]}" run --rm --no-deps --pull never bitcoin-repair bitcoin_aml "$action" "${tool_args[@]}" ;;
   ps) "${compose[@]}" ps -a ;;
   logs) "${compose[@]}" logs --tail 150 ;;
   check|check-runtime)

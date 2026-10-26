@@ -1,10 +1,4 @@
-# Private settings stay ignored; only the four reviewed shared demo files are allowed.
-!.env.example
-!.env.*.example
-!/.env
-!/dockerizd_tron/app/.env
-!/dockerizd_ethereum/.env
-!/dockerizd_bsc/.env
+# Local environment files are private; commit only example templates.
 .envrc
 secrets/
 .secrets/
@@ -17,6 +11,13 @@ credentials/
 *.keystore
 .npmrc
 .pypirc
+.netrc
+.ssh/
+.gnupg/
+.aws/
+.azure/
+**/.cargo/credentials
+**/.cargo/credentials.toml
 
 # Local coding-assistant state and instructions
 .codex/
@@ -58,6 +59,10 @@ venv/
 *.dylib
 *.rlib
 *.rmeta
+*.o
+*.obj
+*.a
+*.lib
 *.dSYM/
 
 # Test and profiling output; keep test source and fixtures
@@ -81,10 +86,14 @@ tmp/
 temp/
 *.log
 *.pid
+*.pid.lock
+*.sock
 *.tmp
 *.swp
 *.swo
 *.bak
+*.orig
+*.rej
 
 # Local blockchain/database runtime data and backups
 clickhouse-data/
@@ -94,6 +103,12 @@ geth-data/
 prysm-data/
 tron-data/
 tron-logs/
+bitcoin-data/
+bitcoind-data/
+bitcoin-core-data/
+.bitcoin/
+wallet.dat
+wallet.dat.*
 node-data/
 backups/
 exports/
@@ -102,6 +117,13 @@ deployment-artifacts/
 .local-vms/
 *.dump
 *.sql.gz
+*.sql.zst
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
 *.parquet
 *.arrow
 
@@ -110,12 +132,14 @@ deployment-artifacts/
 *.pth
 *.onnx
 *.ckpt
+*.safetensors
 checkpoints/
 runs/
 
 # Generated archives and VM disks; keep checksum manifests and build scripts
 *.tar
 *.tar.gz
+*.tar.zst
 *.tgz
 *.zip
 *.7z
@@ -126,9 +150,10 @@ runs/
 *.vmdk
 *.qcow2
 
-# Keep Cargo.lock, package-lock.json, SQL, Dockerfiles, tests and delivery docs.
+# Keep source, migrations/legacy SQL, fixtures, schema snapshots, examples,
+# Cargo.lock, package-lock.json, Dockerfiles, deployment scripts and public docs.
 
-# Required empty authentication placeholder used by Compose
+# Required non-secret disabled-auth placeholder used by Compose
 !/gateway/auth/disabled.htpasswd
 
 # Superseded local implementation notes

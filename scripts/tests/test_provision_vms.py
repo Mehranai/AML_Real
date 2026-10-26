@@ -83,9 +83,11 @@ class ProvisionTests(unittest.TestCase):
         self.write("dockerizd_tron/app/sql/init_database_tron.sql", "SELECT 1;\r\n")
         for role, directory in vm.DIRECTORIES.items():
             password_key = ("NEO4J_PASSWORD" if role == "main" else
-                            "BSC_CLICKHOUSE_PASSWORD" if role == "bsc" else "CLICKHOUSE_PASSWORD")
+                            "BSC_CLICKHOUSE_PASSWORD" if role == "bsc" else
+                            "BITCOIN_CLICKHOUSE_PASSWORD" if role == "bitcoin" else "CLICKHOUSE_PASSWORD")
             self.write(f"{directory}/.env",
-                       f"{password_key}=test-password\nAML_SERVICE_KEY=" + "x" * 40 + "\n")
+                       f"{password_key}=test-password\nAML_SERVICE_KEY=" + "x" * 40 + "\n" +
+                       ("BITCOIN_RPC_URL=http://node:8332\nBITCOIN_RPC_USER=test\nBITCOIN_RPC_PASSWORD=rpc-test\n" if role == "bitcoin" else ""))
             self.write(f"{directory}/" + ("compose.yaml" if role == "main" else "docker-compose.yml"),
                        "services: {}\r\n")
         self.bundle = self.root / "bundle"
@@ -157,7 +159,7 @@ class ProvisionTests(unittest.TestCase):
             self.app().up()
         self.assertFalse(self.launches())
 
-    def test_bundle_must_include_all_seven_images(self):
+    def test_bundle_must_include_all_eight_images(self):
         self.entries.pop()
         self.manifest()
         with self.assertRaisesRegex(vm.DeploymentError, "Incomplete"):
@@ -223,22 +225,59 @@ class ProvisionTests(unittest.TestCase):
             usage.assert_called_once_with(self.root)
         self.assertFalse(self.launches())
 
-    def test_fresh_up_creates_exactly_four_and_preserves_source_env(self):
+    def test_fresh_up_creates_exactly_five_and_preserves_source_env(self):
         original = (self.root / ".env").read_bytes()
         self.app().up()
-        self.assertEqual(len(self.launches()), 4)
+        self.assertEqual(len(self.launches()), 5)
         self.assertEqual((self.root / ".env").read_bytes(), original)
         self.assertIn("AML_BSC_UPSTREAM='http://192.168.64.13:6001'", self.runner.envs["aml-test-main"])
         ups = [call for call in self.runner.calls if "up" in call]
-        self.assertEqual([call[call.index("up") - 1] for call in ups], ["tron", "ethereum", "bsc", "main"])
-        for call in ups[:3]:
+        self.assertEqual([call[call.index("up") - 1] for call in ups], ["tron", "ethereum", "bsc", "bitcoin", "main"])
+        for call in ups[:4]:
             self.assertIn("--api-only", call)
         checks = [call for call in self.runner.calls if "check-runtime" in call]
         self.assertTrue(checks)
         self.assertTrue(all(call[call.index("check-runtime") - 1] == "main" for call in checks))
         self.assertTrue(all("--pull-never" in call for call in ups))
-        self.assertEqual(len([call for call in self.runner.calls if "curl" in call]), 3)
+        self.assertEqual(len([call for call in self.runner.calls if "curl" in call]), 4)
         self.assertFalse(any(call[1] in ("delete", "purge") for call in self.runner.calls))
+
+    def test_bitcoin_rpc_is_required_before_allocating_ingestion_vms(self):
+        self.args.with_ingestion = True
+        path = self.root / "dockerizd_bitcoin/.env"
+        path.write_text(path.read_text().replace("BITCOIN_RPC_PASSWORD=rpc-test", "BITCOIN_RPC_PASSWORD="))
+        with self.assertRaises(vm.DeploymentError):
+            self.app().up()
+        self.assertFalse(self.launches())
+
+    def test_bitcoin_rpc_rotation_does_not_change_database_identity(self):
+        original = vm.source_environments(self.root)
+        changed = copy.deepcopy(original)
+        changed["bitcoin"]["BITCOIN_RPC_PASSWORD"] = "rotated-rpc-password"
+        self.assertEqual(vm.credential_fingerprint(original), vm.credential_fingerprint(changed))
+
+    def test_existing_four_vm_state_can_add_only_bitcoin(self):
+        previous = copy.deepcopy(self.config)
+        del previous["roles"]["bitcoin"]
+        environments = vm.source_environments(self.root)
+        legacy_environments = {role: values for role, values in environments.items() if role != "bitcoin"}
+        state = {"owner":"legacy-owner", "config":previous,
+                 "credentials":vm.credential_fingerprint(legacy_environments), "with_ingestion":False}
+        vm.atomic_json(self.root / ".local-vms/state.json", state)
+        for role in previous["roles"]:
+            self.runner.instances[f"aml-test-{role}"] = {"state":"Running",
+                "owner":{"owner":"legacy-owner","role":role},
+                "ip":f"192.168.64.{10 + vm.ROLES.index(role)}"}
+        self.app().up()
+        self.assertEqual(len(self.launches()), 1)
+        self.assertEqual(self.launches()[0][self.launches()[0].index("--name") + 1], "aml-test-bitcoin")
+        current = self.app().state
+        self.assertEqual(current["owner"], "legacy-owner")
+        self.assertEqual(current["config"], self.config)
+        self.assertIn("AML_BITCOIN_UPSTREAM='http://192.168.64.14:6101'", self.runner.envs["aml-test-main"])
+        changed = copy.deepcopy(self.config)
+        changed["roles"]["tron"]["memory_gib"] += 1
+        self.assertFalse(vm.compatible_bitcoin_addition(previous, changed))
 
     def test_each_vm_receives_only_its_own_image_archives(self):
         self.app().up()
@@ -251,7 +290,7 @@ class ProvisionTests(unittest.TestCase):
         self.app().up()
         owner = self.app().state["owner"]
         self.app().up()
-        self.assertEqual(len(self.launches()), 4)
+        self.assertEqual(len(self.launches()), 5)
         self.assertEqual(self.app().state["owner"], owner)
 
     def test_stop_and_restart_retain_all_vms(self):
@@ -259,8 +298,8 @@ class ProvisionTests(unittest.TestCase):
         self.app().stop()
         self.assertTrue(all(item["state"] == "Stopped" for item in self.runner.instances.values()))
         self.app().up()
-        self.assertEqual(len(self.launches()), 4)
-        self.assertEqual(len([call for call in self.runner.calls if call[1] == "start"]), 4)
+        self.assertEqual(len(self.launches()), 5)
+        self.assertEqual(len([call for call in self.runner.calls if call[1] == "start"]), 5)
 
     def test_no_adoption_of_existing_names(self):
         self.runner.instances["aml-test-tron"] = {"state": "Running", "owner": {}, "ip": "192.168.64.11"}
@@ -279,11 +318,11 @@ class ProvisionTests(unittest.TestCase):
         self.runner.fail_up = "ethereum"
         with self.assertRaisesRegex(vm.DeploymentError, "Injected"):
             self.app().up()
-        self.assertEqual(len(self.launches()), 4)
+        self.assertEqual(len(self.launches()), 5)
         self.assertTrue((self.root / ".local-vms/state.json").exists())
         self.assertFalse((self.root / ".local-vms/operation.lock").exists())
         self.app().up()
-        self.assertEqual(len(self.launches()), 4)
+        self.assertEqual(len(self.launches()), 5)
 
     def test_changed_ip_requires_up_and_then_refreshes_routing(self):
         self.app().up()
@@ -345,16 +384,16 @@ class ProvisionTests(unittest.TestCase):
 
         app = vm.Provisioner(self.args, self.root, docker)
         directory, entries = app.images()
-        self.assertEqual(len(saves), 7)
-        app.images()
-        self.assertEqual(len(saves), 7)
-        (directory / entries[vm.ALL_IMAGES[0]]["file"]).write_bytes(b"corrupt")
+        self.assertEqual(len(saves), 8)
         app.images()
         self.assertEqual(len(saves), 8)
+        (directory / entries[vm.ALL_IMAGES[0]]["file"]).write_bytes(b"corrupt")
+        app.images()
+        self.assertEqual(len(saves), 9)
         identity[0] = "sha256:updated"
         app.images()
-        self.assertEqual(len(saves), 15)
-        self.assertEqual(len(vm.verify_bundle(directory)), 7)
+        self.assertEqual(len(saves), 17)
+        self.assertEqual(len(vm.verify_bundle(directory)), 8)
 
     def test_wrong_image_platform_is_rejected(self):
         self.args.bundle = None
@@ -439,7 +478,7 @@ class ProvisionTests(unittest.TestCase):
         self.app().up()
         owner = self.app().state["owner"]
         stale.up()
-        self.assertEqual(len(self.launches()), 4)
+        self.assertEqual(len(self.launches()), 5)
         self.assertEqual(stale.state["owner"], owner)
 
 

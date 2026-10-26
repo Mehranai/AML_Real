@@ -41,6 +41,7 @@ services:
       AML_TRON_UPSTREAM: ${AML_TRON_UPSTREAM:-http://host.docker.internal:4001}
       AML_ETHEREUM_UPSTREAM: ${AML_ETHEREUM_UPSTREAM:-http://host.docker.internal:5001}
       AML_BSC_UPSTREAM: ${AML_BSC_UPSTREAM:-http://host.docker.internal:6001}
+      AML_BITCOIN_UPSTREAM: ${AML_BITCOIN_UPSTREAM:-http://host.docker.internal:6101}
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       neo4j: {condition: service_healthy}
@@ -72,10 +73,11 @@ services:
       AML_TRON_UPSTREAM: ${AML_TRON_UPSTREAM:-http://host.docker.internal:4001}
       AML_ETHEREUM_UPSTREAM: ${AML_ETHEREUM_UPSTREAM:-http://host.docker.internal:5001}
       AML_BSC_UPSTREAM: ${AML_BSC_UPSTREAM:-http://host.docker.internal:6001}
+      AML_BITCOIN_UPSTREAM: ${AML_BITCOIN_UPSTREAM:-http://host.docker.internal:6101}
       AML_SERVICE_KEY: ${AML_SERVICE_KEY:?Set AML_SERVICE_KEY in .env}
       AML_BASIC_AUTH_REALM: ${AML_BASIC_AUTH_REALM:-off}
       NGINX_ENVSUBST_OUTPUT_DIR: /tmp
-      NGINX_ENVSUBST_FILTER: ^AML_((TRON|ETHEREUM|BSC)_UPSTREAM|SERVICE_KEY|BASIC_AUTH_REALM)$$
+      NGINX_ENVSUBST_FILTER: ^AML_((TRON|ETHEREUM|BSC|BITCOIN)_UPSTREAM|SERVICE_KEY|BASIC_AUTH_REALM)$$
     volumes:
       - "${AML_HTPASSWD_FILE:-./gateway/auth/disabled.htpasswd}:/etc/nginx/auth/htpasswd:ro"
     extra_hosts:

@@ -4,11 +4,13 @@ set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 output=$root/deployment-artifacts
 include_bsc=false
+include_bitcoin=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output) [[ $# -ge 2 && -n $2 ]] || exit 2; output=$2; shift 2 ;;
     --include-bsc) include_bsc=true; shift ;;
-    --help|-h) echo "Usage: $0 [--output DIRECTORY] [--include-bsc]"; exit 0 ;;
+    --include-bitcoin) include_bitcoin=true; shift ;;
+    --help|-h) echo "Usage: $0 [--output DIRECTORY] [--include-bsc] [--include-bitcoin]"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -16,6 +18,7 @@ for tool in docker jq sha256sum; do command -v "$tool" >/dev/null || { echo "Req
 images=(aml-whole-gateway:local aml-analytical-node:local tron-aml-service:local ethereum-aml-service:local clickhouse/clickhouse-server:23.8 neo4j:5.26-community)
 files=(aml-whole-gateway_local.tar aml-analytical-node_local.tar tron-aml-service_local.tar ethereum-aml-service_local.tar clickhouse-server_23.8.tar neo4j_5.26-community.tar)
 if $include_bsc; then images+=(bsc-aml-service:local); files+=(bsc-aml-service_local.tar); fi
+if $include_bitcoin; then images+=(bitcoin-aml-service:local); files+=(bitcoin-aml-service_local.tar); fi
 for image in "${images[@]}"; do docker image inspect "$image" >/dev/null; done
 mkdir -p -- "$output"
 output=$(cd -- "$output" && pwd)

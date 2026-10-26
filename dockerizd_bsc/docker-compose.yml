@@ -51,6 +51,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      additional_contexts:
+        warehouse_source: ../shared/warehouse
     command: ["bsc_schema"]
     restart: "no"
     init: true
@@ -74,6 +76,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      additional_contexts:
+        warehouse_source: ../shared/warehouse
     profiles: ["tools"]
     command: ["bsc_ingest"]
     restart: "no"
@@ -206,7 +210,11 @@ services:
 
   bsc-api:
     image: bsc-aml-service:${BSC_APP_IMAGE_TAG:-local}
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        warehouse_source: ../shared/warehouse
     command: ["bsc_api"]
     restart: unless-stopped
     init: true
@@ -235,7 +243,11 @@ services:
 
   bsc-token-metadata:
     image: bsc-aml-service:${BSC_APP_IMAGE_TAG:-local}
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        warehouse_source: ../shared/warehouse
     profiles: ["runtime"]
     command: ["bsc_token_metadata_worker", "--follow"]
     restart: unless-stopped

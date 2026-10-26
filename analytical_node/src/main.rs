@@ -99,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
         ("tron", "AML_TRON_UPSTREAM"),
         ("ethereum", "AML_ETHEREUM_UPSTREAM"),
         ("bsc", "AML_BSC_UPSTREAM"),
+        ("bitcoin", "AML_BITCOIN_UPSTREAM"),
     ] {
         let url = required(env)?;
         let parsed = reqwest::Url::parse(&url)?;
@@ -325,6 +326,8 @@ async fn create(
         "tron:mainnet"
     } else if network == "bsc" {
         "eip155:56"
+    } else if network == "bitcoin" {
+        "bip122:000000000019d6689c085ae165831e93"
     } else {
         "eip155:1"
     };
@@ -364,7 +367,14 @@ async fn create(
 }
 
 fn valid_address(network: &str, address: &str) -> bool {
-    if matches!(network, "ethereum" | "bsc") {
+    if network == "bitcoin" {
+        // Full checksum and network validation is performed by the Bitcoin adapter.
+        (26..=90).contains(&address.len())
+            && (address.starts_with('1')
+                || address.starts_with('3')
+                || address.to_ascii_lowercase().starts_with("bc1"))
+            && address.bytes().all(|b| b.is_ascii_alphanumeric())
+    } else if matches!(network, "ethereum" | "bsc") {
         address.len() == 42
             && address.starts_with("0x")
             && address[2..].bytes().all(|b| b.is_ascii_hexdigit())
@@ -399,6 +409,7 @@ fn normalize_graph(
         ensure!(!address.is_empty(), "empty graph node");
         nodes.insert(address.to_string(),json!({"key":key(address),"address":address,
             "subject_key":format!("{network_id}:{address}"),"label":node.get("label").unwrap_or(&json!(address)),
+            "node_type":node.get("node_type").unwrap_or(&json!("address")),
             "evidence_json":node.to_string()}));
     }
     let mut edges = Vec::new();
@@ -502,6 +513,29 @@ async fn export(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bitcoin_preserves_transaction_nodes_and_satoshi_evidence() {
+        let data = serde_json::json!({"graph":{"nodes":[
+            {"address":"1BoatSLRHtKNngkdXEeobR76b53LETtpyT","node_type":"address"},
+            {"address":"tx:abc","node_type":"transaction"}],
+            "edges":[{"id":"abc:in:0","from_address":"1BoatSLRHtKNngkdXEeobR76b53LETtpyT",
+                "to_address":"tx:abc","amount":"2100000000000000","asset_id":"native:BTC","tx_hash":"abc","transfer_type":"utxo_input"}]}});
+        let (nodes, edges) = super::normalize_graph(
+            "snapshot",
+            "bip122:000000000019d6689c085ae165831e93",
+            "bitcoin",
+            &data,
+        )
+        .unwrap();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(edges[0]["amount"], "2100000000000000");
+        assert_eq!(edges[0]["to_address"], "tx:abc");
+        assert!(super::valid_address(
+            "bitcoin",
+            "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
+        ));
+        assert!(!super::valid_address("bitcoin", "tb1qtest"));
+    }
     use super::*;
     #[test]
     fn network_and_investigation_scoping() {

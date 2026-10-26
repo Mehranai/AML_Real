@@ -37,6 +37,8 @@ x-tron-service: &tron-service
   build:
     context: .
     dockerfile: Dockerfile
+    additional_contexts:
+      warehouse_source: ../../shared/warehouse
   restart: unless-stopped
   init: true
   read_only: true

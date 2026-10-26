@@ -5,6 +5,7 @@ edition = "2024"
 default-run = "ethereum_ingestor"
 
 [dependencies]
+aml_warehouse = { path = "../shared/warehouse" }
 alloy = { version = "=1.8.3", default-features = false, features = [
     "std",
     "provider-http",

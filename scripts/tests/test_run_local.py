@@ -38,6 +38,8 @@ class LocalRunnerTests(unittest.TestCase):
             runner = local.LocalRunner()
         self.assertEqual(runner.environments["tron"]["CLICKHOUSE_PASSWORD"], "existing-password")
         self.assertEqual(runner.environments["bsc"]["BSC_CLICKHOUSE_PASSWORD"], "existing-password")
+        self.assertEqual(runner.environments["bitcoin"]["BITCOIN_CLICKHOUSE_PASSWORD"], "existing-password")
+        self.assertEqual(runner.environments["main"]["AML_BITCOIN_UPSTREAM"], "http://host.docker.internal:6101")
         self.assertEqual(runner.environments["main"]["NEO4J_PASSWORD"], "existing-neo4j-password")
         self.assertEqual(runner.environments["main"]["AML_ETHEREUM_UPSTREAM"], "http://host.docker.internal:15001")
         self.assertEqual(runner.environments["ethereum"]["ETHEREUM_API_PORT"], "15001")
@@ -52,7 +54,7 @@ class LocalRunnerTests(unittest.TestCase):
                 runner.up()
                 check.assert_called_once_with(wait=True)
         starts = [command for command, _ in self.commands if "up" in command]
-        self.assertEqual([command[-1] for command in starts], ["tron-api", "ethereum-api", "bsc-api", "gateway"])
+        self.assertEqual([command[-1] for command in starts], ["tron-api", "ethereum-api", "bsc-api", "bitcoin-api", "gateway"])
         for command in starts:
             self.assertIn("--no-build", command)
             self.assertIn("never", command)
@@ -63,10 +65,10 @@ class LocalRunnerTests(unittest.TestCase):
             runner = local.LocalRunner()
             with patch.object(local.urllib.request, "build_opener") as build:
                 build.return_value.open.return_value.__enter__.side_effect = [
-                    io.BytesIO(b'{"status":"ready"}') for _ in range(4)]
+                    io.BytesIO(b'{"status":"ready"}') for _ in range(5)]
                 runner.check()
                 self.assertEqual(build.call_args.args[0].proxies, {})
-                self.assertEqual(build.return_value.open.call_count, 4)
+                self.assertEqual(build.return_value.open.call_count, 5)
 
     def test_full_start_includes_all_workers_and_bsc_runtime_profile(self):
         with patch.object(local.subprocess, "run", side_effect=self.docker), redirect_stdout(io.StringIO()):

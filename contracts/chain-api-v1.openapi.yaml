@@ -4,13 +4,52 @@ info:
   version: 1.0.0
   description: >-
     Contract between the main AML gateway and an isolated blockchain VM. A chain VM owns its
-    node/RPC access, ingestion workers, ClickHouse and Neo4j. The gateway never connects to those
-    databases directly.
+    node/RPC access, ingestion workers and an isolated ClickHouse database. The main VM
+    owns the Analytical Node and central Neo4j. The gateway never connects to ClickHouse directly.
 servers:
   - url: http://chain-api.internal
 security:
   - ServiceKey: []
 paths:
+  /api/bitcoin/ingestion/failures:
+    get:
+      operationId: listBitcoinIngestionFailures
+      description: Latest persisted operational failure state in the Bitcoin VM. Read-only; does not trigger repair or assert data freshness.
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [retry, dead_letter, repairing, gap, resolved] }
+        - name: from_block
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 4294967295 }
+        - name: to_block
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 4294967295 }
+        - name: after_block
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 4294967295 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Failure rows ordered by block_number; next_after_block is null when no more rows remain. Concurrent operational changes may affect subsequent pages.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [network_id, failures, truncated, next_after_block, scope]
+                properties:
+                  network_id: { type: string }
+                  failures:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+                  truncated: { type: boolean }
+                  next_after_block: { type: [integer, "null"] }
+                  scope: { type: string, const: latest_persisted_failure_state }
+        "400": { description: Invalid status, range or limit. }
+        "401": { description: Missing or invalid service key. }
+        "503": { description: Persisted failure state unavailable. }
   /health:
     get:
       security: []
@@ -54,7 +93,7 @@ paths:
   /api/{network}/wallet/{address}/neo4j/import:
     post:
       operationId: projectWalletGraph
-      description: Explicitly projects the selected persisted evidence into chain-local Neo4j.
+      description: Legacy projection endpoint; main gateway returns 410. Export the central investigation by its ID instead.
       parameters:
         - $ref: "#/components/parameters/Network"
         - $ref: "#/components/parameters/Address"
@@ -96,7 +135,7 @@ components:
       required: true
       schema:
         type: string
-        enum: [tron, ethereum, bsc]
+        enum: [tron, ethereum, bsc, bitcoin]
     Address:
       name: address
       in: path

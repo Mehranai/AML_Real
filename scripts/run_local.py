@@ -15,12 +15,14 @@ STACKS = {
     "tron": ("app", "dockerizd_tron/app", "docker-compose.yml", "tron-api"),
     "ethereum": ("dockerizd_ethereum", "dockerizd_ethereum", "docker-compose.yml", "ethereum-api"),
     "bsc": ("dockerizd_bsc", "dockerizd_bsc", "docker-compose.yml", "bsc-api"),
+    "bitcoin": ("dockerizd_bitcoin", "dockerizd_bitcoin", "docker-compose.yml", "bitcoin-api"),
     "main": ("aml-whole", ".", "compose.yaml", "gateway"),
 }
 WORKERS = {
     "tron": ("tron-ingestion", "tron-token-metadata-worker", "tron-analytics"),
     "ethereum": ("ethereum-ingestion", "ethereum-token-metadata", "ethereum-analytics"),
     "bsc": ("bsc-follow", "bsc-token-metadata"),
+    "bitcoin": ("bitcoin-ingestion",),
 }
 
 
@@ -30,12 +32,13 @@ class LocalRunner:
         common = dict(os.environ)
         common.update(
             AML_BIND_ADDRESS="127.0.0.1", AML_PORT="8080",
-            API_BIND_ADDRESS="127.0.0.1", BSC_API_BIND_ADDRESS="127.0.0.1",
+            API_BIND_ADDRESS="127.0.0.1", BSC_API_BIND_ADDRESS="127.0.0.1", BITCOIN_API_BIND_ADDRESS="127.0.0.1",
             DATABASE_BIND_ADDRESS="127.0.0.1", DOCKER_BIND_ADDRESS="127.0.0.1",
-            TRON_API_PORT="4001", ETHEREUM_API_PORT="15001", BSC_API_PORT="6001",
+            TRON_API_PORT="4001", ETHEREUM_API_PORT="15001", BSC_API_PORT="6001", BITCOIN_API_PORT="6101",
             AML_TRON_UPSTREAM="http://host.docker.internal:4001",
             AML_ETHEREUM_UPSTREAM="http://host.docker.internal:15001",
             AML_BSC_UPSTREAM="http://host.docker.internal:6001",
+            AML_BITCOIN_UPSTREAM="http://host.docker.internal:6101",
             AML_SERVICE_AUTH_REQUIRED="true",
         )
         self.environments = {role: dict(common) for role in STACKS}
@@ -58,7 +61,7 @@ class LocalRunner:
                 if auth.startswith("neo4j/"):
                     self.environments[role]["NEO4J_PASSWORD"] = auth.split("/", 1)[1]
             else:
-                prefix = "BSC_" if role == "bsc" else ""
+                prefix = "BSC_" if role == "bsc" else "BITCOIN_" if role == "bitcoin" else ""
                 for key in ("CLICKHOUSE_USER", "CLICKHOUSE_PASSWORD"):
                     if key in previous:
                         self.environments[role][prefix + key] = previous[key]
@@ -121,7 +124,7 @@ class LocalRunner:
 
     def check(self, wait=False):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        for route in ("/ready", "/networks/tron/ready", "/networks/ethereum/ready", "/networks/bsc/ready"):
+        for route in ("/ready", "/networks/tron/ready", "/networks/ethereum/ready", "/networks/bsc/ready", "/networks/bitcoin/ready"):
             for attempt in range(90 if wait else 1):
                 try:
                     with opener.open("http://127.0.0.1:8080" + route, timeout=10) as response:
@@ -141,7 +144,7 @@ class LocalRunner:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", nargs="?", default="up", choices=("up", "check", "status", "stop"))
-    parser.add_argument("--with-ingestion", action="store_true", help="start ingestion and automatic workers for all three networks")
+    parser.add_argument("--with-ingestion", action="store_true", help="start ingestion and automatic workers for all four networks")
     parser.add_argument("--build", action="store_true", help="rebuild images before startup")
     args = parser.parse_args()
     if args.action != "up" and (args.with_ingestion or args.build):

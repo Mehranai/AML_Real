@@ -1,11 +1,15 @@
 <!-- @style: ./style.css -->
 # AML Whole
 
-سامانه تحقیق کیف پول برای TRON، Ethereum و BNB Smart Chain با یک مخزن Git و استقرار مستقل هر شبکه.
+سامانه تحقیق کیف پول برای TRON، Ethereum، BNB Smart Chain و Bitcoin با یک مخزن Git و استقرار مستقل هر شبکه.
 کاربر در VM اصلی شبکه و آدرس کیف پول را انتخاب می‌کند؛ Analytical Node شواهد API همان شبکه را دریافت می‌کند.
 فقط VM اصلی Neo4j دارد: بررسی‌ها ابتدا موقت‌اند و Export همان snapshot را دائمی می‌کند. امتیاز ریسک بدون ML و با دلایل قابل بررسی ارائه می‌شود.
 
 [راهنمای Neo4j مرکزی، Export و ریسک بدون ML](docs/CENTRAL_INVESTIGATIONS_FA.md)
+
+[راهنمای بیت‌کوین: VM مستقل، UTXO، تنظیم RPC و ClickHouse](dockerizd_bitcoin/README.md)
+
+[قرارداد مشترک ClickHouse، نگاشت schema قدیمی و وضعیت مهاجرت چهار شبکه](docs/warehouse/README_FA.md)
 
 [راهنمای BSC: اجرا روی VM، داده‌های هویتی، holdings و محدودیت‌های تحویل](dockerizd_bsc/docs/VM_READINESS_FA.md)
 
@@ -14,7 +18,7 @@
 
 ## اجرای ساده روی همین کامپیوتر
 
-برای دیدن پروژه روی ویندوز فعلی، Docker Desktop را روشن کنید و در ترمینال اجرا کنید:
+برای بیت‌کوین ابتدا تنظیمات خصوصی را طبق [راهنمای بیت‌کوین](dockerizd_bitcoin/README.md) آماده کنید. سپس برای دیدن پروژه روی ویندوز فعلی، Docker Desktop را روشن کنید و در ترمینال اجرا کنید:
 
 ```cmd
 cd /d D:\Sarbazi\AML_Whole
@@ -27,7 +31,7 @@ python scripts/run_local.py
 برای بررسی سلامت `python scripts/run_local.py check`، برای وضعیت `python scripts/run_local.py status` و برای توقف بدون حذف داده `python scripts/run_local.py stop` را اجرا کنید.
 دستور بالا فقط APIها را راه‌اندازی می‌کند؛ دریافت بلاک‌های جدید شروع نمی‌شود و workerهایی که از قبل روشن باشند نیز خاموش نمی‌شوند.
 
-برای اجرای کامل هر سه شبکه، شامل ingest، metadata و تحلیل‌های خودکار موجود، از این فرمان استفاده کنید:
+برای اجرای کامل هر چهار شبکه، شامل ingest، metadata و تحلیل‌های خودکار موجود، از این فرمان استفاده کنید:
 
 ```cmd
 python scripts/run_local.py up --build --with-ingestion
@@ -40,7 +44,7 @@ python scripts/run_local.py up --build --with-ingestion
 
 ## ساخت خودکار VMها روی یک کامپیوتر
 
-اگر هنوز VM نساخته‌اید، این مسیر را استفاده کنید. پس از نصب یک‌باره Python 3.10+ و Multipass روی میزبان، پروژه چهار VM اوبونتو را می‌سازد و Docker، تنظیم IP، انتقال imageها و اجرای سرویس‌ها را انجام می‌دهد:
+اگر هنوز VM نساخته‌اید، این مسیر را استفاده کنید. پس از نصب یک‌باره Python 3.10+ و Multipass روی میزبان، پروژه پنج VM اوبونتو را می‌سازد و Docker، تنظیم IP، انتقال imageها و اجرای سرویس‌ها را انجام می‌دهد:
 
 ```powershell
 cd D:\Sarbazi\AML_Whole
@@ -57,7 +61,7 @@ imageهای برنامه باید آماده باشند؛ برای ساخت از
 
 ## اجرای Linux روی VMهای از قبل آماده
 
-این بخش مسیر جایگزین برای چهار VM موجود است؛ بعد از اجرای سازنده خودکار بالا، این دستورها را دوباره اجرا نکنید.
+این بخش مسیر جایگزین برای پنج VM موجود است؛ بعد از اجرای سازنده خودکار بالا، این دستورها را دوباره اجرا نکنید.
 
 پیش‌نیاز: Linux، Bash نسخه 4 یا بالاتر، Docker Engine و افزونه Docker Compose v2.
 برای helperهای تست و انتقال، `curl`، `jq`، `openssl` و `sha256sum` لازم‌اند.
@@ -68,7 +72,19 @@ git clone https://github.com/Mehranai/AML_Real.git "$HOME/AML_Whole"
 cd "$HOME/AML_Whole"
 ```
 
-فایل‌های `.env` از قبل مقداردهی شده‌اند؛ نیازی به کپی `.env.example`، تولید کلید یا تنظیم متغیر در ترمینال نیست:
+فایل‌های `.env` خصوصی‌اند و در Git قرار نمی‌گیرند. بعد از clone، فایل نمونهٔ
+role مربوط را کپی و RPC، رمزها و `AML_SERVICE_KEY` مشترک را طبق
+[راهنمای VMها](docs/MULTI_VM_DEPLOYMENT_FA.md) و
+[راهنمای بیت‌کوین](dockerizd_bitcoin/README.md) تنظیم کنید. نمونهٔ آماده‌سازی
+فایل‌ها بدون بازنویسی تنظیمات محلی موجود:
+
+```bash
+cp -n .env.example .env
+cp -n dockerizd_tron/app/.env.example dockerizd_tron/app/.env
+cp -n dockerizd_ethereum/.env.example dockerizd_ethereum/.env
+cp -n dockerizd_bsc/.env.example dockerizd_bsc/.env
+cp -n dockerizd_bitcoin/.env.example dockerizd_bitcoin/.env
+```
 
 | VM | IP | فایل تنظیمات |
 |---|---|---|
@@ -76,10 +92,12 @@ cd "$HOME/AML_Whole"
 | TRON | `10.20.0.21` | `dockerizd_tron/app/.env` |
 | Ethereum | `10.20.0.22` | `dockerizd_ethereum/.env` |
 | BSC | `10.20.0.23` | `dockerizd_bsc/.env` |
+| Bitcoin | `10.20.0.24` | `dockerizd_bitcoin/.env` |
 
 این IPها باید واقعاً روی VMها تنظیم شده باشند؛ فایل env شبکه سیستم‌عامل را تنظیم نمی‌کند.
-مقادیر مشترک، رمزهای آزمایشی شناخته‌شده‌اند و برای شبکه آزمایشی ایزوله هستند، نه استقرار عمومی production.
-روی ماشین سازنده ابتدا imageهای به‌روز را با `bash scripts/export-images.sh --include-bsc` بسته‌بندی کنید.
+مقادیر نمونه جایگزین تنظیمات استقرار نیستند؛ رمزهای محلی و فایل‌های محیط را
+خصوصی نگه دارید.
+روی ماشین سازنده ابتدا imageهای به‌روز را با `bash scripts/export-images.sh --include-bsc --include-bitcoin` بسته‌بندی کنید.
 پوشه `deployment-artifacts` را به هر VM منتقل کرده و پیش از دستورهای زیر اجرا کنید:
 
 ```bash
@@ -107,6 +125,13 @@ bash scripts/vm.sh bsc up --api-only --pull-never
 bash scripts/vm.sh bsc check
 ```
 
+روی Bitcoin VM (پس از تنظیم env):
+
+```bash
+bash scripts/vm.sh bitcoin up --build --api-only
+bash scripts/vm.sh bitcoin check
+```
+
 روی Main VM:
 
 ```bash
@@ -115,8 +140,9 @@ bash scripts/vm.sh main check
 bash scripts/smoke-test.sh --main-url http://10.20.0.10:8080
 ```
 
-launcher فایل `.env` همان role را خودکار می‌خواند. RPC، رمزها و کلید مشترک در فایل‌ها آماده‌اند؛
-RPCهای فعلی عمومی و بدون کلید خصوصی‌اند و محدودیت نرخ، تاریخچه و trace دارند.
+launcher فایل `.env` همان role را خودکار می‌خواند؛ RPC، رمزها و کلید مشترک باید
+پیش از اجرا در فایل‌های محلی تنظیم شده باشند. محدودیت نرخ، تاریخچه و trace
+نود RPC نیز باید متناسب با شبکه بررسی شود.
 API شبکه‌ها در firewall فقط برای VM اصلی باز باشد؛ پورت دیتابیس‌ها روی localhost باقی می‌ماند.
 صفحه اصلی: `http://10.20.0.10:8080`. احراز هویت UI در تنظیم آزمایشی خاموش است.
 اگر IPها تغییر کنند، bind و upstreamهای متناظر را در همین فایل‌ها تغییر دهید.
@@ -150,7 +176,7 @@ bash scripts/vm.sh tron down
 ```
 
 اجرای API-only، workerهایی را که قبلاً روشن بوده‌اند متوقف نمی‌کند.
-نام Compose پروژه‌ها در launcher چند VM به‌ترتیب `aml-main`، `aml-tron`، `aml-ethereum` و `aml-bsc` است.
+نام Compose پروژه‌ها در launcher چند VM به‌ترتیب `aml-main`، `aml-tron`، `aml-ethereum`، `aml-bsc` و `aml-bitcoin` است.
 برای داده‌های قدیمی، نام پروژه موجود را با `docker compose ls -a` بررسی و در همه دستورات همان `--project NAME` را بدهید؛
 تغییر نام پروژه باعث انتخاب volume دیگری می‌شود.
 
@@ -176,7 +202,7 @@ bash scripts/aml.sh down
 ## انتقال imageهای آماده
 
 ```bash
-bash scripts/export-images.sh --include-bsc --output ./deployment-artifacts
+bash scripts/export-images.sh --include-bsc --include-bitcoin --output ./deployment-artifacts
 # پوشه deployment-artifacts را به VM مقصد منتقل کنید.
 bash scripts/import-images.sh ./deployment-artifacts
 bash scripts/vm.sh tron up --pull-never
@@ -200,6 +226,7 @@ AML_Whole/
   dockerizd_tron/app/            Rust، SQL، UI و Compose ترون
   dockerizd_ethereum/            Rust، SQL، UI و Compose اتریوم
   dockerizd_bsc/                 ingestion/replay/schema، API تحقیق، metadata و intelligence
+  dockerizd_bitcoin/             Bitcoin Core RPC، UTXO، ClickHouse، API و UI تحقیق
 ```
 
 ```text
@@ -220,11 +247,11 @@ HTML هر شبکه هنگام build Gateway از سورس همان شبکه کپ
 
 ## پورت‌ها
 
-| سرویس | TRON | Ethereum | BSC |
-|---|---|---|---|
-| API | 4001 | 5001 | 6001 |
-| ClickHouse HTTP | 18123 | 28123 | 38123 |
-| ClickHouse Native | 19000 | 29000 | 39000 |
+| سرویس | TRON | Ethereum | BSC | Bitcoin |
+|---|---|---|---|---|
+| API | 4001 | 5001 | 6001 | 6101 |
+| ClickHouse HTTP | 18123 | 28123 | 38123 | 48123 |
+| ClickHouse Native | 19000 | 29000 | 39000 | 49000 |
 
 Neo4j فقط در VM اصلی است؛ پورت پیش‌فرض Browser برابر 7474 و Bolt برابر 7687 است و روی localhost منتشر می‌شوند. مقادیر `.env` می‌توانند این پیش‌فرض‌ها را تغییر دهند.
 
@@ -268,7 +295,7 @@ python3 scripts/provision_vms.py db ethereum --query "SELECT * FROM transactions
 python3 scripts/provision_vms.py resume ethereum
 ```
 
-نام `ethereum` را برای شبکه‌های دیگر با `tron` یا `bsc` جایگزین کنید. `pause-ingestion` فقط workerها را متوقف می‌کند و API را دست‌نخورده نگه می‌دارد؛ `pause` API را هم متوقف می‌کند. `resume` سرویس‌های همان شبکه را با image موجود و بدون restart دیتابیس اجرا می‌کند. `db` فقط‌خواندنی است و رمز را داخل کانتینر می‌خواند. اجرای `up` کلی می‌تواند توقف دستی سرویس‌ها را لغو کند.
+نام `ethereum` را برای شبکه‌های دیگر با `tron`، `bsc` یا `bitcoin` جایگزین کنید. `pause-ingestion` فقط workerها را متوقف می‌کند و API را دست‌نخورده نگه می‌دارد؛ `pause` API را هم متوقف می‌کند. `resume` سرویس‌های همان شبکه را با image موجود و بدون restart دیتابیس اجرا می‌کند. `db` فقط‌خواندنی است و رمز را داخل کانتینر می‌خواند. اجرای `up` کلی می‌تواند توقف دستی سرویس‌ها را لغو کند.
 
 [راهنمای کامل: sync خودکار، کنترل مستقل شبکه‌ها، ClickHouse و checkpoint](docs/CHAIN_OPERATIONS_FA.md)
 

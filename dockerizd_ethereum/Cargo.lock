@@ -625,6 +625,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "aml_warehouse"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1908,6 +1918,7 @@ name = "ethereum_aml"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "aml_warehouse",
  "anyhow",
  "axum",
  "clap",

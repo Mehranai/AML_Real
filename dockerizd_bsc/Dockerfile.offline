@@ -1,5 +1,6 @@
 FROM rust:1.92-bookworm AS builder
-WORKDIR /build
+COPY --from=warehouse_source / /build/shared/warehouse/
+WORKDIR /build/dockerizd_bsc
 ENV CARGO_NET_OFFLINE=true
 
 COPY vendor-linux.tar.gz vendor-linux.sha256 /tmp/

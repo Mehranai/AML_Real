@@ -2,7 +2,7 @@
   'use strict';
   if (!location.pathname.startsWith('/networks/')) return;
   const chain = location.pathname.split('/')[2];
-  if (!['tron', 'ethereum', 'bsc'].includes(chain)) return;
+  if (!['tron', 'ethereum', 'bsc', 'bitcoin'].includes(chain)) return;
   const host = document.querySelector(chain === 'tron' ? '.graph-title' : '.querybar');
   if (!host) return;
   const style = document.createElement('style');

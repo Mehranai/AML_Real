@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create and deploy four owned Multipass VMs. Python 3.10+, standard library only."""
+"""Create and deploy five owned Multipass VMs. Python 3.10+, standard library only."""
 import argparse
 import contextlib
 import ctypes
@@ -19,19 +19,20 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-ROLES = ("main", "tron", "ethereum", "bsc")
+ROLES = ("main", "tron", "ethereum", "bsc", "bitcoin")
 GUEST = "/home/ubuntu/AML_Whole"
 GIB = 1024 ** 3
 DIRECTORIES = {
     "main": ".", "tron": "dockerizd_tron/app",
-    "ethereum": "dockerizd_ethereum", "bsc": "dockerizd_bsc",
+    "ethereum": "dockerizd_ethereum", "bsc": "dockerizd_bsc", "bitcoin": "dockerizd_bitcoin",
 }
-PORTS = {"tron": 4001, "ethereum": 5001, "bsc": 6001}
+PORTS = {"tron": 4001, "ethereum": 5001, "bsc": 6001, "bitcoin": 6101}
 IMAGES = {
     "main": ("aml-whole-gateway:local", "aml-analytical-node:local", "neo4j:5.26-community"),
     "tron": ("tron-aml-service:local", "clickhouse/clickhouse-server:23.8"),
     "ethereum": ("ethereum-aml-service:local", "clickhouse/clickhouse-server:23.8"),
     "bsc": ("bsc-aml-service:local", "clickhouse/clickhouse-server:23.8"),
+    "bitcoin": ("bitcoin-aml-service:local", "clickhouse/clickhouse-server:23.8"),
 }
 ALL_IMAGES = tuple(dict.fromkeys(image for group in IMAGES.values() for image in group))
 
@@ -99,7 +100,7 @@ def load_config(path):
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}[a-z0-9]", config.get("prefix", "")):
         raise DeploymentError("Invalid VM prefix")
     if config.get("ubuntu") != "24.04" or set(config.get("roles", {})) != set(ROLES):
-        raise DeploymentError("Expected Ubuntu 24.04 and exactly main/tron/ethereum/bsc")
+        raise DeploymentError("Expected Ubuntu 24.04 and exactly main/tron/ethereum/bsc/bitcoin")
     for role, size in config["roles"].items():
         for field, minimum in (("cpus", 1), ("memory_gib", 2), ("disk_gib", 20)):
             if type(size.get(field)) is not int or size[field] < minimum:
@@ -114,7 +115,8 @@ def source_environments(root):
         raise DeploymentError("Main AML_SERVICE_KEY must contain at least 32 characters")
     for role, values in environments.items():
         password_key = ("NEO4J_PASSWORD" if role == "main" else
-                        "BSC_CLICKHOUSE_PASSWORD" if role == "bsc" else "CLICKHOUSE_PASSWORD")
+                        "BSC_CLICKHOUSE_PASSWORD" if role == "bsc" else
+                        "BITCOIN_CLICKHOUSE_PASSWORD" if role == "bitcoin" else "CLICKHOUSE_PASSWORD")
         minimum = 8 if role == "main" else 1
         if len(values.get(password_key, "")) < minimum:
             raise DeploymentError(f"Missing/short database password in {role} .env")
@@ -129,7 +131,7 @@ def credential_fingerprint(environments):
     selected = {}
     for role, values in environments.items():
         selected[role] = {key: value for key, value in values.items()
-                          if key.endswith("_PASSWORD") or key in ("CLICKHOUSE_USER", "BSC_CLICKHOUSE_USER")}
+                          if key != "BITCOIN_RPC_PASSWORD" and (key.endswith("_PASSWORD") or key in ("CLICKHOUSE_USER", "BSC_CLICKHOUSE_USER", "BITCOIN_CLICKHOUSE_USER"))}
     return hashlib.sha256(json.dumps(selected, sort_keys=True).encode()).hexdigest()
 
 
@@ -141,6 +143,10 @@ def guest_environment(role, source, addresses):
                       AML_HTPASSWD_FILE="./gateway/auth/disabled.htpasswd")
         for chain, port in PORTS.items():
             values[f"AML_{chain.upper()}_UPSTREAM"] = f"http://{addresses[chain]}:{port}"
+    elif role == "bitcoin":
+        values.update(BITCOIN_API_BIND_ADDRESS=addresses[role], BITCOIN_API_PORT="6101",
+                      DATABASE_BIND_ADDRESS="127.0.0.1", BITCOIN_APP_IMAGE_TAG="local",
+                      BITCOIN_CLICKHOUSE_IMAGE="clickhouse/clickhouse-server:23.8")
     elif role == "bsc":
         values.update(BSC_API_BIND_ADDRESS=addresses[role], BSC_API_PORT="6001",
                       DOCKER_BIND_ADDRESS="127.0.0.1", BSC_APP_IMAGE_TAG="local",
@@ -243,6 +249,15 @@ def existing_parent(path):
     return path
 
 
+def compatible_bitcoin_addition(previous, current):
+    """Allow only an additive fifth VM, preserving every existing VM setting."""
+    if set(previous.get("roles", {})) != {"main", "tron", "ethereum", "bsc"}:
+        return False
+    without_bitcoin = dict(current)
+    without_bitcoin["roles"] = {role: size for role, size in current["roles"].items() if role != "bitcoin"}
+    return previous == without_bitcoin
+
+
 class Provisioner:
     def __init__(self, args, root=ROOT, runner=run):
         self.args, self.root, self.run = args, root, runner
@@ -250,7 +265,7 @@ class Provisioner:
         self.work = root / ".local-vms"
         self.state_path = self.work / "state.json"
         self.state = json.loads(self.state_path.read_text()) if self.state_path.exists() else None
-        if self.state and self.state["config"] != self.config:
+        if self.state and self.state["config"] != self.config and not compatible_bitcoin_addition(self.state["config"], self.config):
             raise DeploymentError("VM configuration changed after creation; restore vms.json. Resize/migration is a separate operation")
         self.names = {role: f"{self.config['prefix']}-{role}" for role in ROLES}
         self.docker = ["docker"] + (["--context", args.docker_context] if args.docker_context else [])
@@ -277,7 +292,7 @@ class Provisioner:
             with os.fdopen(descriptor, "w") as stream:
                 stream.write(str(os.getpid()) + "\n")
             self.state = json.loads(self.state_path.read_text()) if self.state_path.exists() else None
-            if self.state and self.state["config"] != self.config:
+            if self.state and self.state["config"] != self.config and not compatible_bitcoin_addition(self.state["config"], self.config):
                 raise DeploymentError("VM configuration changed; restore vms.json before resuming")
             yield
         finally:
@@ -291,6 +306,10 @@ class Provisioner:
     def preflight(self):
         errors = []
         self.environments = source_environments(self.root)
+        if self.args.with_ingestion:
+            for key in ("BITCOIN_RPC_URL", "BITCOIN_RPC_USER", "BITCOIN_RPC_PASSWORD"):
+                if not self.environments["bitcoin"].get(key, "").strip():
+                    errors.append(f"Configure {key} in Bitcoin .env before starting ingestion")
         required = [self.root / "scripts/vm.sh", self.root / "deployment/vm-firewall.sh",
                     self.root / "gateway/auth/disabled.htpasswd",
                     self.root / "dockerizd_tron/app/sql/init_database_tron.sql"]
@@ -298,7 +317,10 @@ class Provisioner:
                         for role, directory in DIRECTORIES.items())
         if any(not path.is_file() or path.is_symlink() for path in required):
             errors.append("Missing or symlinked runtime files; use a complete project checkout")
-        if self.state and self.state["credentials"] != credential_fingerprint(self.environments):
+        credential_environments = self.environments
+        if self.state and compatible_bitcoin_addition(self.state["config"], self.config):
+            credential_environments = {role: values for role, values in self.environments.items() if role != "bitcoin"}
+        if self.state and self.state["credentials"] != credential_fingerprint(credential_environments):
             errors.append("Database credentials changed. Restore source .env or rotate existing databases explicitly")
         if platform.machine().lower() not in ("amd64", "x86_64"):
             errors.append("This image deployment supports Linux/amd64 guests on x86-64 hosts only")
@@ -362,7 +384,7 @@ class Provisioner:
             directory = self.root / DIRECTORIES[role]
             file = directory / ("compose.yaml" if role == "main" else "docker-compose.yml")
             services = ["gateway", "analytical-node"] if role == "main" else [
-                {"tron": "tron-api", "ethereum": "ethereum-api", "bsc": "bsc-api"}[role]]
+                {"tron": "tron-api", "ethereum": "ethereum-api", "bsc": "bsc-api", "bitcoin": "bitcoin-api"}[role]]
             self.run([*self.docker, "compose", "--project-directory", directory,
                       "--env-file", directory / ".env", "-f", file, "build", *services],
                      timeout=7200, live=True)
@@ -490,6 +512,10 @@ class Provisioner:
             if self.state is None:
                 self.state = {"owner": str(uuid.uuid4()), "config": self.config,
                               "credentials": credential_fingerprint(self.environments), "with_ingestion": False}
+            # The only permitted migration adds Bitcoin after preflight succeeds;
+            # it never resizes, replaces or re-credentials the existing four VMs.
+            self.state["config"] = self.config
+            self.state["credentials"] = credential_fingerprint(self.environments)
             self.state["with_ingestion"] |= self.args.with_ingestion
             atomic_json(self.state_path, self.state)
             directory, entries = self.images()
@@ -498,7 +524,7 @@ class Provisioner:
                 self.ensure_vm(role, inventory)
             addresses = self.addresses()
             # Chain readiness must precede main readiness.
-            for role in ("tron", "ethereum", "bsc", "main"):
+            for role in ("tron", "ethereum", "bsc", "bitcoin", "main"):
                 print(f"[DEPLOY] {role}", flush=True)
                 self.deploy_role(role, addresses, directory, entries)
             self.state["addresses"] = addresses

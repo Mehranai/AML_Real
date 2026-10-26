@@ -9,6 +9,8 @@ use crate::config::AppConfig;
 
 use super::sql::run_sql;
 
+aml_warehouse::clickhouse_connection!(SharedWarehouseConnection);
+
 struct SchemaMigration {
     id: &'static str,
     description: &'static str,
@@ -45,6 +47,10 @@ fn admin_client(config: &AppConfig) -> Client {
 pub async fn initialize_ethereum_schema(config: &AppConfig) -> anyhow::Result<()> {
     let client = admin_client(config);
     let database = &config.clickhouse_database;
+    ensure!(
+        is_safe_identifier(database),
+        "unsafe Ethereum database identifier"
+    );
 
     client
         .query(&format!("CREATE DATABASE IF NOT EXISTS {database}"))
@@ -57,6 +63,45 @@ pub async fn initialize_ethereum_schema(config: &AppConfig) -> anyhow::Result<()
     apply_migrations(&client, database).await?;
     validate_schema(&client, database).await?;
 
+    aml_warehouse::initialize(
+        &SharedWarehouseConnection(&client),
+        database,
+        aml_warehouse::Network::Ethereum,
+    )
+    .await
+    .context("shared Ethereum warehouse schema failed")?;
+
+    Ok(())
+}
+
+/// Read-only schema check; never creates a ledger or applies a migration.
+pub async fn check_ethereum_schema(config: &AppConfig) -> anyhow::Result<()> {
+    let client = admin_client(config);
+    let database = &config.clickhouse_database;
+    ensure!(
+        is_safe_identifier(database),
+        "unsafe Ethereum database identifier"
+    );
+    let applied=client.query(&format!("SELECT migration_id,argMax(checksum,applied_at) AS checksum FROM {database}.schema_migrations GROUP BY migration_id"))
+        .fetch_all::<AppliedMigration>().await?;
+    for migration in migrations() {
+        let row = applied
+            .iter()
+            .find(|row| row.migration_id == migration.id)
+            .with_context(|| format!("missing Ethereum migration {}", migration.id))?;
+        ensure!(
+            row.checksum == migration_checksum(migration.sql_template),
+            "Ethereum migration checksum changed: {}",
+            migration.id
+        );
+    }
+    validate_schema(&client, database).await?;
+    aml_warehouse::validate(
+        &SharedWarehouseConnection(&client),
+        database,
+        aml_warehouse::Network::Ethereum,
+    )
+    .await?;
     Ok(())
 }
 

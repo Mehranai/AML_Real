@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
 FROM rust:1.92-bookworm AS builder
-WORKDIR /build
+COPY --from=warehouse_source / /build/shared/warehouse/
+WORKDIR /build/dockerizd_tron/app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
