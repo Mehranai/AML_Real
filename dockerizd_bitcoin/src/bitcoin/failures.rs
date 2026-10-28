@@ -51,6 +51,12 @@ pub struct Record {
     pub next_attempt_unix_ms: u64,
     pub revision: u64,
     pub created_at_unix_ms: u64,
+    pub tx_hash: Option<String>,
+    pub retryable: Option<u8>,
+    pub first_failed_at_unix_ms: Option<u64>,
+    pub last_failed_at_unix_ms: Option<u64>,
+    pub resolved_at_unix_ms: Option<u64>,
+    pub raw_evidence_json: String,
 }
 #[derive(Clone, Copy)]
 pub enum Stage {
@@ -184,6 +190,22 @@ pub async fn record(
         },
         revision: revision(old.as_ref().map_or(0, |r| r.revision))?,
         created_at_unix_ms: old.as_ref().map_or(now, |r| r.created_at_unix_ms),
+        tx_hash: old.as_ref().and_then(|r| r.tx_hash.clone()),
+        retryable: Some(u8::from(attempts < policy.max_attempts)),
+        first_failed_at_unix_ms: old
+            .as_ref()
+            .map_or(Some(now), |r| r.first_failed_at_unix_ms),
+        last_failed_at_unix_ms: Some(
+            now.max(
+                old.as_ref()
+                    .and_then(|r| r.last_failed_at_unix_ms)
+                    .unwrap_or(0),
+            ),
+        ),
+        resolved_at_unix_ms: None,
+        raw_evidence_json: serde_json::to_string(
+            &json!({"operation":operation,"error_code":code,"attempts":attempts,"max_attempts":policy.max_attempts}),
+        )?,
     };
     save(db, std::slice::from_ref(&row)).await?;
     Ok(row)
@@ -197,6 +219,8 @@ pub async fn resolved(db: &Database, height: u64, hash: &str, count_attempt: boo
     }
     row.block_hash = Some(model::hash(hash)?);
     row.status = "resolved".into();
+    row.resolved_at_unix_ms = Some(timestamp().max(row.last_failed_at_unix_ms.unwrap_or(0)));
+    row.retryable = Some(0);
     row.next_attempt_unix_ms = 0;
     if count_attempt {
         row.attempts = increment(row.attempts)?;
@@ -213,6 +237,7 @@ pub async fn begin_repair(db: &Database, height: u64) -> Result<Record> {
         "selected failure is already resolved"
     );
     row.status = "repairing".into();
+    row.resolved_at_unix_ms = None;
     row.attempts = increment(row.attempts)?;
     row.next_attempt_unix_ms = 0;
     row.revision = revision(row.revision)?;
@@ -236,6 +261,22 @@ pub async fn mark_gap(db: &Database, height: u64, hash: Option<String>) -> Resul
         next_attempt_unix_ms: 0,
         revision: revision(old.as_ref().map_or(0, |r| r.revision))?,
         created_at_unix_ms: old.as_ref().map_or(now, |r| r.created_at_unix_ms),
+        tx_hash: old.as_ref().and_then(|r| r.tx_hash.clone()),
+        retryable: Some(0),
+        first_failed_at_unix_ms: old
+            .as_ref()
+            .map_or(Some(now), |r| r.first_failed_at_unix_ms),
+        last_failed_at_unix_ms: Some(
+            now.max(
+                old.as_ref()
+                    .and_then(|r| r.last_failed_at_unix_ms)
+                    .unwrap_or(0),
+            ),
+        ),
+        resolved_at_unix_ms: None,
+        raw_evidence_json: serde_json::to_string(
+            &json!({"operation":"gap","replay_required":true}),
+        )?,
     };
     save(db, &[row]).await
 }
@@ -279,6 +320,12 @@ pub async fn recover_interrupted(db: &Database, policy: &Policy) -> Result<()> {
         }
         .into();
         row.error_code = "interrupted_repair".into();
+        row.retryable = Some(u8::from(row.attempts < policy.max_attempts));
+        row.last_failed_at_unix_ms = Some(timestamp().max(row.last_failed_at_unix_ms.unwrap_or(0)));
+        row.resolved_at_unix_ms = None;
+        row.raw_evidence_json = serde_json::to_string(
+            &json!({"operation":"repair","error_code":"interrupted_repair","attempts":row.attempts,"max_attempts":policy.max_attempts}),
+        )?;
         row.error_message="Previous repair ended before its outcome was recorded; canonical state must be checked.".into();
         row.next_attempt_unix_ms = timestamp();
         row.revision = revision(row.revision)?;
@@ -484,6 +531,17 @@ pub async fn scan_gaps(db: &Database, from: u64, to: u64, max_blocks: u64) -> Re
                 next_attempt_unix_ms: 0,
                 revision: revision(previous.map_or(0, |r| r.revision))?,
                 created_at_unix_ms: previous.map_or(timestamp(), |r| r.created_at_unix_ms),
+                tx_hash: previous.and_then(|r| r.tx_hash.clone()),
+                retryable: Some(0),
+                first_failed_at_unix_ms: previous
+                    .map_or(Some(timestamp()), |r| r.first_failed_at_unix_ms),
+                last_failed_at_unix_ms: Some(
+                    timestamp().max(previous.and_then(|r| r.last_failed_at_unix_ms).unwrap_or(0)),
+                ),
+                resolved_at_unix_ms: None,
+                raw_evidence_json: serde_json::to_string(
+                    &json!({"operation":"gap","replay_required":true}),
+                )?,
             });
         }
     }

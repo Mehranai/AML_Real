@@ -296,8 +296,7 @@ pub(crate) async fn run_owned(
                 forced.is_none_or(|height| height == next),
                 "repair cannot rewind or skip the published checkpoint"
             );
-            let end = head
-                .checked_sub(config.confirmations - 1)
+            let end = aml_warehouse::visibility::confirmed_tip(head, config.confirmations)
                 .map(|h| config.end.map_or(h, |end| end.min(h)));
             let Some(end) = end.filter(|end| next <= *end) else {
                 if once {

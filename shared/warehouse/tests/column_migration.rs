@@ -1,12 +1,10 @@
 //! Only a new disposable ClickHouse fixture; never reads deployment credentials.
-use aml_warehouse::{
-    Connection, Network, baseline_contract, current_contract, initialize, validate,
-};
+use aml_warehouse::{Connection, Network, baseline_contract, initialize, validate};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 mod support;
-use support::fixture;
+use support::{fixture, historical_fixture};
 
 struct Http {
     url: String,
@@ -102,7 +100,7 @@ async fn baseline(db: &Http, database: &str, network: Network) -> Result<()> {
 async fn v1_upgrade_preserves_every_table_and_enforces_identical_column_rules_on_four_networks()
 -> Result<()> {
     let db = Http::new()?;
-    let contract = current_contract()?;
+    let contract = baseline_contract()?;
     let mut shapes = Vec::new();
     for network in Network::ALL {
         let database = format!("db03_upgrade_{}", network.name());
@@ -115,8 +113,14 @@ async fn v1_upgrade_preserves_every_table_and_enforces_identical_column_rules_on
             ) {
                 continue;
             }
-            let row = fixture(&table.name, network)?;
-            if aml_warehouse::semantics::validate_row(&contract, &table.name, &row).is_err() {
+            let row = historical_fixture(&table.name, network)?;
+            if aml_warehouse::semantics::validate_row(
+                &aml_warehouse::column_contract()?,
+                &table.name,
+                &row,
+            )
+            .is_err()
+            {
                 continue;
             }
             db.insert(&database, &table.name, &row).await?;
@@ -134,14 +138,25 @@ async fn v1_upgrade_preserves_every_table_and_enforces_identical_column_rules_on
             "v1 requires the schema job, not a silent read upgrade"
         );
         let summary = initialize(&db, &database, network).await?;
-        assert_eq!(summary.schema_version, 2);
+        assert_eq!(summary.schema_version, 5);
         assert!(summary.newly_applied);
         assert!(!initialize(&db, &database, network).await?.newly_applied);
         validate(&db, &database, network).await?;
         for (table, rows) in before {
+            let baseline = baseline_contract()?;
+            let columns = baseline
+                .tables
+                .iter()
+                .find(|t| t.name == table)
+                .unwrap()
+                .columns
+                .iter()
+                .map(|c| format!("`{}`", c.name))
+                .collect::<Vec<_>>()
+                .join(",");
             assert_eq!(
                 db.request(&format!(
-                    "SELECT * FROM {database}.{table} FINAL FORMAT JSONEachRow"
+                    "SELECT {columns} FROM {database}.{table} FINAL FORMAT JSONEachRow"
                 ))
                 .await?,
                 rows,
@@ -153,14 +168,14 @@ async fn v1_upgrade_preserves_every_table_and_enforces_identical_column_rules_on
                 "SELECT toString(count()) FROM {database}.aml_schema_migrations FINAL"
             ))
             .await?,
-            "2"
+            "4"
         );
         assert_eq!(
             db.scalar(&format!(
                 "SELECT toString(schema_version) FROM {database}.aml_warehouse_identity FINAL"
             ))
             .await?,
-            "2"
+            "4"
         );
         let shape=db.query(&format!("SELECT replaceAll(create_table_query,'{database}.','warehouse.') FROM system.tables WHERE database='{database}' AND engine!='View' ORDER BY name")).await?;
         shapes.push(shape);
@@ -299,12 +314,192 @@ async fn incompatible_v1_history_is_rejected_before_any_upgrade_ddl_without_rewr
         .await?;
     assert!(initialize(&db, exhausted, network).await.is_err());
     assert_eq!(db.scalar(&format!("SELECT toString(count()) FROM system.tables WHERE database='{exhausted}' AND position(create_table_query,'CONSTRAINT ')>0")).await?,"0");
+    let near = "db04_near_exhausted_identity";
+    baseline(&db, near, network).await?;
+    identity["revision"] = json!(u64::MAX - 1);
+    db.insert(near, "aml_warehouse_identity", &identity).await?;
+    assert!(
+        initialize(&db, near, network).await.is_err(),
+        "both remaining identity revisions must be reserved before DDL"
+    );
+    assert_eq!(db.scalar(&format!("SELECT toString(count()) FROM system.tables WHERE database='{near}' AND position(create_table_query,'CONSTRAINT ')>0")).await?,"0");
     Ok(())
 }
 
 struct FailUpgrade<'a> {
     db: &'a Http,
     remaining: AtomicUsize,
+}
+
+async fn version_two(db: &Http, database: &str, network: Network) -> Result<()> {
+    baseline(db, database, network).await?;
+    for statement in aml_warehouse::semantics::upgrade_statements(
+        database,
+        &aml_warehouse::semantics::upgrade_template()?,
+    )? {
+        db.execute(&statement).await?;
+    }
+    let contract = aml_warehouse::column_contract()?;
+    let mut ledger = historical_fixture("aml_schema_migrations", network)?;
+    ledger["migration_id"] = json!(contract.migration_id);
+    ledger["checksum"] = json!(contract.checksum()?);
+    ledger["schema_version"] = json!(2);
+    db.insert(database, "aml_schema_migrations", &ledger)
+        .await?;
+    let mut identity = historical_fixture("aml_warehouse_identity", network)?;
+    identity["checksum"] = json!(contract.checksum()?);
+    identity["schema_version"] = json!(2);
+    identity["revision"] = json!(9_000_000_000_000_000_001u64);
+    db.insert(database, "aml_warehouse_identity", &identity)
+        .await
+}
+struct FailCore<'a> {
+    db: &'a Http,
+    prefix: &'a str,
+    remaining: AtomicUsize,
+}
+impl Connection for FailCore<'_> {
+    async fn execute(&self, sql: &str) -> Result<()> {
+        if sql.starts_with(self.prefix) {
+            ensure!(
+                self.remaining.fetch_sub(1, Ordering::SeqCst) > 1,
+                "simulated core migration interruption"
+            );
+        }
+        self.db.execute(sql).await
+    }
+    async fn query(&self, sql: &str) -> Result<Vec<String>> {
+        self.db.query(sql).await
+    }
+}
+#[tokio::test]
+#[ignore = "requires an empty disposable ClickHouse 23.8"]
+async fn v2_core_upgrade_preserves_original_columns_and_unknown_lifecycle_on_four_networks()
+-> Result<()> {
+    let db = Http::new()?;
+    for network in Network::ALL {
+        let database = format!("db04_v2_{}", network.name());
+        version_two(&db, &database, network).await?;
+        let contract = aml_warehouse::column_contract()?;
+        let mut before = Vec::new();
+        for table in &contract.tables {
+            if !aml_warehouse::core_schema::migration()?
+                .columns
+                .contains_key(&table.name)
+            {
+                continue;
+            }
+            let row = historical_fixture(&table.name, network)?;
+            db.insert(&database, &table.name, &row).await?;
+            let columns = table
+                .columns
+                .iter()
+                .map(|c| format!("`{}`", c.name))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT {columns} FROM {database}.{} FINAL FORMAT JSONEachRow",
+                table.name
+            );
+            before.push((sql.clone(), db.request(&sql).await?));
+        }
+        assert_eq!(initialize(&db, &database, network).await?.schema_version, 5);
+        for (sql, rows) in before {
+            assert_eq!(db.request(&sql).await?, rows, "v2 source values changed");
+        }
+        assert_eq!(db.scalar(&format!("SELECT toString(count()) FROM {database}.aml_ingestion_failures WHERE isNull(retryable) AND isNull(tx_hash) AND isNull(first_failed_at_unix_ms) AND isNull(last_failed_at_unix_ms) AND isNull(resolved_at_unix_ms) AND raw_evidence_json='{{}}'")).await?,"1");
+        assert_eq!(
+            db.scalar(&format!(
+                "SELECT status FROM {database}.aml_ingestion_benchmarks_current"
+            ))
+            .await?,
+            "unknown"
+        );
+        validate(&db, &database, network).await?;
+    }
+    Ok(())
+}
+#[tokio::test]
+#[ignore = "requires an empty disposable ClickHouse 23.8"]
+async fn interrupted_core_columns_constraints_and_views_resume_but_drift_is_rejected() -> Result<()>
+{
+    let db = Http::new()?;
+    let network = Network::Bitcoin;
+    for (case, prefix, remaining) in [
+        ("columns", "ALTER TABLE", 6),
+        ("constraints", "ALTER TABLE", 32),
+        ("views", "CREATE OR REPLACE VIEW", 4),
+    ] {
+        let database = format!("db04_partial_{case}");
+        version_two(&db, &database, network).await?;
+        let before = db
+            .scalar(&format!(
+                "SELECT toString(count()) FROM {database}.aml_schema_migrations FINAL"
+            ))
+            .await?;
+        assert!(
+            initialize(
+                &FailCore {
+                    db: &db,
+                    prefix,
+                    remaining: AtomicUsize::new(remaining)
+                },
+                &database,
+                network
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            db.scalar(&format!(
+                "SELECT toString(count()) FROM {database}.aml_schema_migrations FINAL"
+            ))
+            .await?,
+            before
+        );
+        initialize(&db, &database, network).await?;
+        validate(&db, &database, network).await?;
+        db.execute(&format!(
+            "ALTER TABLE {database}.aml_address_relationships DROP CONSTRAINT aml_core_v3"
+        ))
+        .await?;
+        assert!(
+            initialize(&db, &database, network).await.is_err(),
+            "applied missing constraint cannot be repaired silently"
+        );
+    }
+    for (case, ddl) in [
+        ("wrong_type", "ADD COLUMN event_sub_index UInt64 DEFAULT 0"),
+        (
+            "wrong_default",
+            "ADD COLUMN event_sub_index UInt32 DEFAULT 7",
+        ),
+        ("unknown_column", "ADD COLUMN unexpected_source String"),
+        ("wrong_view", "MODIFY COMMENT 'unused'"),
+    ] {
+        let database = format!("db04_drift_{case}");
+        version_two(&db, &database, network).await?;
+        if case == "wrong_view" {
+            db.execute(&format!("CREATE OR REPLACE VIEW {database}.aml_ingested_blocks_canonical AS SELECT * FROM {database}.aml_ingested_blocks WHERE canonical=1")).await?;
+        } else {
+            db.execute(&format!(
+                "ALTER TABLE {database}.aml_address_relationships {ddl}"
+            ))
+            .await?;
+        }
+        assert!(
+            initialize(&db, &database, network).await.is_err(),
+            "unexpected {case} was accepted"
+        );
+        assert_eq!(
+            db.scalar(&format!(
+                "SELECT toString(count()) FROM {database}.aml_schema_migrations FINAL"
+            ))
+            .await?,
+            "2"
+        );
+    }
+    Ok(())
 }
 impl Connection for FailUpgrade<'_> {
     async fn execute(&self, sql: &str) -> Result<()> {

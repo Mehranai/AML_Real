@@ -1,0 +1,280 @@
+{
+  "version": 3,
+  "migration_id": "20261026_0003_core_evidence",
+  "description": "Lossless core evidence extensions and uniform canonical/current readers for all network databases.",
+  "previous_checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5",
+  "columns": {
+    "aml_ingested_blocks": [
+      {
+        "name": "expected_counts_json",
+        "data_type": "String",
+        "default": "'{}'",
+        "description": "Verified per-table row counts for this commit; absent keys mean unknown/not produced."
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "default": "'{}'",
+        "description": "Original source evidence retained without dropping legacy-only columns."
+      }
+    ],
+    "aml_address_relationships": [
+      {
+        "name": "event_sub_index",
+        "data_type": "UInt32",
+        "default": "0",
+        "description": "Stable sub-event position; zero is the sole leg sub-position for Bitcoin."
+      },
+      {
+        "name": "trace_address",
+        "data_type": "Array(UInt32)",
+        "default": "[]",
+        "description": "Ordered EVM trace-child positions; empty where not applicable."
+      },
+      {
+        "name": "token_id",
+        "data_type": "Nullable(UInt256)",
+        "default": "NULL",
+        "description": "Exact NFT token identity when separately observed; NULL is not zero."
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "default": "'{}'",
+        "description": "Original source evidence retained without dropping legacy-only columns."
+      }
+    ],
+    "aml_transaction_features": [
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "default": "'{}'",
+        "description": "Original source evidence retained without dropping legacy-only columns."
+      }
+    ],
+    "aml_semantic_aml_events": [
+      {
+        "name": "event_index",
+        "data_type": "UInt32",
+        "default": "0",
+        "description": "Original event ordering within the transaction."
+      },
+      {
+        "name": "event_sub_index",
+        "data_type": "UInt32",
+        "default": "0",
+        "description": "Original sub-event ordering."
+      },
+      {
+        "name": "detector",
+        "data_type": "String",
+        "default": "''",
+        "description": "Producer identity; an empty historical value is unknown."
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "default": "'{}'",
+        "description": "Original source evidence retained without dropping legacy-only columns."
+      }
+    ],
+    "aml_sync_state": [
+      {
+        "name": "source_cursor_json",
+        "data_type": "String",
+        "default": "'{}'",
+        "description": "Original adapter cursor/provenance; never substituted for the committed visibility fence."
+      }
+    ],
+    "aml_ingestion_failures": [
+      {
+        "name": "tx_hash",
+        "data_type": "Nullable(String)",
+        "default": "NULL",
+        "description": "Transaction identity when known; a block failure need not identify a transaction."
+      },
+      {
+        "name": "retryable",
+        "data_type": "Nullable(UInt8)",
+        "default": "NULL",
+        "description": "Explicit retryability; historical unknown remains NULL."
+      },
+      {
+        "name": "first_failed_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "default": "NULL",
+        "description": "Observed UTC Unix milliseconds; NULL when not recorded. Wall clock can move backwards."
+      },
+      {
+        "name": "last_failed_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "default": "NULL",
+        "description": "Observed UTC Unix milliseconds; NULL when not recorded. Wall clock can move backwards."
+      },
+      {
+        "name": "resolved_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "default": "NULL",
+        "description": "Observed UTC Unix milliseconds; NULL when not recorded. Wall clock can move backwards."
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "default": "'{}'",
+        "description": "Original source evidence retained without dropping legacy-only columns."
+      }
+    ],
+    "aml_ingestion_benchmarks": [
+      {
+        "name": "source_kind",
+        "data_type": "LowCardinality(String)",
+        "default": "'unknown'",
+        "description": "Source category observed during the benchmark."
+      },
+      {
+        "name": "status",
+        "data_type": "LowCardinality(String)",
+        "default": "'unknown'",
+        "description": "Actual benchmark lifecycle state."
+      },
+      {
+        "name": "started_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "default": "NULL",
+        "description": "Observed UTC Unix milliseconds; unknown remains NULL."
+      },
+      {
+        "name": "completed_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "default": "NULL",
+        "description": "Observed UTC Unix milliseconds; unknown remains NULL."
+      },
+      {
+        "name": "metrics_json",
+        "data_type": "String",
+        "default": "'{}'",
+        "description": "Additional measured counts, latencies and resource metrics; not asset quantities."
+      },
+      {
+        "name": "error_message",
+        "data_type": "String",
+        "default": "''",
+        "description": "Sanitized operational error summary."
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "default": "'{}'",
+        "description": "Original source evidence retained without dropping legacy-only columns."
+      },
+      {
+        "name": "blocks_per_second",
+        "data_type": "Nullable(Float64)",
+        "default": "NULL",
+        "description": "Measured nonnegative throughput; unknown remains NULL."
+      },
+      {
+        "name": "transactions_per_second",
+        "data_type": "Nullable(Float64)",
+        "default": "NULL",
+        "description": "Measured nonnegative throughput; unknown remains NULL."
+      },
+      {
+        "name": "rows_per_second",
+        "data_type": "Nullable(Float64)",
+        "default": "NULL",
+        "description": "Measured nonnegative throughput; unknown remains NULL."
+      }
+    ]
+  },
+  "rules": [
+    {
+      "table": "aml_ingested_blocks",
+      "column": "expected_counts_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_ingested_blocks",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "token_id",
+      "kind": "token_id"
+    },
+    {
+      "table": "aml_address_relationships",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_transaction_features",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_semantic_aml_events",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_sync_state",
+      "column": "source_cursor_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_ingestion_failures",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_ingestion_failures",
+      "column": "retryable",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_ingestion_failures",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_ingestion_benchmarks",
+      "column": "status",
+      "kind": "enum",
+      "values": [
+        "unknown",
+        "pending",
+        "running",
+        "complete",
+        "failed",
+        "cancelled"
+      ]
+    },
+    {
+      "table": "aml_ingestion_benchmarks",
+      "column": "metrics_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_ingestion_benchmarks",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_ingestion_benchmarks",
+      "column": "blocks_per_second",
+      "kind": "nonnegative"
+    },
+    {
+      "table": "aml_ingestion_benchmarks",
+      "column": "transactions_per_second",
+      "kind": "nonnegative"
+    },
+    {
+      "table": "aml_ingestion_benchmarks",
+      "column": "rows_per_second",
+      "kind": "nonnegative"
+    }
+  ]
+}

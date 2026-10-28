@@ -3,6 +3,7 @@ pub mod bitcoin;
 pub mod config;
 pub mod db;
 pub mod domain;
+pub mod intelligence;
 pub mod storage;
 // Preserve the existing library API while the implementation follows the
 // domain/db/storage boundaries used by the other chain adapters.

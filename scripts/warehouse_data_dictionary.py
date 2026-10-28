@@ -149,6 +149,8 @@ OWNERS = {
         ("core,utxo,holdings", "src/db/warehouse.rs", 'pub fn utxos()', "canonical readers preserve BIP30 occurrence"),
         ("core", "src/db/queries.rs", 'publication::state(', "checkpoint/current-state reader"),
         ("operations", "src/bitcoin/failures.rs", 'aml_ingestion_failures', "failure writer and current-state reader"),
+        ("intelligence", "src/intelligence/mod.rs", 'pub async fn review(', "separate reviewed attribution publication and durable review evidence"),
+        ("intelligence", "src/intelligence/mod.rs", 'pub async fn read(', "address-scoped active source/review/validity reader and snapshot"),
     ],
 }
 
@@ -550,6 +552,102 @@ def build(snapshot):
         report["target_value_contract"]={"version":values_contract["version"],"migration_id":values_contract["migration_id"],
             "path":relative(values_path),"normalized_sha256":normalized_hash(values_path),"rule_count":len(values_contract["rules"]),
             "scope":"v2 column rules; physical columns remain the v1 snapshot; see DB03_VALIDATION.md"}
+    # DB-01 is an immutable materialized baseline, not a live v3 inventory.
+    # Keep its source mappings honest and publish the additive target separately.
+    core_path=ROOT/"shared/warehouse/schema/0003_core_evidence.json"
+    current_path=ROOT/"docs/warehouse/core-contract-v3.json"
+    if core_path.exists():
+        core=read_json(core_path)
+        current=read_json(current_path)
+        if current["version"] != core["version"] or current["migration_id"] != core["migration_id"]:
+            raise ValueError("Current contract export does not match core migration")
+        for table in current["tables"]:
+            expected=targets[table["name"]]["columns"]+core["columns"].get(table["name"],[])
+            if table["columns"] != expected:
+                raise ValueError("Current contract column export is stale: "+table["name"])
+        report["target_core_contract"]={"version":core["version"],"migration_id":core["migration_id"],
+            "path":relative(core_path),"normalized_sha256":normalized_hash(core_path),
+            "effective_contract":relative(current_path),"effective_contract_sha256":normalized_hash(current_path),
+            "tables":len(current["tables"]),"views":len(current["views"]),
+            "table_columns":sum(len(t["columns"]) for t in current["tables"]),"added_columns":core["columns"],
+            "scope":"v3 target core schema; DB-01 shared_objects remain the historical v1 snapshot; legacy writer/reader cutover remains DB-08"}
+    analytics_path=ROOT/"shared/warehouse/schema/0004_analytics_specialized.json"
+    if analytics_path.exists():
+        delta=read_json(analytics_path)
+        effective_path=ROOT/"docs/warehouse/analytics-contract-v4.json"
+        effective=read_json(effective_path)
+        previous={t["name"]:t for t in current["tables"]}
+        added={t["name"]:t for t in delta["tables"]}
+        if effective["version"] != delta["version"] or effective["migration_id"] != delta["migration_id"]:
+            raise ValueError("Current contract export does not match analytics migration")
+        if {t["name"] for t in effective["tables"]} != set(previous)|set(added):
+            raise ValueError("Current analytics table coverage is stale")
+        expected_views=[]
+        for view in current["views"]:
+            view=dict(view)
+            if view["name"]=="aml_evm_logs_canonical":
+                cols=previous["aml_evm_logs"]["columns"]+delta["columns"]["aml_evm_logs"]
+                projection=", ".join("f."+c["name"]+" AS "+c["name"] for c in cols)
+                view["select"]="SELECT "+projection+" FROM {{database}}.aml_evm_logs AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+            expected_views.append(view)
+        if effective["views"] != expected_views+delta["views"]:
+            raise ValueError("Current analytics view export is stale")
+        for table in effective["tables"]:
+            expected=added[table["name"]]["columns"] if table["name"] in added else previous[table["name"]]["columns"]+delta["columns"].get(table["name"],[])
+            if table["columns"] != expected:raise ValueError("Current analytics column export is stale: "+table["name"])
+        report["target_analytics_contract"]={"version":delta["version"],"migration_id":delta["migration_id"],
+            "path":relative(analytics_path),"normalized_sha256":normalized_hash(analytics_path),
+            "effective_contract":relative(effective_path),"effective_contract_sha256":normalized_hash(effective_path),
+            "tables":len(effective["tables"]),"views":len(effective["views"]),"table_columns":sum(len(t["columns"]) for t in effective["tables"]),
+            "new_tables":list(added),"added_columns":delta["columns"],
+            "scope":"v4 target analytics/specialized schema and common readers; worker implementation and legacy cutover remain open; see DB05_ANALYTICS_CONTRACT_FA.md"}
+        report["target_analytics_mapping"]=analytics_mapping(snapshot,effective,delta)
+    visibility_path=ROOT/"shared/warehouse/schema/0005_visibility.json"
+    if visibility_path.exists():
+        delta=read_json(visibility_path);previous=read_json(ROOT/"docs/warehouse/analytics-contract-v4.json")
+        effective_path=ROOT/"docs/warehouse/current-contract.json";effective=read_json(effective_path)
+        if effective["version"]!=5 or effective["migration_id"]!=delta["migration_id"]:
+            raise ValueError("Current contract export does not match visibility migration")
+        expected={t["name"]:t["columns"]+delta["columns"].get(t["name"],[]) for t in previous["tables"]+delta["tables"]}
+        if {t["name"]:t["columns"] for t in effective["tables"]}!=expected:raise ValueError("Current visibility column export is stale")
+        views=[dict(v) for v in previous["views"]]
+        for view in delta["views"]:
+            index=next((i for i,v in enumerate(views) if v["name"]==view["name"]),None)
+            if index is None:views.append(view)
+            else:views[index]=view
+        if effective["views"]!=views:raise ValueError("Current visibility view export is stale")
+        sources=[ROOT/"shared/warehouse/src"/name for name in ["visibility.rs","visibility_schema.rs","publication.rs","analytics.rs","core.rs"]]
+        report["target_visibility_contract"]={"version":5,"migration_id":delta["migration_id"],"path":relative(visibility_path),"normalized_sha256":normalized_hash(visibility_path),
+            "effective_contract":relative(effective_path),"effective_contract_sha256":normalized_hash(effective_path),"tables":len(effective["tables"]),"views":len(effective["views"]),"table_columns":sum(len(t["columns"]) for t in effective["tables"]),
+            "source_manifest":[{"path":relative(p),"normalized_sha256":normalized_hash(p)} for p in sources],
+            "scope":"DB-07 common canonical/visibility contract and active Bitcoin integration; legacy three-network cutover remains DB-08; finality is not inferred from confirmation depth"}
+    relationship_sql=ROOT/"shared/warehouse/src/relationships/query.sql"
+    if relationship_sql.exists():
+        review_sql=ROOT/"dockerizd_bitcoin/sql/queries/relationships.sql"
+        if not review_sql.exists() or normalized_hash(review_sql)!=normalized_hash(relationship_sql):
+            raise ValueError("Relationship SQL review artifact is stale")
+        sources=[*sorted((ROOT/"shared/warehouse/src/relationships").glob("*.rs")),
+            ROOT/"dockerizd_bitcoin/src/api.rs",ROOT/"dockerizd_bitcoin/src/db/warehouse.rs",
+            ROOT/"dockerizd_bitcoin/src/domain/model.rs",ROOT/"analytical_node/src/main.rs",
+            ROOT/"dockerizd_bitcoin/web/bitcoin.js"]
+        report["relationship_interpretation"]={"version":"typed_relationships_v1","introduced_storage_schema_version":4,"storage_schema_version":5,
+            "mutates_storage":False,"sql_path":relative(relationship_sql),"sql_sha256":normalized_hash(relationship_sql),
+            "review_sql_path":relative(review_sql),"source_manifest":[{"path":relative(p),"normalized_sha256":normalized_hash(p)} for p in sources],
+            "bitcoin":"active writer validation and shared canonical graph reader; observed UTXO legs, no input/output allocation",
+            "other_networks":"same shared API/model tested; active legacy writer/reader cutover remains DB-08",
+             "scope":"DB-06 interpretation remains compatible with the additive v5 visibility contract; historical schema v4 remains immutable; no history conversion"}
+    recovery_sources = [ROOT / name for name in (
+        "scripts/warehouse_backup.py", "shared/clickhouse/backup_disk.xml",
+        "shared/clickhouse/backup.compose.yml", "scripts/provision_vms.py",
+        "scripts/provision_vms_real.py", "scripts/tests/warehouse_backup_integration.py")]
+    report["migration_recovery"] = {
+        "stage": "DB-08A", "storage_schema_version": 5, "schema_changed": False,
+        "cutover_allowed": False, "row_encoding": "typed_hex_v1",
+        "deployment": "independent backup disk and database on each network VM",
+        "source_manifest": [{"path": relative(p), "normalized_sha256": normalized_hash(p)} for p in recovery_sources],
+        "acceptance": "docs/warehouse/db08a-acceptance.json",
+        "runbook": "docs/warehouse/DB08A_BACKUP_RESTORE_FA.md",
+        "remaining": ["DB-08B lossless mappings and reconciliation", "DB-08C active writers/readers and backfill", "DB-08D analytics/worker parity and final cutover"]}
     for chain, data in snapshot["chains"].items():
         owners = owner_evidence(chain)
         objects = []
@@ -594,6 +692,49 @@ def build(snapshot):
     return report
 
 
+def analytics_mapping(snapshot, contract, delta):
+    """Versioned conversion PLAN; retains original names/types alongside candidates.
+
+    This never copies legacy rows or promotes source metadata to analyst approval.
+    """
+    targets={t["name"]:t for t in contract["tables"]}
+    supported=set(delta["columns"])|{t["name"] for t in delta["tables"]}
+    overrides={"token_metadata_discoveries":"aml_metadata_discoveries",
+        "protocol_contract_registry":"aml_protocol_registry","cluster_versions":"aml_cluster_versions",
+        "address_exposure":"aml_address_exposures","address_entity":"aml_entity_addresses",
+        "address_entities":"aml_entity_addresses","exchange_addresses":"aml_entity_addresses"}
+    aliases={"chain":"network_id","label_id":"claim_id","source":"source_id",
+        "source_record_id":"source_record_id","supersedes_label_id":"supersedes_claim_id",
+        "reviewer":"reviewed_by","risk_percent":"risk_level","token_address":"asset_id",
+        "token_standard":"asset_standard","attempt_count":"attempts","source_claim_id":"claim_id",
+        "source_label_id":"claim_id","left_address":"left_subject_id","right_address":"right_subject_id",
+        "address":"subject_id","version":"cluster_version","propagation_run_id":"run_id",
+        "exposed_address":"subject_id","source_address":"source_subject_id",
+        "path_addresses":"path_subjects","subject_address":"subject_id",
+        "remote_contract_address":"remote_subject_id","contract_address":"subject_id",
+        "best_path_time_weight":"best_path_time_weight","total_supply":"total_supply_raw"}
+    result=[]
+    for chain, data in snapshot["chains"].items():
+        for obj in data["objects"]:
+            mapping=object_mapping(obj["name"])
+            target=overrides.get(obj["name"],mapping["target_table"])
+            if target not in supported:continue
+            fields={c["name"] for c in targets[target]["columns"]}
+            rows=[]
+            for c in obj["columns"]:
+                source=c["name"]
+                candidate=source if source in fields else aliases.get(source)
+                if candidate not in fields:candidate=None
+                rows.append({"source":source,"source_type":c["type"],
+                    "candidate":target+"."+candidate if candidate else None,
+                    "original_evidence_path":f"{target}.raw_evidence_json/legacy_v1/{chain}/{obj['name']}/fields/{source}",
+                    "conversion":"preserve original field name/type/value independently; validate candidate type, identity, time, precision and meaning before DB-08 conversion"})
+            result.append({"chain":chain,"source_object":obj["name"],"source_kind":obj["engine"],"target_table":target,
+                "strategy":"reconstruct view from verified provenance" if obj["engine"] in ("View","MaterializedView") or obj["name"] in ("address_entity","address_entities","exchange_addresses") else "explicit verified DB-08 table conversion",
+                "status":"plan only; no backfill or active legacy cutover", "columns":rows})
+    return result
+
+
 def shared_runtime(chain, name):
     if name in ("aml_schema_migrations", "aml_warehouse_identity"):
         return "active shared init/check; separate from legacy ledger"
@@ -606,6 +747,8 @@ def shared_runtime(chain, name):
         return "active Bitcoin source path; CLI/API/backfill; production data not inspected"
     if name.startswith(("aml_evm_logs", "aml_tron_contracts")):
         return "not_applicable to Bitcoin; common DDL present, no fabricated rows"
+    if name.startswith(("aml_intelligence_sources", "aml_intelligence_claims", "aml_intelligence_reviews")):
+        return "active Bitcoin source/import/review CLI and investigation attribution; central label risk and snapshot invalidation; exposure/clustering remain open"
     return "installed only; Bitcoin capability/writer/reader still open"
 
 
@@ -614,6 +757,8 @@ def markdown(report, chain):
     objects = report["shared_objects"] if common else report["chains"][chain]["objects"]
     lines = [f"# DB-01 dictionary: {chain}", "", "Generated by `python scripts/warehouse_data_dictionary.py`. Do not edit this file.",
              "", "Schema/source audit only. Candidate mappings are plans, not executable migrations or feature-completion claims.", ""]
+    if common:
+        lines += ["This is the immutable v1 materialized baseline. V3 is frozen in [core-contract-v3.json](../core-contract-v3.json) and v4 in [analytics-contract-v4.json](../analytics-contract-v4.json). For the current v5 target, see [the effective contract](../current-contract.json) and [DB-07](../DB07_VISIBILITY_FA.md).", ""]
     for obj in objects:
         lines += [f"## {obj['name']}", "", f"Kind: `{obj['kind']}`; engine: `{obj['engine']}`.", "",
                   f"Partition: `{obj['partition_key'] or 'none'}`; sort/primary: `{obj['sorting_key']}` / `{obj['primary_key']}`.",

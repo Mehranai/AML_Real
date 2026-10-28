@@ -64,6 +64,12 @@ fn utxo_legs_preserve_one_satoshi_and_unknown_addresses() -> Result<()> {
     assert_eq!(legs[0]["to_subject_type"], "transaction");
     assert_eq!(legs[2]["amount_raw"], "1");
     assert_eq!(legs[2]["to_subject_type"], "script");
+    assert_eq!(legs[0]["trace_address"], json!([]));
+    assert!(legs[0]["token_id"].is_null());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(legs[0]["raw_evidence_json"].as_str().unwrap())?,
+        serde_json::to_value(&evidence.inputs[0])?
+    );
     let contract = aml_warehouse::current_contract()?;
     for (name, rows) in rows {
         let table = contract.tables.iter().find(|t| t.name == name).unwrap();
@@ -90,6 +96,9 @@ fn incomplete_or_mismatched_legacy_evidence_cannot_be_published() -> Result<()> 
     evidence.inputs[0].output.value_sats = 1;
     assert!(warehouse::validate_evidence(&source, &evidence).is_err());
     evidence.inputs[0].output.value_sats = 2;
+    evidence.inputs[0].output.address = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT".into();
+    assert!(warehouse::validate_evidence(&source, &evidence).is_err());
+    evidence.inputs[0].output.address = String::new();
     evidence.outputs[1].block_hash = "c".repeat(64);
     assert!(warehouse::validate_evidence(&source, &evidence).is_err());
     Ok(())

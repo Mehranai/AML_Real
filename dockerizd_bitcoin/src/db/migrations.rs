@@ -5,10 +5,17 @@ use serde_json::Value;
 pub const BASELINE_SQL: &str =
     include_str!("../../sql/migrations/20261022_0001_shared_warehouse.sql");
 pub const COLUMN_SQL: &str = include_str!("../../sql/migrations/20261026_0002_column_contract.sql");
+pub const CORE_SQL: &str = include_str!("../../sql/migrations/20261026_0003_core_evidence.sql");
+pub const ANALYTICS_SQL: &str =
+    include_str!("../../sql/migrations/20261027_0004_analytics_specialized.sql");
+pub const VISIBILITY_SQL: &str = include_str!("../../sql/migrations/20261027_0005_visibility.sql");
 impl Database {
     pub async fn initialize(&self) -> Result<()> {
         let sql = super::sql::baseline_sql()?;
         let columns = super::sql::column_sql()?;
+        let core = super::sql::core_sql()?;
+        let analytics = super::sql::analytics_sql()?;
+        let visibility = super::sql::visibility_sql()?;
         // New installs create only the shared contract. Existing legacy objects
         // are left intact for the explicit, resumable backfill command.
         aml_warehouse::contract::identifier(self.database())?;
@@ -19,12 +26,11 @@ impl Database {
             false,
         )
         .await?;
-        aml_warehouse::migration::initialize_from_migrations(
+        aml_warehouse::migration::initialize_from_chain(
             &SharedWarehouseConnection(self),
             &self.config.database,
             aml_warehouse::Network::Bitcoin,
-            &sql,
-            &columns,
+            [&sql, &columns, &core, &analytics, &visibility],
         )
         .await?;
         Ok(())
@@ -69,6 +75,14 @@ pub async fn schema_command(db: &Database, check: bool) -> Result<aml_warehouse:
 mod tests {
     #[test]
     fn embedded_migration_is_the_shared_contract_not_an_independent_schema() {
+        assert_eq!(
+            super::VISIBILITY_SQL.replace("\r\n", "\n"),
+            aml_warehouse::visibility_schema::sql_template().unwrap()
+        );
+        assert_eq!(
+            include_str!("../../sql/queries/relationships.sql").replace("\r\n", "\n"),
+            aml_warehouse::relationships::query_template().replace("\r\n", "\n")
+        );
         let contract = aml_warehouse::baseline_contract().unwrap();
         assert_eq!(
             contract
@@ -87,6 +101,14 @@ mod tests {
         assert_eq!(
             super::COLUMN_SQL.replace("\r\n", "\n"),
             aml_warehouse::semantics::upgrade_template().unwrap()
+        );
+        assert_eq!(
+            super::CORE_SQL.replace("\r\n", "\n"),
+            aml_warehouse::core_schema::sql_template().unwrap()
+        );
+        assert_eq!(
+            super::ANALYTICS_SQL.replace("\r\n", "\n"),
+            aml_warehouse::analytics_schema::sql_template().unwrap()
         );
         assert!(
             aml_warehouse::semantics::upgrade_statements(

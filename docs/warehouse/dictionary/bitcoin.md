@@ -44,9 +44,9 @@ Target inputs not supplied by a source-field mapping:
 
 Call chains (family ownership; individual direct reads/writes follow below):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:188](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:190](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
 - [dockerizd_bitcoin/src/storage/writer.rs:75](../../../dockerizd_bitcoin/src/storage/writer.rs) — generic facts writer caller; `publication::facts(`
-- [dockerizd_bitcoin/src/db/warehouse.rs:258](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:280](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
 - [dockerizd_bitcoin/src/db/warehouse.rs:19](../../../dockerizd_bitcoin/src/db/warehouse.rs) — canonical readers preserve BIP30 occurrence; `pub fn utxos()`
 - [dockerizd_bitcoin/src/db/queries.rs:8](../../../dockerizd_bitcoin/src/db/queries.rs) — checkpoint/current-state reader; `publication::state(`
 
@@ -95,16 +95,16 @@ Target inputs not supplied by a source-field mapping:
 
 Call chains (family ownership; individual direct reads/writes follow below):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:188](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:190](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
 - [dockerizd_bitcoin/src/storage/writer.rs:75](../../../dockerizd_bitcoin/src/storage/writer.rs) — generic facts writer caller; `publication::facts(`
-- [dockerizd_bitcoin/src/db/warehouse.rs:258](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:280](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
 - [dockerizd_bitcoin/src/db/warehouse.rs:19](../../../dockerizd_bitcoin/src/db/warehouse.rs) — canonical readers preserve BIP30 occurrence; `pub fn utxos()`
 - [dockerizd_bitcoin/src/db/queries.rs:8](../../../dockerizd_bitcoin/src/db/queries.rs) — checkpoint/current-state reader; `publication::state(`
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:278](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `"SELECT * FROM bitcoin_blocks_canonical WHERE block_height={height:UInt64}",`
-- [dockerizd_bitcoin/src/db/warehouse.rs:312](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `"SELECT * FROM bitcoin_blocks_canonical WHERE block_height={height:UInt64}",`
+- [dockerizd_bitcoin/src/db/warehouse.rs:300](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `"SELECT * FROM bitcoin_blocks_canonical WHERE block_height={height:UInt64}",`
+- [dockerizd_bitcoin/src/db/warehouse.rs:334](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `"SELECT * FROM bitcoin_blocks_canonical WHERE block_height={height:UInt64}",`
 
 ## bitcoin_inputs
 
@@ -146,14 +146,14 @@ Target inputs not supplied by a source-field mapping:
 
 Call chains (family ownership; individual direct reads/writes follow below):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:188](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:190](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
 - [dockerizd_bitcoin/src/storage/writer.rs:75](../../../dockerizd_bitcoin/src/storage/writer.rs) — generic facts writer caller; `publication::facts(`
-- [dockerizd_bitcoin/src/db/warehouse.rs:258](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:280](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
 - [dockerizd_bitcoin/src/db/warehouse.rs:19](../../../dockerizd_bitcoin/src/db/warehouse.rs) — canonical readers preserve BIP30 occurrence; `pub fn utxos()`
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:321](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `inputs:db.rows::<Input>("SELECT * FROM bitcoin_inputs FINAL WHERE commit_id={commit:String} ORDER BY tx_index,input_index",&params).await?,`
+- [dockerizd_bitcoin/src/db/warehouse.rs:343](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `inputs:db.rows::<Input>("SELECT * FROM bitcoin_inputs FINAL WHERE commit_id={commit:String} ORDER BY tx_index,input_index",&params).await?,`
 
 ## bitcoin_inputs_canonical
 
@@ -197,9 +197,9 @@ Target inputs not supplied by a source-field mapping:
 
 Call chains (family ownership; individual direct reads/writes follow below):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:188](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:190](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
 - [dockerizd_bitcoin/src/storage/writer.rs:75](../../../dockerizd_bitcoin/src/storage/writer.rs) — generic facts writer caller; `publication::facts(`
-- [dockerizd_bitcoin/src/db/warehouse.rs:258](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:280](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
 - [dockerizd_bitcoin/src/db/warehouse.rs:19](../../../dockerizd_bitcoin/src/db/warehouse.rs) — canonical readers preserve BIP30 occurrence; `pub fn utxos()`
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -245,14 +245,14 @@ Target inputs not supplied by a source-field mapping:
 
 Call chains (family ownership; individual direct reads/writes follow below):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:188](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:190](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
 - [dockerizd_bitcoin/src/storage/writer.rs:75](../../../dockerizd_bitcoin/src/storage/writer.rs) — generic facts writer caller; `publication::facts(`
-- [dockerizd_bitcoin/src/db/warehouse.rs:258](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:280](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
 - [dockerizd_bitcoin/src/db/warehouse.rs:19](../../../dockerizd_bitcoin/src/db/warehouse.rs) — canonical readers preserve BIP30 occurrence; `pub fn utxos()`
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:322](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `outputs:db.rows::<Output>("SELECT * FROM bitcoin_outputs FINAL WHERE commit_id={commit:String} ORDER BY tx_index,output_index",&params).await?,`
+- [dockerizd_bitcoin/src/db/warehouse.rs:344](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `outputs:db.rows::<Output>("SELECT * FROM bitcoin_outputs FINAL WHERE commit_id={commit:String} ORDER BY tx_index,output_index",&params).await?,`
 
 ## bitcoin_outputs_canonical
 
@@ -295,9 +295,9 @@ Target inputs not supplied by a source-field mapping:
 
 Call chains (family ownership; individual direct reads/writes follow below):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:188](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:190](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
 - [dockerizd_bitcoin/src/storage/writer.rs:75](../../../dockerizd_bitcoin/src/storage/writer.rs) — generic facts writer caller; `publication::facts(`
-- [dockerizd_bitcoin/src/db/warehouse.rs:258](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:280](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
 - [dockerizd_bitcoin/src/db/warehouse.rs:19](../../../dockerizd_bitcoin/src/db/warehouse.rs) — canonical readers preserve BIP30 occurrence; `pub fn utxos()`
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -339,9 +339,9 @@ Target inputs not supplied by a source-field mapping:
 
 Call chains (family ownership; individual direct reads/writes follow below):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:188](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:190](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
 - [dockerizd_bitcoin/src/storage/writer.rs:75](../../../dockerizd_bitcoin/src/storage/writer.rs) — generic facts writer caller; `publication::facts(`
-- [dockerizd_bitcoin/src/db/warehouse.rs:258](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:280](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
 - [dockerizd_bitcoin/src/db/warehouse.rs:19](../../../dockerizd_bitcoin/src/db/warehouse.rs) — canonical readers preserve BIP30 occurrence; `pub fn utxos()`
 - [dockerizd_bitcoin/src/db/queries.rs:8](../../../dockerizd_bitcoin/src/db/queries.rs) — checkpoint/current-state reader; `publication::state(`
 
@@ -382,9 +382,9 @@ Target inputs not supplied by a source-field mapping:
 
 Call chains (family ownership; individual direct reads/writes follow below):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:188](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:190](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
 - [dockerizd_bitcoin/src/storage/writer.rs:75](../../../dockerizd_bitcoin/src/storage/writer.rs) — generic facts writer caller; `publication::facts(`
-- [dockerizd_bitcoin/src/db/warehouse.rs:258](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:280](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
 - [dockerizd_bitcoin/src/db/warehouse.rs:19](../../../dockerizd_bitcoin/src/db/warehouse.rs) — canonical readers preserve BIP30 occurrence; `pub fn utxos()`
 - [dockerizd_bitcoin/src/db/queries.rs:8](../../../dockerizd_bitcoin/src/db/queries.rs) — checkpoint/current-state reader; `publication::state(`
 
@@ -436,15 +436,15 @@ Target inputs not supplied by a source-field mapping:
 
 Call chains (family ownership; individual direct reads/writes follow below):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:188](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:190](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
 - [dockerizd_bitcoin/src/storage/writer.rs:75](../../../dockerizd_bitcoin/src/storage/writer.rs) — generic facts writer caller; `publication::facts(`
-- [dockerizd_bitcoin/src/db/warehouse.rs:258](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:280](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
 - [dockerizd_bitcoin/src/db/warehouse.rs:19](../../../dockerizd_bitcoin/src/db/warehouse.rs) — canonical readers preserve BIP30 occurrence; `pub fn utxos()`
 - [dockerizd_bitcoin/src/db/queries.rs:8](../../../dockerizd_bitcoin/src/db/queries.rs) — checkpoint/current-state reader; `publication::state(`
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:320](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `transactions:db.rows::<Transaction>("SELECT * FROM bitcoin_transactions FINAL WHERE commit_id={commit:String} ORDER BY tx_index",&params).await?,`
+- [dockerizd_bitcoin/src/db/warehouse.rs:342](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `transactions:db.rows::<Transaction>("SELECT * FROM bitcoin_transactions FINAL WHERE commit_id={commit:String} ORDER BY tx_index",&params).await?,`
 
 ## bitcoin_transactions_canonical
 
@@ -490,9 +490,9 @@ Target inputs not supplied by a source-field mapping:
 
 Call chains (family ownership; individual direct reads/writes follow below):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:188](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:190](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
 - [dockerizd_bitcoin/src/storage/writer.rs:75](../../../dockerizd_bitcoin/src/storage/writer.rs) — generic facts writer caller; `publication::facts(`
-- [dockerizd_bitcoin/src/db/warehouse.rs:258](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:280](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
 - [dockerizd_bitcoin/src/db/warehouse.rs:19](../../../dockerizd_bitcoin/src/db/warehouse.rs) — canonical readers preserve BIP30 occurrence; `pub fn utxos()`
 - [dockerizd_bitcoin/src/db/queries.rs:8](../../../dockerizd_bitcoin/src/db/queries.rs) — checkpoint/current-state reader; `publication::state(`
 
@@ -533,9 +533,9 @@ Verified direct/helper writers: 0; generic bindings: 0; direct readers: 0.
 
 Call chains (family ownership; individual direct reads/writes follow below):
 
-- [dockerizd_bitcoin/src/db/warehouse.rs:188](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:190](../../../dockerizd_bitcoin/src/db/warehouse.rs) — four fact-table mappings; typed UTXO legs; `pub fn map_evidence(`
 - [dockerizd_bitcoin/src/storage/writer.rs:75](../../../dockerizd_bitcoin/src/storage/writer.rs) — generic facts writer caller; `publication::facts(`
-- [dockerizd_bitcoin/src/db/warehouse.rs:258](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
+- [dockerizd_bitcoin/src/db/warehouse.rs:280](../../../dockerizd_bitcoin/src/db/warehouse.rs) — legacy read-only migration owner; `pub async fn backfill(`
 - [dockerizd_bitcoin/src/db/warehouse.rs:19](../../../dockerizd_bitcoin/src/db/warehouse.rs) — canonical readers preserve BIP30 occurrence; `pub fn utxos()`
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):

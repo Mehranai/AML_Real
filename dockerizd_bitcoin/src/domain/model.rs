@@ -47,6 +47,22 @@ pub struct ScriptOutput {
     pub value_sats: u64,
 }
 impl ScriptOutput {
+    pub fn validate(&self) -> Result<()> {
+        let bytes = ScriptBuf::from_hex(&self.script_hex).context("invalid script hex")?;
+        ensure!(
+            self.script_hex == self.script_hex.to_ascii_lowercase(),
+            "script hex must be canonical"
+        );
+        let derived = Address::from_script(&bytes, Network::Bitcoin)
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        ensure!(
+            self.address == derived,
+            "prevout/output address does not match its script"
+        );
+        aml_warehouse::RawAmount::from_satoshis(self.value_sats)?;
+        Ok(())
+    }
     pub fn from_rpc(value: &Value) -> Result<Self> {
         let script = value.get("scriptPubKey").context("missing scriptPubKey")?;
         let hex = script["hex"].as_str().context("missing script hex")?;

@@ -1,0 +1,2560 @@
+{
+  "version": 4,
+  "migration_id": "20261027_0004_analytics_specialized",
+  "description": "Auditable analytics provenance, entity/protocol/discovery contracts and network-specialized evidence.",
+  "previous_checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e",
+  "columns": {
+    "aml_asset_metadata": [
+      {
+        "name": "total_supply_raw",
+        "data_type": "Nullable(UInt256)",
+        "description": "total supply raw; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "code_hash",
+        "data_type": "Nullable(String)",
+        "description": "code hash; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "is_verified",
+        "data_type": "Nullable(UInt8)",
+        "description": "is verified; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "metadata_status",
+        "data_type": "LowCardinality(String)",
+        "description": "metadata status; original evidence is retained separately.",
+        "default": "'unknown'"
+      },
+      {
+        "name": "observed_block",
+        "data_type": "Nullable(UInt64)",
+        "description": "observed block; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "verified_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "verified at unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "reviewed_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "reviewed at unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "updated_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "updated at unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_metadata_jobs": [
+      {
+        "name": "discovery_id",
+        "data_type": "Nullable(String)",
+        "description": "discovery id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "discovered_block",
+        "data_type": "Nullable(UInt64)",
+        "description": "discovered block; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "source_revision",
+        "data_type": "Nullable(UInt64)",
+        "description": "source revision; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "last_error_class",
+        "data_type": "String",
+        "description": "last error class; original evidence is retained separately.",
+        "default": "''"
+      },
+      {
+        "name": "started_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "started at unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "completed_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "completed at unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "updated_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "updated at unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_intelligence_sources": [
+      {
+        "name": "metadata_json",
+        "data_type": "String",
+        "description": "metadata json; original evidence is retained separately.",
+        "default": "'{}'"
+      },
+      {
+        "name": "updated_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "updated at unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_intelligence_claims": [
+      {
+        "name": "source_record_id",
+        "data_type": "Nullable(String)",
+        "description": "source record id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "supersedes_claim_id",
+        "data_type": "Nullable(String)",
+        "description": "supersedes claim id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "submitted_by",
+        "data_type": "Nullable(String)",
+        "description": "submitted by; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "case_id",
+        "data_type": "Nullable(String)",
+        "description": "case id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "reviewed_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "reviewed at unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "evidence_json",
+        "data_type": "String",
+        "description": "evidence json; original evidence is retained separately.",
+        "default": "'{}'"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_intelligence_reviews": [
+      {
+        "name": "subject_revision",
+        "data_type": "Nullable(UInt64)",
+        "description": "subject revision; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "supersedes_review_id",
+        "data_type": "Nullable(String)",
+        "description": "supersedes review id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "case_id",
+        "data_type": "Nullable(String)",
+        "description": "case id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "evidence_json",
+        "data_type": "String",
+        "description": "evidence json; original evidence is retained separately.",
+        "default": "'{}'"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_cluster_claims": [
+      {
+        "name": "left_subject_id",
+        "data_type": "Nullable(String)",
+        "description": "left subject id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "right_subject_id",
+        "data_type": "Nullable(String)",
+        "description": "right subject id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "same_entity",
+        "data_type": "Nullable(UInt8)",
+        "description": "same entity; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "run_id",
+        "data_type": "Nullable(String)",
+        "description": "run id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "source_record_id",
+        "data_type": "Nullable(String)",
+        "description": "source record id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "supersedes_claim_id",
+        "data_type": "Nullable(String)",
+        "description": "supersedes claim id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "created_by",
+        "data_type": "Nullable(String)",
+        "description": "created by; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "reviewed_by",
+        "data_type": "Nullable(String)",
+        "description": "reviewed by; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "review_id",
+        "data_type": "Nullable(String)",
+        "description": "review id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "cluster_type",
+        "data_type": "String",
+        "description": "cluster type; original evidence is retained separately.",
+        "default": "''"
+      },
+      {
+        "name": "address_role",
+        "data_type": "String",
+        "description": "address role; original evidence is retained separately.",
+        "default": "''"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_cluster_memberships": [
+      {
+        "name": "membership_id",
+        "data_type": "Nullable(String)",
+        "description": "membership id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "run_id",
+        "data_type": "Nullable(String)",
+        "description": "run id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "entity_id",
+        "data_type": "Nullable(String)",
+        "description": "entity id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "membership_type",
+        "data_type": "String",
+        "description": "membership type; original evidence is retained separately.",
+        "default": "''"
+      },
+      {
+        "name": "confidence",
+        "data_type": "Nullable(Float64)",
+        "description": "confidence; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "review_id",
+        "data_type": "Nullable(String)",
+        "description": "review id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "cluster_type",
+        "data_type": "String",
+        "description": "cluster type; original evidence is retained separately.",
+        "default": "''"
+      },
+      {
+        "name": "address_role",
+        "data_type": "String",
+        "description": "address role; original evidence is retained separately.",
+        "default": "''"
+      },
+      {
+        "name": "evidence_json",
+        "data_type": "String",
+        "description": "evidence json; original evidence is retained separately.",
+        "default": "'{}'"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_cluster_runs": [
+      {
+        "name": "entity_memberships",
+        "data_type": "Nullable(UInt64)",
+        "description": "entity memberships; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "control_claims",
+        "data_type": "Nullable(UInt64)",
+        "description": "control claims; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "error_message",
+        "data_type": "String",
+        "description": "error message; original evidence is retained separately.",
+        "default": "''"
+      },
+      {
+        "name": "settings_json",
+        "data_type": "String",
+        "description": "settings json; original evidence is retained separately.",
+        "default": "'{}'"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_exposure_seeds": [
+      {
+        "name": "entity_id",
+        "data_type": "Nullable(String)",
+        "description": "entity id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "entity_name",
+        "data_type": "Nullable(String)",
+        "description": "entity name; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "entity_type",
+        "data_type": "Nullable(String)",
+        "description": "entity type; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "risk_level",
+        "data_type": "Nullable(UInt8)",
+        "description": "risk level; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "source_id",
+        "data_type": "Nullable(String)",
+        "description": "source id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "claim_revision",
+        "data_type": "Nullable(UInt64)",
+        "description": "claim revision; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "evidence_refs",
+        "data_type": "Array(String)",
+        "description": "evidence refs; original evidence is retained separately.",
+        "default": "[]"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_exposure_runs": [
+      {
+        "name": "seed_ids",
+        "data_type": "Array(String)",
+        "description": "seed ids; original evidence is retained separately.",
+        "default": "[]"
+      },
+      {
+        "name": "seed_snapshot_json",
+        "data_type": "String",
+        "description": "seed snapshot json; original evidence is retained separately.",
+        "default": "'{}'"
+      },
+      {
+        "name": "detector_version",
+        "data_type": "Nullable(String)",
+        "description": "detector version; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "hop_decay",
+        "data_type": "Nullable(Float64)",
+        "description": "hop decay; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "time_half_life_days",
+        "data_type": "Nullable(Float64)",
+        "description": "time half life days; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "max_paths_per_subject",
+        "data_type": "Nullable(UInt32)",
+        "description": "max paths per subject; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "seed_count",
+        "data_type": "Nullable(UInt64)",
+        "description": "seed count; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "path_count",
+        "data_type": "Nullable(UInt64)",
+        "description": "path count; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "settings_json",
+        "data_type": "String",
+        "description": "settings json; original evidence is retained separately.",
+        "default": "'{}'"
+      },
+      {
+        "name": "error_message",
+        "data_type": "String",
+        "description": "error message; original evidence is retained separately.",
+        "default": "''"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_exposure_paths": [
+      {
+        "name": "seed_entity_id",
+        "data_type": "Nullable(String)",
+        "description": "seed entity id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "seed_category",
+        "data_type": "Nullable(String)",
+        "description": "seed category; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "seed_risk_level",
+        "data_type": "Nullable(UInt8)",
+        "description": "seed risk level; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "time_weight",
+        "data_type": "Nullable(Float64)",
+        "description": "time weight; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "service_mediated",
+        "data_type": "Nullable(UInt8)",
+        "description": "service mediated; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "service_entity_id",
+        "data_type": "Nullable(String)",
+        "description": "service entity id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "continuity_type",
+        "data_type": "Nullable(String)",
+        "description": "continuity type; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "first_transfer_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "first transfer unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "last_transfer_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "last transfer unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "detector_version",
+        "data_type": "Nullable(String)",
+        "description": "detector version; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "allocation_json",
+        "data_type": "String",
+        "description": "allocation json; original evidence is retained separately.",
+        "default": "'{}'"
+      },
+      {
+        "name": "evidence_json",
+        "data_type": "String",
+        "description": "evidence json; original evidence is retained separately.",
+        "default": "'{}'"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_risk_policies": [
+      {
+        "name": "settings_json",
+        "data_type": "String",
+        "description": "settings json; original evidence is retained separately.",
+        "default": "'{}'"
+      },
+      {
+        "name": "source_id",
+        "data_type": "Nullable(String)",
+        "description": "source id; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "updated_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "updated at unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_risk_policy_rules": [
+      {
+        "name": "settings_json",
+        "data_type": "String",
+        "description": "settings json; original evidence is retained separately.",
+        "default": "'{}'"
+      },
+      {
+        "name": "updated_at_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "updated at unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_wallet_risk_signals": [
+      {
+        "name": "signal_strength",
+        "data_type": "Nullable(Float64)",
+        "description": "signal strength; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "as_of_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "as of unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_wallet_risk_assessments": [
+      {
+        "name": "top_reasons",
+        "data_type": "Array(String)",
+        "description": "top reasons; original evidence is retained separately.",
+        "default": "[]"
+      },
+      {
+        "name": "evidence_refs",
+        "data_type": "Array(String)",
+        "description": "evidence refs; original evidence is retained separately.",
+        "default": "[]"
+      },
+      {
+        "name": "as_of_unix_ms",
+        "data_type": "Nullable(UInt64)",
+        "description": "as of unix ms; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "scoring_method",
+        "data_type": "Nullable(String)",
+        "description": "scoring method; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "evidence_json",
+        "data_type": "String",
+        "description": "evidence json; original evidence is retained separately.",
+        "default": "'{}'"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ],
+    "aml_evm_logs": [
+      {
+        "name": "transaction_index",
+        "data_type": "Nullable(UInt32)",
+        "description": "transaction index; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "removed",
+        "data_type": "Nullable(UInt8)",
+        "description": "removed; original evidence is retained separately.",
+        "default": "NULL"
+      },
+      {
+        "name": "raw_evidence_json",
+        "data_type": "String",
+        "description": "Versioned original field/type/value payload; defaults never claim historical recovery.",
+        "default": "'{}'"
+      }
+    ]
+  },
+  "tables": [
+    {
+      "name": "aml_metadata_discoveries",
+      "purpose": "Observed asset-discovery evidence, separate from metadata job lifecycle.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "discovery_id",
+          "data_type": "String",
+          "description": "discovery id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "transaction_index",
+          "data_type": "UInt32",
+          "description": "transaction index; original evidence is retained separately.",
+          "default": "0"
+        },
+        {
+          "name": "asset_id",
+          "data_type": "String",
+          "description": "asset id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "standard_hint",
+          "data_type": "String",
+          "description": "standard hint; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "evidence_id",
+          "data_type": "String",
+          "description": "evidence id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "source_id",
+          "data_type": "String",
+          "description": "source id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs; original evidence is retained separately.",
+          "default": "[]"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "raw evidence json; original evidence is retained separately.",
+          "default": "'{}'"
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Observation Unix milliseconds.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "discovery_id"
+      ],
+      "partition_by": "intDiv(block_number,100000)",
+      "indexes": []
+    },
+    {
+      "name": "aml_protocol_registry",
+      "purpose": "Reviewed protocol evidence, including original remote/decoder configuration.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Validated identity of the local network database.",
+          "default": null
+        },
+        {
+          "name": "registry_id",
+          "data_type": "String",
+          "description": "registry id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "subject_id",
+          "data_type": "String",
+          "description": "subject id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "subject_type",
+          "data_type": "LowCardinality(String)",
+          "description": "subject type; original evidence is retained separately.",
+          "default": "'address'"
+        },
+        {
+          "name": "protocol",
+          "data_type": "String",
+          "description": "protocol; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "protocol_type",
+          "data_type": "String",
+          "description": "protocol type; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "contract_role",
+          "data_type": "String",
+          "description": "contract role; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "remote_network_id",
+          "data_type": "Nullable(String)",
+          "description": "remote network id; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "remote_subject_id",
+          "data_type": "Nullable(String)",
+          "description": "remote subject id; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "decoder",
+          "data_type": "String",
+          "description": "decoder; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "decoder_config_json",
+          "data_type": "String",
+          "description": "decoder config json; original evidence is retained separately.",
+          "default": "'{}'"
+        },
+        {
+          "name": "source_id",
+          "data_type": "String",
+          "description": "source id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "source_reference",
+          "data_type": "String",
+          "description": "source reference; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "confidence",
+          "data_type": "Float64",
+          "description": "confidence; original evidence is retained separately.",
+          "default": "0"
+        },
+        {
+          "name": "enabled",
+          "data_type": "UInt8",
+          "description": "enabled; original evidence is retained separately.",
+          "default": "0"
+        },
+        {
+          "name": "review_status",
+          "data_type": "LowCardinality(String)",
+          "description": "review status; original evidence is retained separately.",
+          "default": "'pending'"
+        },
+        {
+          "name": "reviewed_by",
+          "data_type": "String",
+          "description": "reviewed by; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "reviewed_at_unix_ms",
+          "data_type": "Nullable(UInt64)",
+          "description": "reviewed at unix ms; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "review_note",
+          "data_type": "String",
+          "description": "review note; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs; original evidence is retained separately.",
+          "default": "[]"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "raw evidence json; original evidence is retained separately.",
+          "default": "'{}'"
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic record revision; positive.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Observation/publication Unix milliseconds.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "registry_id"
+      ],
+      "partition_by": null,
+      "indexes": []
+    },
+    {
+      "name": "aml_entities",
+      "purpose": "Entity identity catalog; metadata alone never creates an approved address claim.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Validated identity of the local network database.",
+          "default": null
+        },
+        {
+          "name": "entity_id",
+          "data_type": "String",
+          "description": "entity id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "entity_name",
+          "data_type": "String",
+          "description": "entity name; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "entity_type",
+          "data_type": "String",
+          "description": "entity type; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "source_id",
+          "data_type": "String",
+          "description": "source id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "source_reference",
+          "data_type": "String",
+          "description": "source reference; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "is_active",
+          "data_type": "UInt8",
+          "description": "is active; original evidence is retained separately.",
+          "default": "0"
+        },
+        {
+          "name": "review_status",
+          "data_type": "LowCardinality(String)",
+          "description": "review status; original evidence is retained separately.",
+          "default": "'pending'"
+        },
+        {
+          "name": "reviewed_by",
+          "data_type": "String",
+          "description": "reviewed by; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "reviewed_at_unix_ms",
+          "data_type": "Nullable(UInt64)",
+          "description": "reviewed at unix ms; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "review_note",
+          "data_type": "String",
+          "description": "review note; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs; original evidence is retained separately.",
+          "default": "[]"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "raw evidence json; original evidence is retained separately.",
+          "default": "'{}'"
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic record revision; positive.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Observation/publication Unix milliseconds.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "entity_id"
+      ],
+      "partition_by": null,
+      "indexes": []
+    },
+    {
+      "name": "aml_entity_addresses",
+      "purpose": "Claim-backed entity/exchange address projection; raw imports stay inactive without reviewed provenance.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Validated identity of the local network database.",
+          "default": null
+        },
+        {
+          "name": "entity_id",
+          "data_type": "String",
+          "description": "entity id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "address",
+          "data_type": "String",
+          "description": "address; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "address_role",
+          "data_type": "String",
+          "description": "address role; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "claim_id",
+          "data_type": "String",
+          "description": "claim id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "source_id",
+          "data_type": "String",
+          "description": "source id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "confidence",
+          "data_type": "Float64",
+          "description": "confidence; original evidence is retained separately.",
+          "default": "0"
+        },
+        {
+          "name": "is_active",
+          "data_type": "UInt8",
+          "description": "is active; original evidence is retained separately.",
+          "default": "0"
+        },
+        {
+          "name": "first_seen_block",
+          "data_type": "Nullable(UInt64)",
+          "description": "first seen block; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "last_seen_block",
+          "data_type": "Nullable(UInt64)",
+          "description": "last seen block; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "review_status",
+          "data_type": "LowCardinality(String)",
+          "description": "review status; original evidence is retained separately.",
+          "default": "'pending'"
+        },
+        {
+          "name": "reviewed_by",
+          "data_type": "String",
+          "description": "reviewed by; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "reviewed_at_unix_ms",
+          "data_type": "Nullable(UInt64)",
+          "description": "reviewed at unix ms; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "review_note",
+          "data_type": "String",
+          "description": "review note; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs; original evidence is retained separately.",
+          "default": "[]"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "raw evidence json; original evidence is retained separately.",
+          "default": "'{}'"
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic record revision; positive.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Observation/publication Unix milliseconds.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "entity_id",
+        "address",
+        "claim_id"
+      ],
+      "partition_by": null,
+      "indexes": []
+    },
+    {
+      "name": "aml_cluster_versions",
+      "purpose": "Version catalog without collapsing pair claims into single-address membership.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Validated identity of the local network database.",
+          "default": null
+        },
+        {
+          "name": "cluster_id",
+          "data_type": "String",
+          "description": "cluster id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "cluster_version",
+          "data_type": "String",
+          "description": "cluster version; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "cluster_type",
+          "data_type": "String",
+          "description": "cluster type; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "display_name",
+          "data_type": "String",
+          "description": "display name; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "change_type",
+          "data_type": "String",
+          "description": "change type; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "change_reason",
+          "data_type": "String",
+          "description": "change reason; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "source_claim_ids",
+          "data_type": "Array(String)",
+          "description": "source claim ids; original evidence is retained separately.",
+          "default": "[]"
+        },
+        {
+          "name": "active_member_count",
+          "data_type": "Nullable(UInt64)",
+          "description": "active member count; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "created_by",
+          "data_type": "String",
+          "description": "created by; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs; original evidence is retained separately.",
+          "default": "[]"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "raw evidence json; original evidence is retained separately.",
+          "default": "'{}'"
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic record revision; positive.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Observation/publication Unix milliseconds.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "cluster_id",
+        "cluster_version"
+      ],
+      "partition_by": null,
+      "indexes": []
+    },
+    {
+      "name": "aml_address_exposures",
+      "purpose": "Observed legacy exposure aggregate; does not invent path/amount evidence.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Validated identity of the local network database.",
+          "default": null
+        },
+        {
+          "name": "exposure_id",
+          "data_type": "String",
+          "description": "exposure id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "run_id",
+          "data_type": "String",
+          "description": "run id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "seed_id",
+          "data_type": "String",
+          "description": "seed id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "source_subject_id",
+          "data_type": "String",
+          "description": "source subject id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "subject_id",
+          "data_type": "String",
+          "description": "subject id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "hop_distance",
+          "data_type": "UInt8",
+          "description": "hop distance; original evidence is retained separately.",
+          "default": "0"
+        },
+        {
+          "name": "exposure_score",
+          "data_type": "Nullable(Float64)",
+          "description": "exposure score; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "path_count",
+          "data_type": "Nullable(UInt64)",
+          "description": "path count; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "last_tx_hash",
+          "data_type": "Nullable(String)",
+          "description": "last tx hash; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "last_seen_block",
+          "data_type": "Nullable(UInt64)",
+          "description": "last seen block; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "exposure_type",
+          "data_type": "String",
+          "description": "exposure type; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "best_path_amount_share",
+          "data_type": "Nullable(Float64)",
+          "description": "best path amount share; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "best_path_time_weight",
+          "data_type": "Nullable(Float64)",
+          "description": "best path time weight; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "service_mediated",
+          "data_type": "Nullable(UInt8)",
+          "description": "service mediated; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "as_of_block",
+          "data_type": "Nullable(UInt64)",
+          "description": "as of block; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "source_revision",
+          "data_type": "Nullable(UInt64)",
+          "description": "source revision; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs; original evidence is retained separately.",
+          "default": "[]"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "raw evidence json; original evidence is retained separately.",
+          "default": "'{}'"
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic record revision; positive.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Observation/publication Unix milliseconds.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "run_id",
+        "exposure_id"
+      ],
+      "partition_by": null,
+      "indexes": []
+    },
+    {
+      "name": "aml_bitcoin_scripts",
+      "purpose": "Typed Bitcoin script evidence alongside canonical input/output outpoints.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "script_hash",
+          "data_type": "String",
+          "description": "script hash; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "script_hex",
+          "data_type": "String",
+          "description": "script hex; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "script_type",
+          "data_type": "String",
+          "description": "script type; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "address",
+          "data_type": "Nullable(String)",
+          "description": "address; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs; original evidence is retained separately.",
+          "default": "[]"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "raw evidence json; original evidence is retained separately.",
+          "default": "'{}'"
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Observation Unix milliseconds.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "tx_hash",
+        "script_hash"
+      ],
+      "partition_by": "intDiv(block_number,100000)",
+      "indexes": []
+    },
+    {
+      "name": "aml_evm_traces",
+      "purpose": "Ordered EVM trace positions and original trace payload; absent on Bitcoin/TRON.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "trace_id",
+          "data_type": "String",
+          "description": "trace id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "transaction_index",
+          "data_type": "UInt32",
+          "description": "transaction index; original evidence is retained separately.",
+          "default": "0"
+        },
+        {
+          "name": "trace_address",
+          "data_type": "Array(UInt32)",
+          "description": "trace address; original evidence is retained separately.",
+          "default": "[]"
+        },
+        {
+          "name": "trace_type",
+          "data_type": "String",
+          "description": "trace type; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "from_address",
+          "data_type": "Nullable(String)",
+          "description": "from address; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "to_address",
+          "data_type": "Nullable(String)",
+          "description": "to address; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "value_raw",
+          "data_type": "Nullable(UInt256)",
+          "description": "value raw; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "success",
+          "data_type": "Nullable(UInt8)",
+          "description": "success; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "error_message",
+          "data_type": "Nullable(String)",
+          "description": "error message; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "source_id",
+          "data_type": "String",
+          "description": "source id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs; original evidence is retained separately.",
+          "default": "[]"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "raw evidence json; original evidence is retained separately.",
+          "default": "'{}'"
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Observation Unix milliseconds.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "tx_hash",
+        "trace_id"
+      ],
+      "partition_by": "intDiv(block_number,100000)",
+      "indexes": []
+    },
+    {
+      "name": "aml_raw_transactions",
+      "purpose": "Original transaction/receipt envelope for each network; missing receipts remain NULL.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "transaction_index",
+          "data_type": "UInt32",
+          "description": "transaction index; original evidence is retained separately.",
+          "default": "0"
+        },
+        {
+          "name": "source_id",
+          "data_type": "String",
+          "description": "source id; original evidence is retained separately.",
+          "default": "''"
+        },
+        {
+          "name": "payload_json",
+          "data_type": "String",
+          "description": "payload json; original evidence is retained separately.",
+          "default": "'{}'"
+        },
+        {
+          "name": "receipt_json",
+          "data_type": "Nullable(String)",
+          "description": "receipt json; original evidence is retained separately.",
+          "default": "NULL"
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs; original evidence is retained separately.",
+          "default": "[]"
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Observation Unix milliseconds.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "tx_hash"
+      ],
+      "partition_by": "intDiv(block_number,100000)",
+      "indexes": []
+    }
+  ],
+  "views": [
+    {
+      "name": "aml_metadata_discoveries_canonical",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.discovery_id AS discovery_id, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.asset_id AS asset_id, f.standard_hint AS standard_hint, f.evidence_id AS evidence_id, f.source_id AS source_id, f.evidence_refs AS evidence_refs, f.raw_evidence_json AS raw_evidence_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_metadata_discoveries AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision",
+      "purpose": "Exact block publication fence for specialized evidence."
+    },
+    {
+      "name": "aml_protocol_registry_current",
+      "select": "SELECT * FROM {{database}}.aml_protocol_registry FINAL",
+      "purpose": "Latest revision per immutable identity; no review or freshness assertion."
+    },
+    {
+      "name": "aml_entities_current",
+      "select": "SELECT * FROM {{database}}.aml_entities FINAL",
+      "purpose": "Latest revision per immutable identity; no review or freshness assertion."
+    },
+    {
+      "name": "aml_entity_addresses_current",
+      "select": "SELECT * FROM {{database}}.aml_entity_addresses FINAL",
+      "purpose": "Latest revision per immutable identity; no review or freshness assertion."
+    },
+    {
+      "name": "aml_cluster_versions_current",
+      "select": "SELECT * FROM {{database}}.aml_cluster_versions FINAL",
+      "purpose": "Latest revision per immutable identity; no review or freshness assertion."
+    },
+    {
+      "name": "aml_address_exposures_current",
+      "select": "SELECT * FROM {{database}}.aml_address_exposures FINAL",
+      "purpose": "Latest revision per immutable identity; no review or freshness assertion."
+    },
+    {
+      "name": "aml_bitcoin_scripts_canonical",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.script_hash AS script_hash, f.script_hex AS script_hex, f.script_type AS script_type, f.address AS address, f.evidence_refs AS evidence_refs, f.raw_evidence_json AS raw_evidence_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_bitcoin_scripts AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision",
+      "purpose": "Exact block publication fence for specialized evidence."
+    },
+    {
+      "name": "aml_evm_traces_canonical",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.trace_id AS trace_id, f.transaction_index AS transaction_index, f.trace_address AS trace_address, f.trace_type AS trace_type, f.from_address AS from_address, f.to_address AS to_address, f.value_raw AS value_raw, f.success AS success, f.error_message AS error_message, f.source_id AS source_id, f.evidence_refs AS evidence_refs, f.raw_evidence_json AS raw_evidence_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_evm_traces AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision",
+      "purpose": "Exact block publication fence for specialized evidence."
+    },
+    {
+      "name": "aml_raw_transactions_canonical",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.source_id AS source_id, f.payload_json AS payload_json, f.receipt_json AS receipt_json, f.evidence_refs AS evidence_refs, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_raw_transactions AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision",
+      "purpose": "Exact block publication fence for specialized evidence."
+    },
+    {
+      "name": "aml_intelligence_reviews_current",
+      "select": "SELECT * FROM {{database}}.aml_intelligence_reviews FINAL",
+      "purpose": "Latest stored revision; consumer must check source snapshot and run validity."
+    },
+    {
+      "name": "aml_cluster_memberships_current",
+      "select": "SELECT * FROM {{database}}.aml_cluster_memberships FINAL",
+      "purpose": "Latest stored revision; consumer must check source snapshot and run validity."
+    },
+    {
+      "name": "aml_exposure_paths_current",
+      "select": "SELECT * FROM {{database}}.aml_exposure_paths FINAL",
+      "purpose": "Latest stored revision; consumer must check source snapshot and run validity."
+    },
+    {
+      "name": "aml_risk_policies_current",
+      "select": "SELECT * FROM {{database}}.aml_risk_policies FINAL",
+      "purpose": "Latest stored revision; consumer must check source snapshot and run validity."
+    },
+    {
+      "name": "aml_risk_policy_rules_current",
+      "select": "SELECT * FROM {{database}}.aml_risk_policy_rules FINAL",
+      "purpose": "Latest stored revision; consumer must check source snapshot and run validity."
+    },
+    {
+      "name": "aml_wallet_risk_signals_current",
+      "select": "SELECT * FROM {{database}}.aml_wallet_risk_signals FINAL",
+      "purpose": "Latest stored revision; consumer must check source snapshot and run validity."
+    },
+    {
+      "name": "aml_intelligence_claims_active",
+      "select": "SELECT c.network_id AS network_id, c.claim_id AS claim_id, c.address AS address, c.claim_kind AS claim_kind, c.entity_id AS entity_id, c.entity_name AS entity_name, c.entity_type AS entity_type, c.address_role AS address_role, c.confidence AS confidence, c.risk_level AS risk_level, c.is_exposure_seed AS is_exposure_seed, c.seed_category AS seed_category, c.source_id AS source_id, c.source_reference AS source_reference, c.evidence_refs AS evidence_refs, c.review_status AS review_status, c.reviewed_by AS reviewed_by, c.review_note AS review_note, c.valid_from_unix_ms AS valid_from_unix_ms, c.valid_to_unix_ms AS valid_to_unix_ms, c.revision AS revision, c.created_at_unix_ms AS created_at_unix_ms, c.source_record_id AS source_record_id, c.supersedes_claim_id AS supersedes_claim_id, c.submitted_by AS submitted_by, c.case_id AS case_id, c.reviewed_at_unix_ms AS reviewed_at_unix_ms, c.evidence_json AS evidence_json, c.raw_evidence_json AS raw_evidence_json FROM (SELECT network_id, claim_id, data.1 AS address, data.2 AS claim_kind, data.3 AS entity_id, data.4 AS entity_name, data.5 AS entity_type, data.6 AS address_role, data.7 AS confidence, data.8 AS risk_level, data.9 AS is_exposure_seed, data.10 AS seed_category, data.11 AS source_id, data.12 AS source_reference, data.13 AS evidence_refs, data.14 AS review_status, data.15 AS reviewed_by, data.16 AS review_note, data.17 AS valid_from_unix_ms, data.18 AS valid_to_unix_ms, data.19 AS revision, data.20 AS created_at_unix_ms, data.21 AS source_record_id, data.22 AS supersedes_claim_id, data.23 AS submitted_by, data.24 AS case_id, data.25 AS reviewed_at_unix_ms, data.26 AS evidence_json, data.27 AS raw_evidence_json FROM (SELECT network_id, claim_id, argMax(tuple(address, claim_kind, entity_id, entity_name, entity_type, address_role, confidence, risk_level, is_exposure_seed, seed_category, source_id, source_reference, evidence_refs, review_status, reviewed_by, review_note, valid_from_unix_ms, valid_to_unix_ms, revision, created_at_unix_ms, source_record_id, supersedes_claim_id, submitted_by, case_id, reviewed_at_unix_ms, evidence_json, raw_evidence_json), revision) AS data FROM {{database}}.aml_intelligence_claims GROUP BY network_id, claim_id)) AS c INNER JOIN (SELECT network_id, source_id, data.1 AS source_name, data.2 AS source_type, data.3 AS reference_url, data.4 AS trust_tier, data.5 AS license, data.6 AS is_active, data.7 AS created_by, data.8 AS revision, data.9 AS created_at_unix_ms, data.10 AS metadata_json, data.11 AS updated_at_unix_ms, data.12 AS raw_evidence_json FROM (SELECT network_id, source_id, argMax(tuple(source_name, source_type, reference_url, trust_tier, license, is_active, created_by, revision, created_at_unix_ms, metadata_json, updated_at_unix_ms, raw_evidence_json), revision) AS data FROM {{database}}.aml_intelligence_sources GROUP BY network_id, source_id)) AS s ON c.network_id=s.network_id AND c.source_id=s.source_id WHERE c.review_status='approved' AND s.is_active=1 AND c.valid_from_unix_ms<=toUnixTimestamp64Milli(now64(3)) AND (isNull(c.valid_to_unix_ms) OR c.valid_to_unix_ms>toUnixTimestamp64Milli(now64(3)))",
+      "purpose": "Currently approved claims from active sources, including explicit validity interval."
+    },
+    {
+      "name": "aml_protocol_registry_active",
+      "select": "SELECT p.network_id AS network_id, p.registry_id AS registry_id, p.subject_id AS subject_id, p.subject_type AS subject_type, p.protocol AS protocol, p.protocol_type AS protocol_type, p.contract_role AS contract_role, p.remote_network_id AS remote_network_id, p.remote_subject_id AS remote_subject_id, p.decoder AS decoder, p.decoder_config_json AS decoder_config_json, p.source_id AS source_id, p.source_reference AS source_reference, p.confidence AS confidence, p.enabled AS enabled, p.review_status AS review_status, p.reviewed_by AS reviewed_by, p.reviewed_at_unix_ms AS reviewed_at_unix_ms, p.review_note AS review_note, p.evidence_refs AS evidence_refs, p.raw_evidence_json AS raw_evidence_json, p.revision AS revision, p.created_at_unix_ms AS created_at_unix_ms FROM (SELECT network_id, registry_id, data.1 AS subject_id, data.2 AS subject_type, data.3 AS protocol, data.4 AS protocol_type, data.5 AS contract_role, data.6 AS remote_network_id, data.7 AS remote_subject_id, data.8 AS decoder, data.9 AS decoder_config_json, data.10 AS source_id, data.11 AS source_reference, data.12 AS confidence, data.13 AS enabled, data.14 AS review_status, data.15 AS reviewed_by, data.16 AS reviewed_at_unix_ms, data.17 AS review_note, data.18 AS evidence_refs, data.19 AS raw_evidence_json, data.20 AS revision, data.21 AS created_at_unix_ms FROM (SELECT network_id, registry_id, argMax(tuple(subject_id, subject_type, protocol, protocol_type, contract_role, remote_network_id, remote_subject_id, decoder, decoder_config_json, source_id, source_reference, confidence, enabled, review_status, reviewed_by, reviewed_at_unix_ms, review_note, evidence_refs, raw_evidence_json, revision, created_at_unix_ms), revision) AS data FROM {{database}}.aml_protocol_registry GROUP BY network_id, registry_id)) AS p INNER JOIN (SELECT network_id, source_id, data.1 AS source_name, data.2 AS source_type, data.3 AS reference_url, data.4 AS trust_tier, data.5 AS license, data.6 AS is_active, data.7 AS created_by, data.8 AS revision, data.9 AS created_at_unix_ms, data.10 AS metadata_json, data.11 AS updated_at_unix_ms, data.12 AS raw_evidence_json FROM (SELECT network_id, source_id, argMax(tuple(source_name, source_type, reference_url, trust_tier, license, is_active, created_by, revision, created_at_unix_ms, metadata_json, updated_at_unix_ms, raw_evidence_json), revision) AS data FROM {{database}}.aml_intelligence_sources GROUP BY network_id, source_id)) AS s ON p.network_id=s.network_id AND p.source_id=s.source_id WHERE p.review_status='approved' AND p.enabled=1 AND s.is_active=1",
+      "purpose": "Reviewed and enabled protocol registry from an active source."
+    },
+    {
+      "name": "aml_entity_addresses_active",
+      "select": "SELECT a.network_id AS network_id, a.entity_id AS entity_id, a.address AS address, a.address_role AS address_role, a.claim_id AS claim_id, a.source_id AS source_id, a.confidence AS confidence, a.is_active AS is_active, a.first_seen_block AS first_seen_block, a.last_seen_block AS last_seen_block, a.review_status AS review_status, a.reviewed_by AS reviewed_by, a.reviewed_at_unix_ms AS reviewed_at_unix_ms, a.review_note AS review_note, a.evidence_refs AS evidence_refs, a.raw_evidence_json AS raw_evidence_json, a.revision AS revision, a.created_at_unix_ms AS created_at_unix_ms FROM (SELECT network_id, entity_id, address, claim_id, data.1 AS address_role, data.2 AS source_id, data.3 AS confidence, data.4 AS is_active, data.5 AS first_seen_block, data.6 AS last_seen_block, data.7 AS review_status, data.8 AS reviewed_by, data.9 AS reviewed_at_unix_ms, data.10 AS review_note, data.11 AS evidence_refs, data.12 AS raw_evidence_json, data.13 AS revision, data.14 AS created_at_unix_ms FROM (SELECT network_id, entity_id, address, claim_id, argMax(tuple(address_role, source_id, confidence, is_active, first_seen_block, last_seen_block, review_status, reviewed_by, reviewed_at_unix_ms, review_note, evidence_refs, raw_evidence_json, revision, created_at_unix_ms), revision) AS data FROM {{database}}.aml_entity_addresses GROUP BY network_id, entity_id, address, claim_id)) AS a INNER JOIN (SELECT network_id, entity_id, data.1 AS entity_name, data.2 AS entity_type, data.3 AS source_id, data.4 AS source_reference, data.5 AS is_active, data.6 AS review_status, data.7 AS reviewed_by, data.8 AS reviewed_at_unix_ms, data.9 AS review_note, data.10 AS evidence_refs, data.11 AS raw_evidence_json, data.12 AS revision, data.13 AS created_at_unix_ms FROM (SELECT network_id, entity_id, argMax(tuple(entity_name, entity_type, source_id, source_reference, is_active, review_status, reviewed_by, reviewed_at_unix_ms, review_note, evidence_refs, raw_evidence_json, revision, created_at_unix_ms), revision) AS data FROM {{database}}.aml_entities GROUP BY network_id, entity_id)) AS e ON a.network_id=e.network_id AND a.entity_id=e.entity_id INNER JOIN {{database}}.aml_intelligence_claims_active AS c ON a.network_id=c.network_id AND a.claim_id=c.claim_id AND a.address=c.address AND a.entity_id=c.entity_id AND a.source_id=c.source_id WHERE a.is_active=1 AND a.review_status='approved' AND e.is_active=1 AND e.review_status='approved'",
+      "purpose": "Claim-backed, reviewed entity address projection; missing provenance is excluded."
+    },
+    {
+      "name": "aml_exchange_addresses_active",
+      "select": "SELECT a.network_id AS network_id, a.entity_id AS entity_id, a.address AS address, a.address_role AS address_role, a.claim_id AS claim_id, a.source_id AS source_id, a.confidence AS confidence, a.is_active AS is_active, a.first_seen_block AS first_seen_block, a.last_seen_block AS last_seen_block, a.review_status AS review_status, a.reviewed_by AS reviewed_by, a.reviewed_at_unix_ms AS reviewed_at_unix_ms, a.review_note AS review_note, a.evidence_refs AS evidence_refs, a.raw_evidence_json AS raw_evidence_json, a.revision AS revision, a.created_at_unix_ms AS created_at_unix_ms FROM (SELECT network_id, entity_id, address, claim_id, data.1 AS address_role, data.2 AS source_id, data.3 AS confidence, data.4 AS is_active, data.5 AS first_seen_block, data.6 AS last_seen_block, data.7 AS review_status, data.8 AS reviewed_by, data.9 AS reviewed_at_unix_ms, data.10 AS review_note, data.11 AS evidence_refs, data.12 AS raw_evidence_json, data.13 AS revision, data.14 AS created_at_unix_ms FROM (SELECT network_id, entity_id, address, claim_id, argMax(tuple(address_role, source_id, confidence, is_active, first_seen_block, last_seen_block, review_status, reviewed_by, reviewed_at_unix_ms, review_note, evidence_refs, raw_evidence_json, revision, created_at_unix_ms), revision) AS data FROM {{database}}.aml_entity_addresses GROUP BY network_id, entity_id, address, claim_id)) AS a INNER JOIN (SELECT network_id, entity_id, data.1 AS entity_name, data.2 AS entity_type, data.3 AS source_id, data.4 AS source_reference, data.5 AS is_active, data.6 AS review_status, data.7 AS reviewed_by, data.8 AS reviewed_at_unix_ms, data.9 AS review_note, data.10 AS evidence_refs, data.11 AS raw_evidence_json, data.12 AS revision, data.13 AS created_at_unix_ms FROM (SELECT network_id, entity_id, argMax(tuple(entity_name, entity_type, source_id, source_reference, is_active, review_status, reviewed_by, reviewed_at_unix_ms, review_note, evidence_refs, raw_evidence_json, revision, created_at_unix_ms), revision) AS data FROM {{database}}.aml_entities GROUP BY network_id, entity_id)) AS e ON a.network_id=e.network_id AND a.entity_id=e.entity_id INNER JOIN {{database}}.aml_intelligence_claims_active AS c ON a.network_id=c.network_id AND a.claim_id=c.claim_id AND a.address=c.address AND a.entity_id=c.entity_id AND a.source_id=c.source_id WHERE a.is_active=1 AND a.review_status='approved' AND e.is_active=1 AND e.review_status='approved' AND e.entity_type='exchange'",
+      "purpose": "The same provenance-controlled projection restricted to reviewed exchange entities."
+    }
+  ],
+  "rules": [
+    {
+      "table": "aml_asset_metadata",
+      "column": "code_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "is_verified",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_metadata_jobs",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_intelligence_sources",
+      "column": "metadata_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_intelligence_sources",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_intelligence_claims",
+      "column": "evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_intelligence_claims",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_intelligence_reviews",
+      "column": "evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_intelligence_reviews",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_cluster_claims",
+      "column": "same_entity",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_cluster_claims",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_cluster_memberships",
+      "column": "confidence",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_cluster_memberships",
+      "column": "evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_cluster_memberships",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_cluster_runs",
+      "column": "settings_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_cluster_runs",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_exposure_seeds",
+      "column": "risk_level",
+      "kind": "score"
+    },
+    {
+      "table": "aml_exposure_seeds",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_exposure_seeds",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_exposure_runs",
+      "column": "seed_snapshot_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_exposure_runs",
+      "column": "hop_decay",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_exposure_runs",
+      "column": "settings_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_exposure_runs",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "time_weight",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "service_mediated",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "allocation_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_risk_policies",
+      "column": "settings_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_risk_policies",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_risk_policy_rules",
+      "column": "settings_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_risk_policy_rules",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_wallet_risk_signals",
+      "column": "signal_strength",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_wallet_risk_signals",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_wallet_risk_assessments",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_wallet_risk_assessments",
+      "column": "evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_wallet_risk_assessments",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_evm_logs",
+      "column": "removed",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_evm_logs",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_metadata_discoveries",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_metadata_discoveries",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_metadata_discoveries",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_metadata_discoveries",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_metadata_discoveries",
+      "column": "asset_id",
+      "kind": "asset"
+    },
+    {
+      "table": "aml_metadata_discoveries",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_metadata_discoveries",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_metadata_discoveries",
+      "column": "block_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_metadata_discoveries",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_metadata_discoveries",
+      "column": "discovery_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_protocol_registry",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_protocol_registry",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_protocol_registry",
+      "column": "decoder_config_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_protocol_registry",
+      "column": "confidence",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_protocol_registry",
+      "column": "enabled",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_protocol_registry",
+      "column": "review_status",
+      "kind": "enum",
+      "values": [
+        "pending",
+        "approved",
+        "rejected",
+        "revoked"
+      ]
+    },
+    {
+      "table": "aml_protocol_registry",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_protocol_registry",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_protocol_registry",
+      "column": "registry_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_entities",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_entities",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_entities",
+      "column": "is_active",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_entities",
+      "column": "review_status",
+      "kind": "enum",
+      "values": [
+        "pending",
+        "approved",
+        "rejected",
+        "revoked"
+      ]
+    },
+    {
+      "table": "aml_entities",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_entities",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_entities",
+      "column": "entity_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_entity_addresses",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_entity_addresses",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_entity_addresses",
+      "column": "confidence",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_entity_addresses",
+      "column": "is_active",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_entity_addresses",
+      "column": "review_status",
+      "kind": "enum",
+      "values": [
+        "pending",
+        "approved",
+        "rejected",
+        "revoked"
+      ]
+    },
+    {
+      "table": "aml_entity_addresses",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_entity_addresses",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_entity_addresses",
+      "column": "entity_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_entity_addresses",
+      "column": "address",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_entity_addresses",
+      "column": "claim_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_cluster_versions",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_cluster_versions",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_cluster_versions",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_cluster_versions",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_cluster_versions",
+      "column": "cluster_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_cluster_versions",
+      "column": "cluster_version",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_address_exposures",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_address_exposures",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_address_exposures",
+      "column": "exposure_score",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_address_exposures",
+      "column": "last_tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_address_exposures",
+      "column": "best_path_amount_share",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_address_exposures",
+      "column": "best_path_time_weight",
+      "kind": "ratio"
+    },
+    {
+      "table": "aml_address_exposures",
+      "column": "service_mediated",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_address_exposures",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_address_exposures",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_address_exposures",
+      "column": "run_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_address_exposures",
+      "column": "exposure_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_bitcoin_scripts",
+      "column": "network_id",
+      "kind": "enum",
+      "values": [
+        "bip122:000000000019d6689c085ae165831e93"
+      ]
+    },
+    {
+      "table": "aml_bitcoin_scripts",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_bitcoin_scripts",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_bitcoin_scripts",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_bitcoin_scripts",
+      "column": "script_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_bitcoin_scripts",
+      "column": "script_hex",
+      "kind": "hex_bytes"
+    },
+    {
+      "table": "aml_bitcoin_scripts",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_bitcoin_scripts",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_bitcoin_scripts",
+      "column": "block_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_bitcoin_scripts",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_bitcoin_scripts",
+      "column": "tx_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_bitcoin_scripts",
+      "column": "script_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_evm_traces",
+      "column": "network_id",
+      "kind": "enum",
+      "values": [
+        "eip155:1",
+        "eip155:56"
+      ]
+    },
+    {
+      "table": "aml_evm_traces",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_evm_traces",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_evm_traces",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_evm_traces",
+      "column": "success",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_evm_traces",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_evm_traces",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_evm_traces",
+      "column": "block_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_evm_traces",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_evm_traces",
+      "column": "tx_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_evm_traces",
+      "column": "trace_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_raw_transactions",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_raw_transactions",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_raw_transactions",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_raw_transactions",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_raw_transactions",
+      "column": "payload_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_raw_transactions",
+      "column": "receipt_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_raw_transactions",
+      "column": "evidence_refs",
+      "kind": "evidence"
+    },
+    {
+      "table": "aml_raw_transactions",
+      "column": "block_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_raw_transactions",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_raw_transactions",
+      "column": "tx_hash",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_protocol_registry",
+      "column": "reviewed_by",
+      "kind": "review_actor"
+    },
+    {
+      "table": "aml_protocol_registry",
+      "column": "subject_type",
+      "kind": "enum",
+      "values": [
+        "address",
+        "script",
+        "contract"
+      ]
+    },
+    {
+      "table": "aml_entities",
+      "column": "reviewed_by",
+      "kind": "review_actor"
+    },
+    {
+      "table": "aml_entity_addresses",
+      "column": "reviewed_by",
+      "kind": "review_actor"
+    },
+    {
+      "table": "aml_exposure_runs",
+      "column": "time_half_life_days",
+      "kind": "nonnegative"
+    },
+    {
+      "table": "aml_exposure_paths",
+      "column": "seed_risk_level",
+      "kind": "score"
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "total_supply_raw",
+      "kind": "bitcoin_amount"
+    },
+    {
+      "table": "aml_raw_transactions",
+      "column": "receipt_json",
+      "kind": "capability"
+    }
+  ]
+}

@@ -1,6 +1,9 @@
 use crate::{
     Network,
-    contract::{Contract, baseline_contract, current_contract, identifier},
+    contract::{
+        Contract, analytics_contract, baseline_contract, column_contract, core_contract,
+        current_contract, identifier,
+    },
 };
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
@@ -81,8 +84,8 @@ struct Ledger {
     identity_revision: u64,
 }
 impl Ledger {
-    fn complete(&self) -> bool {
-        self.versions.contains(&1) && self.versions.contains(&2) && self.identity_version == Some(2)
+    fn complete(&self, current: u32) -> bool {
+        (1..=current).all(|v| self.versions.contains(&v)) && self.identity_version == Some(current)
     }
 }
 async fn check_ledger(
@@ -94,7 +97,10 @@ async fn check_ledger(
     require_complete: bool,
 ) -> Result<Ledger> {
     let baseline = baseline_contract()?;
-    let known = [&baseline, contract];
+    let columns = column_contract()?;
+    let core = core_contract()?;
+    let analytics = analytics_contract()?;
+    let known = [&baseline, &columns, &core, &analytics, contract];
     let mut ledger = Ledger::default();
     if stored.contains_key("aml_schema_migrations") {
         let rows=json_rows(db,&format!("SELECT toJSONString(map('network_id',network_id,'migration_id',migration_id,'version',toString(schema_version),'checksum',checksum)) AS row FROM {database}.aml_schema_migrations FINAL")).await?;
@@ -148,14 +154,16 @@ async fn check_ledger(
     }
     if require_complete {
         ensure!(
-            ledger.complete(),
-            "shared warehouse requires schema version 2; run the chain schema job"
+            ledger.complete(contract.version),
+            "shared warehouse requires current schema version; run the chain schema job"
         );
     }
-    ensure!(
-        !ledger.versions.contains(&2) || ledger.versions.contains(&1),
-        "column migration is missing its baseline history"
-    );
+    if let Some(max) = ledger.versions.iter().max() {
+        ensure!(
+            (1..=*max).all(|v| ledger.versions.contains(&v)),
+            "warehouse migration predecessor missing"
+        );
+    }
     Ok(ledger)
 }
 
@@ -167,7 +175,18 @@ pub async fn initialize(
     let statements = baseline_contract()?.statements(database)?;
     let upgrade =
         crate::semantics::upgrade_statements(database, &crate::semantics::upgrade_template()?)?;
-    initialize_statements(db, database, network, statements, upgrade).await
+    let core = crate::core_schema::statements(database, &crate::core_schema::sql_template()?)?;
+    let analytics =
+        crate::analytics_schema::statements(database, &crate::analytics_schema::sql_template()?)?;
+    let visibility =
+        crate::visibility_schema::statements(database, &crate::visibility_schema::sql_template()?)?;
+    initialize_statements(
+        db,
+        database,
+        network,
+        vec![statements, upgrade, core, analytics, visibility],
+    )
+    .await
 }
 
 /// An adapter may embed the generated SQL for review and packaging. Validation
@@ -194,17 +213,90 @@ pub async fn initialize_from_migrations(
     baseline_sql: &str,
     upgrade_sql: &str,
 ) -> Result<SchemaSummary> {
+    initialize_from_history(
+        db,
+        database,
+        network,
+        baseline_sql,
+        upgrade_sql,
+        &crate::core_schema::sql_template()?,
+    )
+    .await
+}
+pub async fn initialize_from_history(
+    db: &impl Connection,
+    database: &str,
+    network: Network,
+    baseline_sql: &str,
+    column_sql: &str,
+    core_sql: &str,
+) -> Result<SchemaSummary> {
+    initialize_from_all(
+        db,
+        database,
+        network,
+        [
+            baseline_sql,
+            column_sql,
+            core_sql,
+            &crate::analytics_schema::sql_template()?,
+        ],
+    )
+    .await
+}
+pub async fn initialize_from_all(
+    db: &impl Connection,
+    database: &str,
+    network: Network,
+    sql: [&str; 4],
+) -> Result<SchemaSummary> {
+    let [baseline_sql, column_sql, core_sql, analytics_sql] = sql;
+    initialize_from_chain(
+        db,
+        database,
+        network,
+        [
+            baseline_sql,
+            column_sql,
+            core_sql,
+            analytics_sql,
+            &crate::visibility_schema::sql_template()?,
+        ],
+    )
+    .await
+}
+pub async fn initialize_from_chain(
+    db: &impl Connection,
+    database: &str,
+    network: Network,
+    sql: [&str; 5],
+) -> Result<SchemaSummary> {
+    let [
+        baseline_sql,
+        column_sql,
+        core_sql,
+        analytics_sql,
+        visibility_sql,
+    ] = sql;
     let statements = baseline_contract()?.statements_from_template(database, baseline_sql)?;
-    let upgrade = crate::semantics::upgrade_statements(database, upgrade_sql)?;
-    initialize_statements(db, database, network, statements, upgrade).await
+    let upgrade = crate::semantics::upgrade_statements(database, column_sql)?;
+    let core = crate::core_schema::statements(database, core_sql)?;
+    let analytics = crate::analytics_schema::statements(database, analytics_sql)?;
+    let visibility = crate::visibility_schema::statements(database, visibility_sql)?;
+    initialize_statements(
+        db,
+        database,
+        network,
+        vec![statements, upgrade, core, analytics, visibility],
+    )
+    .await
 }
 
 async fn initialize_statements(
     db: &impl Connection,
     database: &str,
     network: Network,
-    statements: Vec<String>,
-    upgrade: Vec<String>,
+    phases: Vec<Vec<String>>,
 ) -> Result<SchemaSummary> {
     identifier(database)?;
     let contract = current_contract()?;
@@ -212,79 +304,229 @@ async fn initialize_statements(
         .await?;
     let stored = objects(db, database).await?;
     let ledger = check_ledger(db, database, network, &contract, &stored, false).await?;
+    let contracts = [
+        baseline_contract()?,
+        column_contract()?,
+        core_contract()?,
+        analytics_contract()?,
+        contract.clone(),
+    ];
+    let mut applied = ledger.versions.iter().copied().max().unwrap_or(0);
+    let identity_writes = u64::from(contract.version - applied)
+        .max(u64::from(ledger.identity_version != Some(contract.version)));
     ensure!(
-        ledger.identity_version == Some(2) || ledger.identity_revision < u64::MAX,
+        ledger
+            .identity_revision
+            .checked_add(identity_writes)
+            .is_some(),
         "warehouse identity revision exhausted; upgrade stopped before DDL"
     );
-    // Validate overlapping objects before adding anything. CREATE IF NOT EXISTS
-    // must not silently bless drift, even if an earlier attempt stopped midway.
-    validate_objects(
-        db,
-        database,
-        &contract,
-        &stored,
-        ledger.versions.contains(&1),
-    )
-    .await?;
-    validate_constraints(
-        db,
-        database,
-        &contract,
-        &stored,
-        ledger.versions.contains(&2),
-    )
-    .await?;
-    if ledger.complete() {
-        return summary(database, network, &contract, false);
-    }
-    if !ledger.versions.contains(&2) {
-        // Before any DDL or ledger write, refuse incompatible historical rows.
-        // No rewriting, defaults, deletion or automatic approval is performed.
-        for table in &contract.tables {
-            if stored.contains_key(&table.name) {
-                for constraint in &table.constraints {
-                    let violations=db.query_bounded(&format!("SELECT 'invalid' FROM {database}.{} WHERE NOT ifNull(({}),0) LIMIT 1 SETTINGS max_execution_time=60,max_threads=2",table.name,constraint.expression)).await?;
-                    ensure!(
-                        violations.is_empty(),
-                        "existing rows violate schema v2: {}; preserve and migrate the original evidence before upgrading",
-                        table.name
-                    );
-                }
-            }
-        }
-    }
-    if !ledger.versions.contains(&1) {
-        for statement in statements {
-            db.execute(&statement)
-                .await
-                .context("failed to apply shared warehouse baseline")?;
-        }
-    }
-    validate_objects(db, database, &contract, &objects(db, database).await?, true).await?;
     let mut revision = ledger.identity_revision;
-    let baseline = baseline_contract()?;
-    if !ledger.versions.contains(&1) {
-        record_migration(db, database, network, &baseline).await?;
+    let mut identity = ledger.identity_version;
+    if applied == contract.version {
+        validate_objects(db, database, &contract, &stored, true).await?;
+        validate_constraints(db, database, &contract, &stored, true).await?;
     }
-    if ledger.identity_version.is_none() {
-        revision = record_identity(db, database, network, &baseline, revision).await?;
-    }
-    if !ledger.versions.contains(&2) {
-        for statement in upgrade {
-            db.execute(&statement)
-                .await
-                .context("failed to apply column-contract migration")?;
+    while applied < contract.version {
+        let next = &contracts[applied as usize];
+        let previous = &contracts[applied.saturating_sub(1) as usize];
+        let stored = objects(db, database).await?;
+        let resume = resume_contract(db, database, previous, next, &stored, applied > 0).await?;
+        validate_objects(db, database, &resume, &stored, applied > 0).await?;
+        validate_constraints(db, database, &resume, &stored, applied > 0).await?;
+        preflight(db, database, next, &stored).await?;
+        for statement in &phases[applied as usize] {
+            db.execute(statement).await.with_context(|| {
+                format!("failed to apply shared schema version {}", next.version)
+            })?;
         }
+        let installed = objects(db, database).await?;
+        validate_objects(db, database, next, &installed, true).await?;
+        validate_constraints(db, database, next, &installed, true).await?;
+        record_migration(db, database, network, next).await?;
+        revision = record_identity(db, database, network, next, revision).await?;
+        identity = Some(next.version);
+        applied = next.version;
     }
-    validate_constraints(db, database, &contract, &objects(db, database).await?, true).await?;
-    if !ledger.versions.contains(&2) {
-        record_migration(db, database, network, &contract).await?;
-    }
-    if ledger.identity_version != Some(2) {
+    if identity != Some(contract.version) {
         record_identity(db, database, network, &contract, revision).await?;
     }
     validate(db, database, network).await?;
-    summary(database, network, &contract, !ledger.complete())
+    summary(
+        database,
+        network,
+        &contract,
+        !ledger.complete(contract.version),
+    )
+}
+
+async fn column_names(
+    db: &impl Connection,
+    database: &str,
+) -> Result<BTreeMap<String, Vec<String>>> {
+    let mut columns = BTreeMap::<String, Vec<String>>::new();
+    for row in json_rows(db,&format!("SELECT toJSONString(map('table',table,'name',name)) FROM system.columns WHERE database={} AND startsWith(table,'aml_') ORDER BY table,position",literal(database))).await? {
+        columns.entry(row["table"].as_str().context("column table missing")?.into()).or_default().push(row["name"].as_str().context("column name missing")?.into());
+    }
+    Ok(columns)
+}
+async fn normalized_select(db: &impl Connection, select: &str, database: &str) -> Result<String> {
+    Ok(normalized(
+        &db.query(&format!(
+            "EXPLAIN SYNTAX {}",
+            select.replace("{{database}}", database)
+        ))
+        .await?
+        .join("\n"),
+    ))
+}
+/// A partial migration may contain only the declared appended-column prefix,
+/// declared constraints, and exactly either the old or new view definition.
+/// Applied versions never use this relaxation.
+async fn resume_contract(
+    db: &impl Connection,
+    database: &str,
+    previous: &Contract,
+    next: &Contract,
+    stored: &BTreeMap<String, Value>,
+    applied: bool,
+) -> Result<Contract> {
+    let columns = column_names(db, database).await?;
+    let mut resume = previous.clone();
+    for table in &mut resume.tables {
+        let Some(object) = stored.get(&table.name) else {
+            continue;
+        };
+        let future = next
+            .tables
+            .iter()
+            .find(|t| t.name == table.name)
+            .context("table retirement needs an explicit migration")?;
+        let actual = columns.get(&table.name).context("stored columns missing")?;
+        ensure!(
+            actual.len() >= table.columns.len() && actual.len() <= future.columns.len(),
+            "unexpected partial column count: {}",
+            table.name
+        );
+        ensure!(
+            actual
+                .iter()
+                .zip(&future.columns)
+                .all(|(name, c)| name == &c.name),
+            "unexpected partial column order: {}",
+            table.name
+        );
+        table.columns = future.columns[..actual.len()].to_vec();
+        let actual_constraints = constraints(
+            object["create_table_query"]
+                .as_str()
+                .context("missing stored DDL")?,
+        )?;
+        if applied {
+            ensure!(
+                table
+                    .constraints
+                    .iter()
+                    .all(|c| actual_constraints.contains_key(&c.name)),
+                "applied constraint missing: {}",
+                table.name
+            );
+        }
+        for name in actual_constraints.keys() {
+            let future_constraint = future
+                .constraints
+                .iter()
+                .find(|c| &c.name == name)
+                .context("unknown partial constraint")?;
+            if !table.constraints.iter().any(|c| &c.name == name) {
+                table.constraints.push(future_constraint.clone());
+            }
+        }
+    }
+    for view in &mut resume.views {
+        let Some(object) = stored.get(&view.name) else {
+            continue;
+        };
+        let actual = normalized_select(
+            db,
+            object["as_select"].as_str().context("missing view SQL")?,
+            database,
+        )
+        .await?;
+        if actual != normalized_select(db, &view.select, database).await? {
+            let future = next
+                .views
+                .iter()
+                .find(|v| v.name == view.name)
+                .context("view retirement needs explicit migration")?;
+            ensure!(
+                actual == normalized_select(db, &future.select, database).await?,
+                "unexpected partial view definition: {}",
+                view.name
+            );
+            *view = future.clone();
+        }
+    }
+    // A CREATE TABLE is atomic. A new table from an interrupted next migration
+    // must match its entire declared shape, including defaults and constraints.
+    for table in &next.tables {
+        if stored.contains_key(&table.name) && !resume.tables.iter().any(|t| t.name == table.name) {
+            resume.tables.push(table.clone());
+        }
+    }
+    for view in &next.views {
+        if stored.contains_key(&view.name) && !resume.views.iter().any(|v| v.name == view.name) {
+            resume.views.push(view.clone());
+        }
+    }
+    Ok(resume)
+}
+async fn preflight(
+    db: &impl Connection,
+    database: &str,
+    next: &Contract,
+    stored: &BTreeMap<String, Value>,
+) -> Result<()> {
+    let columns = column_names(db, database).await?;
+    for table in &next.tables {
+        if !stored.contains_key(&table.name) {
+            continue;
+        }
+        let actual = columns.get(&table.name).context("table columns missing")?;
+        let missing = table
+            .columns
+            .iter()
+            .filter(|c| !actual.contains(&c.name))
+            .map(|c| {
+                Ok(format!(
+                    "{} AS `{}`",
+                    c.default
+                        .as_deref()
+                        .context("new column requires an explicit default")?,
+                    c.name
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let source = if missing.is_empty() {
+            format!("{database}.{}", table.name)
+        } else {
+            format!(
+                "(SELECT *, {} FROM {database}.{})",
+                missing.join(","),
+                table.name
+            )
+        };
+        for constraint in &table.constraints {
+            let violations=db.query_bounded(&format!("SELECT 'invalid' FROM {source} WHERE NOT ifNull(({}),0) LIMIT 1 SETTINGS max_execution_time=60,max_threads=2",constraint.expression)).await?;
+            ensure!(
+                violations.is_empty(),
+                "existing rows violate schema v{}: {}; preserve original evidence and migrate explicitly",
+                next.version,
+                table.name
+            );
+        }
+    }
+    Ok(())
 }
 
 async fn record_migration(

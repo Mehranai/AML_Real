@@ -62,23 +62,7 @@ pub fn upgrade_contract(contract: &mut Contract) -> Result<()> {
             .rules
             .iter()
             .filter(|r| r.table == table.name)
-            .map(|r| {
-                let nullable = table
-                    .columns
-                    .iter()
-                    .find(|c| c.name == r.column)
-                    .unwrap()
-                    .data_type
-                    .starts_with("Nullable(");
-                let expr = expression(r)?;
-                Ok(
-                    if nullable && !matches!(r.kind.as_str(), "native_decimals" | "capability") {
-                        format!("(isNull(`{}`) OR ({expr}))", r.column)
-                    } else {
-                        format!("({expr})")
-                    },
-                )
-            })
+            .map(|r| rule_expression(r, &table.columns))
             .collect::<Result<Vec<_>>>()?;
         ensure!(!expressions.is_empty(), "table has no column rules");
         table.constraints.push(Constraint {
@@ -92,6 +76,22 @@ pub fn upgrade_contract(contract: &mut Contract) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn rule_expression(rule: &Rule, columns: &[crate::contract::Column]) -> Result<String> {
+    let nullable = columns
+        .iter()
+        .find(|c| c.name == rule.column)
+        .context("rule column missing")?
+        .data_type
+        .starts_with("Nullable(");
+    let expr = expression(rule)?;
+    Ok(
+        if nullable && !matches!(rule.kind.as_str(), "native_decimals" | "capability") {
+            format!("(isNull(`{}`) OR ({expr}))", rule.column)
+        } else {
+            format!("({expr})")
+        },
+    )
+}
 fn network_match(column: &str, expression: impl Fn(Network) -> String) -> String {
     Network::ALL
         .into_iter()
@@ -166,6 +166,10 @@ fn expression(rule: &Rule) -> Result<String> {
         "boolean" => format!("{c} IN (0,1)"),
         "ratio" => format!("isFinite({c}) AND {c}>=0 AND {c}<=1"),
         "score" => format!("isFinite({c}) AND {c}>=0 AND {c}<=100"),
+        "nonnegative" => format!("isFinite({c}) AND {c}>=0"),
+        "token_id" => format!(
+            "match(asset_id,'^(erc721|erc1155|trc721):[^/]+/[0-9]+$') AND toString({c})=extract(asset_id,'/([0-9]+)$')"
+        ),
         "enum" => format!(
             "{c} IN ({})",
             rule.values
@@ -221,7 +225,7 @@ fn expression(rule: &Rule) -> Result<String> {
 
 pub fn upgrade_sql(database: &str) -> Result<String> {
     crate::contract::identifier(database)?;
-    let contract = crate::current_contract()?;
+    let contract = crate::column_contract()?;
     let mut sql = format!(
         "-- Generated column-contract upgrade; do not edit.\n-- Migration: {}\n-- Checksum: {}\n\n",
         contract.migration_id,
@@ -276,7 +280,26 @@ pub fn validate_row(contract: &Contract, table_name: &str, row: &Value) -> Resul
             .as_str()
             .context("network id must be string")?,
     )?;
-    for rule in migration()?.rules.iter().filter(|r| r.table == table_name) {
+    let core_rules = crate::core_schema::migration()?;
+    let analytics_rules = crate::analytics_schema::migration()?;
+    for rule in migration()?
+        .rules
+        .iter()
+        .chain(core_rules.rules.iter().filter(|_| contract.version >= 3))
+        .chain(
+            analytics_rules
+                .rules
+                .iter()
+                .filter(|_| contract.version >= 4),
+        )
+        .chain(
+            crate::visibility_schema::migration()?
+                .rules
+                .iter()
+                .filter(|_| contract.version >= 5),
+        )
+        .filter(|r| r.table == table_name)
+    {
         let value = &row[&rule.column];
         // Cross-field rules must run even when the anchored field is NULL.
         if value.is_null() && !matches!(rule.kind.as_str(), "native_decimals" | "capability") {
@@ -333,6 +356,11 @@ fn validate_type(value: &Value, data_type: &str) -> Result<()> {
                 "array element must be string"
             );
         }
+        "Array(UInt32)" => {
+            for item in value.as_array().context("index array required")? {
+                validate_type(item, "UInt32")?;
+            }
+        }
         _ => anyhow::bail!("unsupported contract type"),
     }
     Ok(())
@@ -373,6 +401,24 @@ fn validate_rule(network: Network, rule: &Rule, value: &Value, row: &Value) -> R
             );
         }
         "enum" => ensure!(rule.values.iter().any(|v| value == v), "unknown enum state"),
+        "nonnegative" => ensure!(
+            value.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0),
+            "nonnegative metric required"
+        ),
+        "token_id" => {
+            let asset = values::AssetId::parse(
+                network,
+                row["asset_id"].as_str().context("asset id missing")?,
+            )?;
+            ensure!(
+                !asset.collection
+                    && asset
+                        .as_str()
+                        .rsplit_once('/')
+                        .is_some_and(|(_, token)| Some(token) == value.as_str()),
+                "token id does not match NFT asset identity"
+            );
+        }
         "asset" | "transfer_asset" => {
             let asset = values::AssetId::parse(network, text()?)?;
             ensure!(

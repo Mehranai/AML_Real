@@ -1,0 +1,3205 @@
+{
+  "version": 3,
+  "migration_id": "20261026_0003_core_evidence",
+  "description": "Lossless core evidence extensions and uniform canonical/current readers for all network databases.",
+  "tables": [
+    {
+      "name": "aml_schema_migrations",
+      "purpose": "Immutable shared schema migration ledger, separate from legacy migration ledgers.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "migration_id",
+          "data_type": "String",
+          "description": "migration id",
+          "default": null
+        },
+        {
+          "name": "schema_version",
+          "data_type": "UInt32",
+          "description": "schema version",
+          "default": null
+        },
+        {
+          "name": "checksum",
+          "data_type": "String",
+          "description": "checksum",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "migration_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`migration_id`)>0) AND (`schema_version`>0) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_warehouse_identity",
+      "purpose": "Database-to-network binding and installed contract checksum.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "schema_version",
+          "data_type": "UInt32",
+          "description": "schema version",
+          "default": null
+        },
+        {
+          "name": "checksum",
+          "data_type": "String",
+          "description": "checksum",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (`schema_version`>0) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_sync_state",
+      "purpose": "Single committed visibility fence for each network; an empty chain is explicitly uninitialized.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "initialized",
+          "data_type": "UInt8",
+          "description": "initialized",
+          "default": null
+        },
+        {
+          "name": "start_block",
+          "data_type": "UInt64",
+          "description": "start block",
+          "default": null
+        },
+        {
+          "name": "last_block_number",
+          "data_type": "UInt64",
+          "description": "last block number",
+          "default": null
+        },
+        {
+          "name": "last_block_hash",
+          "data_type": "String",
+          "description": "last block hash",
+          "default": null
+        },
+        {
+          "name": "observed_rpc_height",
+          "data_type": "UInt64",
+          "description": "observed rpc height",
+          "default": null
+        },
+        {
+          "name": "published_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "published at unix ms",
+          "default": null
+        },
+        {
+          "name": "source_cursor_json",
+          "data_type": "String",
+          "description": "Original adapter cursor/provenance; never substituted for the committed visibility fence.",
+          "default": "'{}'"
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (`revision`>0) AND (`initialized` IN (0,1)) AND ((initialized=0 AND `last_block_hash`='') OR ((network_id='tron:mainnet' AND match(`last_block_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`last_block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`last_block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`last_block_hash`,'^[0-9a-f]{64}$'))))"
+        },
+        {
+          "name": "aml_core_v3",
+          "expression": "(isValidJSON(`source_cursor_json`))"
+        }
+      ]
+    },
+    {
+      "name": "aml_ingested_blocks",
+      "purpose": "Complete canonical block markers; facts require exact hash, revision and commit identity.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "parent_hash",
+          "data_type": "String",
+          "description": "parent hash",
+          "default": null
+        },
+        {
+          "name": "canonical",
+          "data_type": "UInt8",
+          "description": "canonical",
+          "default": null
+        },
+        {
+          "name": "ingestion_status",
+          "data_type": "LowCardinality(String)",
+          "description": "ingestion status",
+          "default": null
+        },
+        {
+          "name": "transaction_count",
+          "data_type": "UInt32",
+          "description": "transaction count",
+          "default": null
+        },
+        {
+          "name": "receipt_coverage",
+          "data_type": "Nullable(UInt8)",
+          "description": "receipt coverage",
+          "default": null
+        },
+        {
+          "name": "trace_coverage",
+          "data_type": "Nullable(UInt8)",
+          "description": "trace coverage",
+          "default": null
+        },
+        {
+          "name": "prevout_coverage",
+          "data_type": "Nullable(UInt8)",
+          "description": "prevout coverage",
+          "default": null
+        },
+        {
+          "name": "source_id",
+          "data_type": "String",
+          "description": "source id",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        },
+        {
+          "name": "expected_counts_json",
+          "data_type": "String",
+          "description": "Verified per-table row counts for this commit; absent keys mean unknown/not produced.",
+          "default": "'{}'"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "Original source evidence retained without dropping legacy-only columns.",
+          "default": "'{}'"
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "revision"
+      ],
+      "partition_by": "intDiv(block_number, 100000)",
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND ((network_id='tron:mainnet' AND match(`block_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`block_hash`,'^[0-9a-f]{64}$'))) AND (`revision`>0) AND ((block_number=0 AND `parent_hash`='') OR ((network_id='tron:mainnet' AND match(`parent_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`parent_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`parent_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`parent_hash`,'^[0-9a-f]{64}$')))) AND (`canonical` IN (0,1)) AND (`ingestion_status` IN ('processing','complete','failed','orphaned')) AND (isNull(`receipt_coverage`) OR (`receipt_coverage` IN (0,1))) AND (network_id!='bip122:000000000019d6689c085ae165831e93' OR isNull(`receipt_coverage`)) AND (isNull(`trace_coverage`) OR (`trace_coverage` IN (0,1))) AND (network_id!='bip122:000000000019d6689c085ae165831e93' OR isNull(`trace_coverage`)) AND (isNull(`prevout_coverage`) OR (`prevout_coverage` IN (0,1))) AND (network_id='bip122:000000000019d6689c085ae165831e93' OR isNull(`prevout_coverage`)) AND (length(`commit_id`)>0)"
+        },
+        {
+          "name": "aml_core_v3",
+          "expression": "(isValidJSON(`expected_counts_json`)) AND (isValidJSON(`raw_evidence_json`))"
+        }
+      ]
+    },
+    {
+      "name": "aml_transactions",
+      "purpose": "One transaction occurrence per block, preserving BIP30 occurrences. A BTC transaction has no fabricated single sender.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash",
+          "default": null
+        },
+        {
+          "name": "transaction_index",
+          "data_type": "UInt32",
+          "description": "transaction index",
+          "default": null
+        },
+        {
+          "name": "from_address",
+          "data_type": "Nullable(String)",
+          "description": "from address",
+          "default": null
+        },
+        {
+          "name": "to_address",
+          "data_type": "Nullable(String)",
+          "description": "to address",
+          "default": null
+        },
+        {
+          "name": "amount_raw",
+          "data_type": "Nullable(UInt256)",
+          "description": "amount raw",
+          "default": null
+        },
+        {
+          "name": "fee_raw",
+          "data_type": "UInt256",
+          "description": "fee raw",
+          "default": null
+        },
+        {
+          "name": "asset_id",
+          "data_type": "String",
+          "description": "asset id",
+          "default": null
+        },
+        {
+          "name": "decimals",
+          "data_type": "UInt8",
+          "description": "decimals",
+          "default": null
+        },
+        {
+          "name": "status",
+          "data_type": "LowCardinality(String)",
+          "description": "status",
+          "default": null
+        },
+        {
+          "name": "coinbase",
+          "data_type": "UInt8",
+          "description": "coinbase",
+          "default": null
+        },
+        {
+          "name": "input_count",
+          "data_type": "Nullable(UInt32)",
+          "description": "input count",
+          "default": null
+        },
+        {
+          "name": "output_count",
+          "data_type": "Nullable(UInt32)",
+          "description": "output count",
+          "default": null
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "raw evidence json",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "tx_hash"
+      ],
+      "partition_by": "intDiv(block_number, 100000)",
+      "indexes": [
+        {
+          "name": "idx_tx_hash",
+          "expression": "tx_hash",
+          "index_type": "bloom_filter(0.01)",
+          "granularity": 4
+        }
+      ],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`block_hash`)>0) AND ((network_id='tron:mainnet' AND match(`block_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`block_hash`,'^[0-9a-f]{64}$'))) AND (length(`commit_id`)>0) AND (`revision`>0) AND (length(`tx_hash`)>0) AND ((network_id='tron:mainnet' AND match(`tx_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`tx_hash`,'^[0-9a-f]{64}$'))) AND (isNull(`amount_raw`) OR (network_id!='bip122:000000000019d6689c085ae165831e93' OR `amount_raw`<=2100000000000000)) AND (network_id!='bip122:000000000019d6689c085ae165831e93' OR `fee_raw`<=2100000000000000) AND (((network_id='tron:mainnet' AND match(`asset_id`,'^(?:native:TRX|trc10:(?:0|[1-9][0-9]*)|trc20:41[0-9a-f]{40}|trc721:41[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:1' AND match(`asset_id`,'^(?:native:ETH|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:56' AND match(`asset_id`,'^(?:native:BNB|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`asset_id`,'^(?:native:BTC)$'))) AND (length(extract(`asset_id`,'([0-9]+)$'))<78 OR (length(extract(`asset_id`,'([0-9]+)$'))=78 AND extract(`asset_id`,'([0-9]+)$')<='115792089237316195423570985008687907853269984665640564039457584007913129639935'))) AND (NOT startsWith(asset_id,'native:') OR ((network_id='tron:mainnet' AND isNotNull(`decimals`) AND `decimals`=6) OR (network_id='eip155:1' AND isNotNull(`decimals`) AND `decimals`=18) OR (network_id='eip155:56' AND isNotNull(`decimals`) AND `decimals`=18) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND isNotNull(`decimals`) AND `decimals`=8))) AND (`status` IN ('confirmed','success','failed','unknown')) AND (`coinbase` IN (0,1)) AND (isValidJSON(`raw_evidence_json`)) AND (network_id!='bip122:000000000019d6689c085ae165831e93' OR (isNull(from_address) AND isNull(to_address) AND isNull(amount_raw) AND decimals=8 AND asset_id='native:BTC' AND isNotNull(input_count) AND isNotNull(output_count)))"
+        }
+      ]
+    },
+    {
+      "name": "aml_address_relationships",
+      "purpose": "Typed value-flow legs. BTC input/output evidence must not create pairwise allocated transfers.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "relationship_id",
+          "data_type": "String",
+          "description": "relationship id",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash",
+          "default": null
+        },
+        {
+          "name": "transaction_index",
+          "data_type": "UInt32",
+          "description": "transaction index",
+          "default": null
+        },
+        {
+          "name": "event_index",
+          "data_type": "UInt32",
+          "description": "event index",
+          "default": null
+        },
+        {
+          "name": "from_subject_id",
+          "data_type": "String",
+          "description": "from subject id",
+          "default": null
+        },
+        {
+          "name": "from_subject_type",
+          "data_type": "LowCardinality(String)",
+          "description": "from subject type",
+          "default": null
+        },
+        {
+          "name": "to_subject_id",
+          "data_type": "String",
+          "description": "to subject id",
+          "default": null
+        },
+        {
+          "name": "to_subject_type",
+          "data_type": "LowCardinality(String)",
+          "description": "to subject type",
+          "default": null
+        },
+        {
+          "name": "from_address",
+          "data_type": "Nullable(String)",
+          "description": "from address",
+          "default": null
+        },
+        {
+          "name": "to_address",
+          "data_type": "Nullable(String)",
+          "description": "to address",
+          "default": null
+        },
+        {
+          "name": "asset_id",
+          "data_type": "String",
+          "description": "asset id",
+          "default": null
+        },
+        {
+          "name": "amount_raw",
+          "data_type": "UInt256",
+          "description": "amount raw",
+          "default": null
+        },
+        {
+          "name": "decimals",
+          "data_type": "Nullable(UInt8)",
+          "description": "decimals",
+          "default": null
+        },
+        {
+          "name": "transfer_type",
+          "data_type": "LowCardinality(String)",
+          "description": "transfer type",
+          "default": null
+        },
+        {
+          "name": "attribution_method",
+          "data_type": "LowCardinality(String)",
+          "description": "attribution method",
+          "default": null
+        },
+        {
+          "name": "confidence",
+          "data_type": "Float64",
+          "description": "confidence",
+          "default": null
+        },
+        {
+          "name": "prev_tx_hash",
+          "data_type": "Nullable(String)",
+          "description": "prev tx hash",
+          "default": null
+        },
+        {
+          "name": "prev_output_index",
+          "data_type": "Nullable(UInt32)",
+          "description": "prev output index",
+          "default": null
+        },
+        {
+          "name": "output_index",
+          "data_type": "Nullable(UInt32)",
+          "description": "output index",
+          "default": null
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        },
+        {
+          "name": "event_sub_index",
+          "data_type": "UInt32",
+          "description": "Stable sub-event position; zero is the sole leg sub-position for Bitcoin.",
+          "default": "0"
+        },
+        {
+          "name": "trace_address",
+          "data_type": "Array(UInt32)",
+          "description": "Ordered EVM trace-child positions; empty where not applicable.",
+          "default": "[]"
+        },
+        {
+          "name": "token_id",
+          "data_type": "Nullable(UInt256)",
+          "description": "Exact NFT token identity when separately observed; NULL is not zero.",
+          "default": "NULL"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "Original source evidence retained without dropping legacy-only columns.",
+          "default": "'{}'"
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "relationship_id"
+      ],
+      "partition_by": "intDiv(block_number, 100000)",
+      "indexes": [
+        {
+          "name": "idx_from_subject_id",
+          "expression": "from_subject_id",
+          "index_type": "bloom_filter(0.01)",
+          "granularity": 4
+        }
+      ],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`block_hash`)>0) AND ((network_id='tron:mainnet' AND match(`block_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`block_hash`,'^[0-9a-f]{64}$'))) AND (length(`commit_id`)>0) AND (`revision`>0) AND (length(`relationship_id`)>0) AND ((network_id='tron:mainnet' AND match(`tx_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`tx_hash`,'^[0-9a-f]{64}$'))) AND ((((network_id='tron:mainnet' AND match(`asset_id`,'^(?:native:TRX|trc10:(?:0|[1-9][0-9]*)|trc20:41[0-9a-f]{40}|trc721:41[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:1' AND match(`asset_id`,'^(?:native:ETH|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:56' AND match(`asset_id`,'^(?:native:BNB|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`asset_id`,'^(?:native:BTC)$'))) AND (length(extract(`asset_id`,'([0-9]+)$'))<78 OR (length(extract(`asset_id`,'([0-9]+)$'))=78 AND extract(`asset_id`,'([0-9]+)$')<='115792089237316195423570985008687907853269984665640564039457584007913129639935'))) AND NOT match(`asset_id`,'^(erc721|erc1155|trc721):[^/]+$')) AND (network_id!='bip122:000000000019d6689c085ae165831e93' OR `amount_raw`<=2100000000000000) AND (NOT startsWith(asset_id,'native:') OR ((network_id='tron:mainnet' AND isNotNull(`decimals`) AND `decimals`=6) OR (network_id='eip155:1' AND isNotNull(`decimals`) AND `decimals`=18) OR (network_id='eip155:56' AND isNotNull(`decimals`) AND `decimals`=18) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND isNotNull(`decimals`) AND `decimals`=8))) AND (isFinite(`confidence`) AND `confidence`>=0 AND `confidence`<=1) AND (isNull(`prev_tx_hash`) OR ((network_id='tron:mainnet' AND match(`prev_tx_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`prev_tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`prev_tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`prev_tx_hash`,'^[0-9a-f]{64}$')))) AND (arrayAll(x -> match(x,'^[a-z][a-z0-9_]*:[^[:cntrl:]]+$') AND (NOT startsWith(x,'tx:') AND NOT startsWith(x,'block:') OR ((network_id='tron:mainnet' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')))) AND (NOT startsWith(x,'outpoint:') OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(x,'^outpoint:[0-9a-f]{64}:(0|[1-9][0-9]*)$') AND toUInt64OrNull(extract(x,'([0-9]+)$'))<=4294967295)), `evidence_refs`))"
+        },
+        {
+          "name": "aml_core_v3",
+          "expression": "(isNull(`token_id`) OR (match(asset_id,'^(erc721|erc1155|trc721):[^/]+/[0-9]+$') AND toString(`token_id`)=extract(asset_id,'/([0-9]+)$'))) AND (isValidJSON(`raw_evidence_json`))"
+        }
+      ]
+    },
+    {
+      "name": "aml_transaction_features",
+      "purpose": "Versioned behavioral features tied to the exact committed transaction evidence.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "feature_id",
+          "data_type": "String",
+          "description": "feature id",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash",
+          "default": null
+        },
+        {
+          "name": "subject_id",
+          "data_type": "String",
+          "description": "subject id",
+          "default": null
+        },
+        {
+          "name": "detector_version",
+          "data_type": "String",
+          "description": "detector version",
+          "default": null
+        },
+        {
+          "name": "features_json",
+          "data_type": "String",
+          "description": "features json",
+          "default": null
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "Original source evidence retained without dropping legacy-only columns.",
+          "default": "'{}'"
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "feature_id"
+      ],
+      "partition_by": "intDiv(block_number, 100000)",
+      "indexes": [
+        {
+          "name": "idx_subject_id",
+          "expression": "subject_id",
+          "index_type": "bloom_filter(0.01)",
+          "granularity": 4
+        }
+      ],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`block_hash`)>0) AND ((network_id='tron:mainnet' AND match(`block_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`block_hash`,'^[0-9a-f]{64}$'))) AND (length(`commit_id`)>0) AND (`revision`>0) AND (length(`feature_id`)>0) AND ((network_id='tron:mainnet' AND match(`tx_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`tx_hash`,'^[0-9a-f]{64}$'))) AND (isValidJSON(`features_json`)) AND (arrayAll(x -> match(x,'^[a-z][a-z0-9_]*:[^[:cntrl:]]+$') AND (NOT startsWith(x,'tx:') AND NOT startsWith(x,'block:') OR ((network_id='tron:mainnet' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')))) AND (NOT startsWith(x,'outpoint:') OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(x,'^outpoint:[0-9a-f]{64}:(0|[1-9][0-9]*)$') AND toUInt64OrNull(extract(x,'([0-9]+)$'))<=4294967295)), `evidence_refs`))"
+        },
+        {
+          "name": "aml_core_v3",
+          "expression": "(isValidJSON(`raw_evidence_json`))"
+        }
+      ]
+    },
+    {
+      "name": "aml_semantic_aml_events",
+      "purpose": "Chain-specific semantic evidence using one schema and explicit detector provenance.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "event_id",
+          "data_type": "String",
+          "description": "event id",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash",
+          "default": null
+        },
+        {
+          "name": "subject_id",
+          "data_type": "String",
+          "description": "subject id",
+          "default": null
+        },
+        {
+          "name": "event_type",
+          "data_type": "LowCardinality(String)",
+          "description": "event type",
+          "default": null
+        },
+        {
+          "name": "protocol",
+          "data_type": "String",
+          "description": "protocol",
+          "default": null
+        },
+        {
+          "name": "detector_version",
+          "data_type": "String",
+          "description": "detector version",
+          "default": null
+        },
+        {
+          "name": "confidence",
+          "data_type": "Float64",
+          "description": "confidence",
+          "default": null
+        },
+        {
+          "name": "asset_in",
+          "data_type": "Nullable(String)",
+          "description": "asset in",
+          "default": null
+        },
+        {
+          "name": "asset_out",
+          "data_type": "Nullable(String)",
+          "description": "asset out",
+          "default": null
+        },
+        {
+          "name": "amount_in",
+          "data_type": "Nullable(UInt256)",
+          "description": "amount in",
+          "default": null
+        },
+        {
+          "name": "amount_out",
+          "data_type": "Nullable(UInt256)",
+          "description": "amount out",
+          "default": null
+        },
+        {
+          "name": "remote_network_id",
+          "data_type": "Nullable(String)",
+          "description": "remote network id",
+          "default": null
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs",
+          "default": null
+        },
+        {
+          "name": "evidence_json",
+          "data_type": "String",
+          "description": "evidence json",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        },
+        {
+          "name": "event_index",
+          "data_type": "UInt32",
+          "description": "Original event ordering within the transaction.",
+          "default": "0"
+        },
+        {
+          "name": "event_sub_index",
+          "data_type": "UInt32",
+          "description": "Original sub-event ordering.",
+          "default": "0"
+        },
+        {
+          "name": "detector",
+          "data_type": "String",
+          "description": "Producer identity; an empty historical value is unknown.",
+          "default": "''"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "Original source evidence retained without dropping legacy-only columns.",
+          "default": "'{}'"
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "event_id"
+      ],
+      "partition_by": "intDiv(block_number, 100000)",
+      "indexes": [
+        {
+          "name": "idx_subject_id",
+          "expression": "subject_id",
+          "index_type": "bloom_filter(0.01)",
+          "granularity": 4
+        }
+      ],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`block_hash`)>0) AND ((network_id='tron:mainnet' AND match(`block_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`block_hash`,'^[0-9a-f]{64}$'))) AND (length(`commit_id`)>0) AND (`revision`>0) AND (length(`event_id`)>0) AND ((network_id='tron:mainnet' AND match(`tx_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`tx_hash`,'^[0-9a-f]{64}$'))) AND (isFinite(`confidence`) AND `confidence`>=0 AND `confidence`<=1) AND (isNull(`asset_in`) OR (((network_id='tron:mainnet' AND match(`asset_in`,'^(?:native:TRX|trc10:(?:0|[1-9][0-9]*)|trc20:41[0-9a-f]{40}|trc721:41[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:1' AND match(`asset_in`,'^(?:native:ETH|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:56' AND match(`asset_in`,'^(?:native:BNB|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`asset_in`,'^(?:native:BTC)$'))) AND (length(extract(`asset_in`,'([0-9]+)$'))<78 OR (length(extract(`asset_in`,'([0-9]+)$'))=78 AND extract(`asset_in`,'([0-9]+)$')<='115792089237316195423570985008687907853269984665640564039457584007913129639935')))) AND (isNull(`asset_out`) OR (((network_id='tron:mainnet' AND match(`asset_out`,'^(?:native:TRX|trc10:(?:0|[1-9][0-9]*)|trc20:41[0-9a-f]{40}|trc721:41[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:1' AND match(`asset_out`,'^(?:native:ETH|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:56' AND match(`asset_out`,'^(?:native:BNB|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`asset_out`,'^(?:native:BTC)$'))) AND (length(extract(`asset_out`,'([0-9]+)$'))<78 OR (length(extract(`asset_out`,'([0-9]+)$'))=78 AND extract(`asset_out`,'([0-9]+)$')<='115792089237316195423570985008687907853269984665640564039457584007913129639935')))) AND (isNull(`amount_in`) OR (network_id!='bip122:000000000019d6689c085ae165831e93' OR `amount_in`<=2100000000000000)) AND (isNull(`amount_out`) OR (network_id!='bip122:000000000019d6689c085ae165831e93' OR `amount_out`<=2100000000000000)) AND (arrayAll(x -> match(x,'^[a-z][a-z0-9_]*:[^[:cntrl:]]+$') AND (NOT startsWith(x,'tx:') AND NOT startsWith(x,'block:') OR ((network_id='tron:mainnet' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')))) AND (NOT startsWith(x,'outpoint:') OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(x,'^outpoint:[0-9a-f]{64}:(0|[1-9][0-9]*)$') AND toUInt64OrNull(extract(x,'([0-9]+)$'))<=4294967295)), `evidence_refs`)) AND (isValidJSON(`evidence_json`))"
+        },
+        {
+          "name": "aml_core_v3",
+          "expression": "(isValidJSON(`raw_evidence_json`))"
+        }
+      ]
+    },
+    {
+      "name": "aml_asset_metadata",
+      "purpose": "Native and token asset metadata. BTC uses decimals=8; unsupported token standards are not invented.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "asset_id",
+          "data_type": "String",
+          "description": "asset id",
+          "default": null
+        },
+        {
+          "name": "symbol",
+          "data_type": "String",
+          "description": "symbol",
+          "default": null
+        },
+        {
+          "name": "name",
+          "data_type": "String",
+          "description": "name",
+          "default": null
+        },
+        {
+          "name": "decimals",
+          "data_type": "Nullable(UInt8)",
+          "description": "decimals",
+          "default": null
+        },
+        {
+          "name": "asset_standard",
+          "data_type": "LowCardinality(String)",
+          "description": "asset standard",
+          "default": null
+        },
+        {
+          "name": "source_id",
+          "data_type": "String",
+          "description": "source id",
+          "default": null
+        },
+        {
+          "name": "source_reference",
+          "data_type": "String",
+          "description": "source reference",
+          "default": null
+        },
+        {
+          "name": "review_status",
+          "data_type": "LowCardinality(String)",
+          "description": "review status",
+          "default": null
+        },
+        {
+          "name": "reviewed_by",
+          "data_type": "String",
+          "description": "reviewed by",
+          "default": null
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "asset_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`asset_id`)>0) AND (((network_id='tron:mainnet' AND match(`asset_id`,'^(?:native:TRX|trc10:(?:0|[1-9][0-9]*)|trc20:41[0-9a-f]{40}|trc721:41[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:1' AND match(`asset_id`,'^(?:native:ETH|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:56' AND match(`asset_id`,'^(?:native:BNB|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`asset_id`,'^(?:native:BTC)$'))) AND (length(extract(`asset_id`,'([0-9]+)$'))<78 OR (length(extract(`asset_id`,'([0-9]+)$'))=78 AND extract(`asset_id`,'([0-9]+)$')<='115792089237316195423570985008687907853269984665640564039457584007913129639935'))) AND (NOT startsWith(asset_id,'native:') OR ((network_id='tron:mainnet' AND isNotNull(`decimals`) AND `decimals`=6) OR (network_id='eip155:1' AND isNotNull(`decimals`) AND `decimals`=18) OR (network_id='eip155:56' AND isNotNull(`decimals`) AND `decimals`=18) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND isNotNull(`decimals`) AND `decimals`=8))) AND (`review_status` IN ('pending','approved','rejected','revoked')) AND (review_status='pending' OR length(`reviewed_by`)>0) AND (arrayAll(x -> match(x,'^[a-z][a-z0-9_]*:[^[:cntrl:]]+$') AND (NOT startsWith(x,'tx:') AND NOT startsWith(x,'block:') OR ((network_id='tron:mainnet' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')))) AND (NOT startsWith(x,'outpoint:') OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(x,'^outpoint:[0-9a-f]{64}:(0|[1-9][0-9]*)$') AND toUInt64OrNull(extract(x,'([0-9]+)$'))<=4294967295)), `evidence_refs`)) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_metadata_jobs",
+      "purpose": "Durable discovery and refresh queue for supported metadata capabilities.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "job_id",
+          "data_type": "String",
+          "description": "job id",
+          "default": null
+        },
+        {
+          "name": "asset_id",
+          "data_type": "String",
+          "description": "asset id",
+          "default": null
+        },
+        {
+          "name": "status",
+          "data_type": "LowCardinality(String)",
+          "description": "status",
+          "default": null
+        },
+        {
+          "name": "attempts",
+          "data_type": "UInt32",
+          "description": "attempts",
+          "default": null
+        },
+        {
+          "name": "next_attempt_unix_ms",
+          "data_type": "UInt64",
+          "description": "next attempt unix ms",
+          "default": null
+        },
+        {
+          "name": "last_error",
+          "data_type": "String",
+          "description": "last error",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "job_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`job_id`)>0) AND (((network_id='tron:mainnet' AND match(`asset_id`,'^(?:native:TRX|trc10:(?:0|[1-9][0-9]*)|trc20:41[0-9a-f]{40}|trc721:41[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:1' AND match(`asset_id`,'^(?:native:ETH|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:56' AND match(`asset_id`,'^(?:native:BNB|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`asset_id`,'^(?:native:BTC)$'))) AND (length(extract(`asset_id`,'([0-9]+)$'))<78 OR (length(extract(`asset_id`,'([0-9]+)$'))=78 AND extract(`asset_id`,'([0-9]+)$')<='115792089237316195423570985008687907853269984665640564039457584007913129639935'))) AND (`status` IN ('pending','running','retry','complete','failed','dead_letter','cancelled')) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_ingestion_failures",
+      "purpose": "Block failure and dead-letter records with explicit operator-visible retry state.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "failure_id",
+          "data_type": "String",
+          "description": "failure id",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "block number",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "Nullable(String)",
+          "description": "block hash",
+          "default": null
+        },
+        {
+          "name": "operation",
+          "data_type": "LowCardinality(String)",
+          "description": "operation",
+          "default": null
+        },
+        {
+          "name": "status",
+          "data_type": "LowCardinality(String)",
+          "description": "status",
+          "default": null
+        },
+        {
+          "name": "attempts",
+          "data_type": "UInt32",
+          "description": "attempts",
+          "default": null
+        },
+        {
+          "name": "error_code",
+          "data_type": "String",
+          "description": "error code",
+          "default": null
+        },
+        {
+          "name": "error_message",
+          "data_type": "String",
+          "description": "error message",
+          "default": null
+        },
+        {
+          "name": "next_attempt_unix_ms",
+          "data_type": "UInt64",
+          "description": "next attempt unix ms",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "Nullable(String)",
+          "description": "Transaction identity when known; a block failure need not identify a transaction.",
+          "default": "NULL"
+        },
+        {
+          "name": "retryable",
+          "data_type": "Nullable(UInt8)",
+          "description": "Explicit retryability; historical unknown remains NULL.",
+          "default": "NULL"
+        },
+        {
+          "name": "first_failed_at_unix_ms",
+          "data_type": "Nullable(UInt64)",
+          "description": "Observed UTC Unix milliseconds; NULL when not recorded. Wall clock can move backwards.",
+          "default": "NULL"
+        },
+        {
+          "name": "last_failed_at_unix_ms",
+          "data_type": "Nullable(UInt64)",
+          "description": "Observed UTC Unix milliseconds; NULL when not recorded. Wall clock can move backwards.",
+          "default": "NULL"
+        },
+        {
+          "name": "resolved_at_unix_ms",
+          "data_type": "Nullable(UInt64)",
+          "description": "Observed UTC Unix milliseconds; NULL when not recorded. Wall clock can move backwards.",
+          "default": "NULL"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "Original source evidence retained without dropping legacy-only columns.",
+          "default": "'{}'"
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "failure_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`failure_id`)>0) AND (isNull(`block_hash`) OR ((network_id='tron:mainnet' AND match(`block_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`block_hash`,'^[0-9a-f]{64}$')))) AND (`status` IN ('retry','dead_letter','repairing','gap','resolved')) AND (`revision`>0)"
+        },
+        {
+          "name": "aml_core_v3",
+          "expression": "(isNull(`tx_hash`) OR ((network_id='tron:mainnet' AND match(`tx_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`tx_hash`,'^[0-9a-f]{64}$')))) AND (isNull(`retryable`) OR (`retryable` IN (0,1))) AND (isValidJSON(`raw_evidence_json`))"
+        }
+      ]
+    },
+    {
+      "name": "aml_ingestion_benchmarks",
+      "purpose": "Persisted measured throughput, resource settings and covered block range.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "benchmark_id",
+          "data_type": "String",
+          "description": "benchmark id",
+          "default": null
+        },
+        {
+          "name": "start_block",
+          "data_type": "UInt64",
+          "description": "start block",
+          "default": null
+        },
+        {
+          "name": "end_block",
+          "data_type": "UInt64",
+          "description": "end block",
+          "default": null
+        },
+        {
+          "name": "blocks",
+          "data_type": "UInt64",
+          "description": "blocks",
+          "default": null
+        },
+        {
+          "name": "transactions",
+          "data_type": "UInt64",
+          "description": "transactions",
+          "default": null
+        },
+        {
+          "name": "rows_written",
+          "data_type": "UInt64",
+          "description": "rows written",
+          "default": null
+        },
+        {
+          "name": "elapsed_ms",
+          "data_type": "UInt64",
+          "description": "elapsed ms",
+          "default": null
+        },
+        {
+          "name": "bytes_written",
+          "data_type": "UInt64",
+          "description": "bytes written",
+          "default": null
+        },
+        {
+          "name": "settings_json",
+          "data_type": "String",
+          "description": "settings json",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        },
+        {
+          "name": "source_kind",
+          "data_type": "LowCardinality(String)",
+          "description": "Source category observed during the benchmark.",
+          "default": "'unknown'"
+        },
+        {
+          "name": "status",
+          "data_type": "LowCardinality(String)",
+          "description": "Actual benchmark lifecycle state.",
+          "default": "'unknown'"
+        },
+        {
+          "name": "started_at_unix_ms",
+          "data_type": "Nullable(UInt64)",
+          "description": "Observed UTC Unix milliseconds; unknown remains NULL.",
+          "default": "NULL"
+        },
+        {
+          "name": "completed_at_unix_ms",
+          "data_type": "Nullable(UInt64)",
+          "description": "Observed UTC Unix milliseconds; unknown remains NULL.",
+          "default": "NULL"
+        },
+        {
+          "name": "metrics_json",
+          "data_type": "String",
+          "description": "Additional measured counts, latencies and resource metrics; not asset quantities.",
+          "default": "'{}'"
+        },
+        {
+          "name": "error_message",
+          "data_type": "String",
+          "description": "Sanitized operational error summary.",
+          "default": "''"
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "Original source evidence retained without dropping legacy-only columns.",
+          "default": "'{}'"
+        },
+        {
+          "name": "blocks_per_second",
+          "data_type": "Nullable(Float64)",
+          "description": "Measured nonnegative throughput; unknown remains NULL.",
+          "default": "NULL"
+        },
+        {
+          "name": "transactions_per_second",
+          "data_type": "Nullable(Float64)",
+          "description": "Measured nonnegative throughput; unknown remains NULL.",
+          "default": "NULL"
+        },
+        {
+          "name": "rows_per_second",
+          "data_type": "Nullable(Float64)",
+          "description": "Measured nonnegative throughput; unknown remains NULL.",
+          "default": "NULL"
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "benchmark_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`benchmark_id`)>0) AND (isValidJSON(`settings_json`)) AND (`revision`>0)"
+        },
+        {
+          "name": "aml_core_v3",
+          "expression": "(`status` IN ('unknown','pending','running','complete','failed','cancelled')) AND (isValidJSON(`metrics_json`)) AND (isValidJSON(`raw_evidence_json`)) AND (isNull(`blocks_per_second`) OR (isFinite(`blocks_per_second`) AND `blocks_per_second`>=0)) AND (isNull(`transactions_per_second`) OR (isFinite(`transactions_per_second`) AND `transactions_per_second`>=0)) AND (isNull(`rows_per_second`) OR (isFinite(`rows_per_second`) AND `rows_per_second`>=0))"
+        }
+      ]
+    },
+    {
+      "name": "aml_intelligence_sources",
+      "purpose": "Auditable identity source registry. An inactive source cannot support an active risk seed.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "source_id",
+          "data_type": "String",
+          "description": "source id",
+          "default": null
+        },
+        {
+          "name": "source_name",
+          "data_type": "String",
+          "description": "source name",
+          "default": null
+        },
+        {
+          "name": "source_type",
+          "data_type": "LowCardinality(String)",
+          "description": "source type",
+          "default": null
+        },
+        {
+          "name": "reference_url",
+          "data_type": "String",
+          "description": "reference url",
+          "default": null
+        },
+        {
+          "name": "trust_tier",
+          "data_type": "LowCardinality(String)",
+          "description": "trust tier",
+          "default": null
+        },
+        {
+          "name": "license",
+          "data_type": "String",
+          "description": "license",
+          "default": null
+        },
+        {
+          "name": "is_active",
+          "data_type": "UInt8",
+          "description": "is active",
+          "default": null
+        },
+        {
+          "name": "created_by",
+          "data_type": "String",
+          "description": "created by",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "source_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`source_id`)>0) AND (`is_active` IN (0,1)) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_intelligence_claims",
+      "purpose": "Reviewed address/entity attribution; unreviewed or revoked records remain evidence, not active risk input.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "claim_id",
+          "data_type": "String",
+          "description": "claim id",
+          "default": null
+        },
+        {
+          "name": "address",
+          "data_type": "String",
+          "description": "address",
+          "default": null
+        },
+        {
+          "name": "claim_kind",
+          "data_type": "LowCardinality(String)",
+          "description": "claim kind",
+          "default": null
+        },
+        {
+          "name": "entity_id",
+          "data_type": "String",
+          "description": "entity id",
+          "default": null
+        },
+        {
+          "name": "entity_name",
+          "data_type": "String",
+          "description": "entity name",
+          "default": null
+        },
+        {
+          "name": "entity_type",
+          "data_type": "LowCardinality(String)",
+          "description": "entity type",
+          "default": null
+        },
+        {
+          "name": "address_role",
+          "data_type": "LowCardinality(String)",
+          "description": "address role",
+          "default": null
+        },
+        {
+          "name": "confidence",
+          "data_type": "Float64",
+          "description": "confidence",
+          "default": null
+        },
+        {
+          "name": "risk_level",
+          "data_type": "UInt8",
+          "description": "risk level",
+          "default": null
+        },
+        {
+          "name": "is_exposure_seed",
+          "data_type": "UInt8",
+          "description": "is exposure seed",
+          "default": null
+        },
+        {
+          "name": "seed_category",
+          "data_type": "LowCardinality(String)",
+          "description": "seed category",
+          "default": null
+        },
+        {
+          "name": "source_id",
+          "data_type": "String",
+          "description": "source id",
+          "default": null
+        },
+        {
+          "name": "source_reference",
+          "data_type": "String",
+          "description": "source reference",
+          "default": null
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs",
+          "default": null
+        },
+        {
+          "name": "review_status",
+          "data_type": "LowCardinality(String)",
+          "description": "review status",
+          "default": null
+        },
+        {
+          "name": "reviewed_by",
+          "data_type": "String",
+          "description": "reviewed by",
+          "default": null
+        },
+        {
+          "name": "review_note",
+          "data_type": "String",
+          "description": "review note",
+          "default": null
+        },
+        {
+          "name": "valid_from_unix_ms",
+          "data_type": "UInt64",
+          "description": "valid from unix ms",
+          "default": null
+        },
+        {
+          "name": "valid_to_unix_ms",
+          "data_type": "Nullable(UInt64)",
+          "description": "valid to unix ms",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "claim_id"
+      ],
+      "partition_by": "intDiv(created_at_unix_ms, 2592000000)",
+      "indexes": [
+        {
+          "name": "idx_address",
+          "expression": "address",
+          "index_type": "bloom_filter(0.01)",
+          "granularity": 4
+        }
+      ],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`claim_id`)>0) AND (isFinite(`confidence`) AND `confidence`>=0 AND `confidence`<=1) AND (`is_exposure_seed` IN (0,1)) AND (arrayAll(x -> match(x,'^[a-z][a-z0-9_]*:[^[:cntrl:]]+$') AND (NOT startsWith(x,'tx:') AND NOT startsWith(x,'block:') OR ((network_id='tron:mainnet' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')))) AND (NOT startsWith(x,'outpoint:') OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(x,'^outpoint:[0-9a-f]{64}:(0|[1-9][0-9]*)$') AND toUInt64OrNull(extract(x,'([0-9]+)$'))<=4294967295)), `evidence_refs`)) AND (`review_status` IN ('pending','approved','rejected','revoked')) AND (review_status='pending' OR length(`reviewed_by`)>0) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_intelligence_reviews",
+      "purpose": "Append-only review history referenced by the current claim revision.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "review_id",
+          "data_type": "String",
+          "description": "review id",
+          "default": null
+        },
+        {
+          "name": "subject_type",
+          "data_type": "LowCardinality(String)",
+          "description": "subject type",
+          "default": null
+        },
+        {
+          "name": "subject_id",
+          "data_type": "String",
+          "description": "subject id",
+          "default": null
+        },
+        {
+          "name": "decision",
+          "data_type": "LowCardinality(String)",
+          "description": "decision",
+          "default": null
+        },
+        {
+          "name": "reviewed_by",
+          "data_type": "String",
+          "description": "reviewed by",
+          "default": null
+        },
+        {
+          "name": "reason",
+          "data_type": "String",
+          "description": "reason",
+          "default": null
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "review_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`review_id`)>0) AND (`decision` IN ('approved','rejected','revoked')) AND (length(`reviewed_by`)>0) AND (arrayAll(x -> match(x,'^[a-z][a-z0-9_]*:[^[:cntrl:]]+$') AND (NOT startsWith(x,'tx:') AND NOT startsWith(x,'block:') OR ((network_id='tron:mainnet' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')))) AND (NOT startsWith(x,'outpoint:') OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(x,'^outpoint:[0-9a-f]{64}:(0|[1-9][0-9]*)$') AND toUInt64OrNull(extract(x,'([0-9]+)$'))<=4294967295)), `evidence_refs`)) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_cluster_claims",
+      "purpose": "Versioned clustering candidates; heuristic confidence is not proof of ownership.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "claim_id",
+          "data_type": "String",
+          "description": "claim id",
+          "default": null
+        },
+        {
+          "name": "cluster_id",
+          "data_type": "String",
+          "description": "cluster id",
+          "default": null
+        },
+        {
+          "name": "subject_id",
+          "data_type": "String",
+          "description": "subject id",
+          "default": null
+        },
+        {
+          "name": "heuristic",
+          "data_type": "LowCardinality(String)",
+          "description": "heuristic",
+          "default": null
+        },
+        {
+          "name": "detector_version",
+          "data_type": "String",
+          "description": "detector version",
+          "default": null
+        },
+        {
+          "name": "confidence",
+          "data_type": "Float64",
+          "description": "confidence",
+          "default": null
+        },
+        {
+          "name": "review_status",
+          "data_type": "LowCardinality(String)",
+          "description": "review status",
+          "default": null
+        },
+        {
+          "name": "source_id",
+          "data_type": "String",
+          "description": "source id",
+          "default": null
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs",
+          "default": null
+        },
+        {
+          "name": "evidence_json",
+          "data_type": "String",
+          "description": "evidence json",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "claim_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`claim_id`)>0) AND (isFinite(`confidence`) AND `confidence`>=0 AND `confidence`<=1) AND (`review_status` IN ('pending','approved','rejected','revoked')) AND (arrayAll(x -> match(x,'^[a-z][a-z0-9_]*:[^[:cntrl:]]+$') AND (NOT startsWith(x,'tx:') AND NOT startsWith(x,'block:') OR ((network_id='tron:mainnet' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')))) AND (NOT startsWith(x,'outpoint:') OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(x,'^outpoint:[0-9a-f]{64}:(0|[1-9][0-9]*)$') AND toUInt64OrNull(extract(x,'([0-9]+)$'))<=4294967295)), `evidence_refs`)) AND (isValidJSON(`evidence_json`)) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_cluster_memberships",
+      "purpose": "Reviewed, versioned cluster membership referring back to its supporting claim.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "cluster_id",
+          "data_type": "String",
+          "description": "cluster id",
+          "default": null
+        },
+        {
+          "name": "cluster_version",
+          "data_type": "String",
+          "description": "cluster version",
+          "default": null
+        },
+        {
+          "name": "subject_id",
+          "data_type": "String",
+          "description": "subject id",
+          "default": null
+        },
+        {
+          "name": "claim_id",
+          "data_type": "String",
+          "description": "claim id",
+          "default": null
+        },
+        {
+          "name": "status",
+          "data_type": "LowCardinality(String)",
+          "description": "status",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "cluster_id",
+        "cluster_version",
+        "subject_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`cluster_id`)>0) AND (length(`cluster_version`)>0) AND (length(`subject_id`)>0) AND (`status` IN ('pending','active','inactive','revoked')) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_cluster_runs",
+      "purpose": "Bounded cluster discovery run and its committed source epoch.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "run_id",
+          "data_type": "String",
+          "description": "run id",
+          "default": null
+        },
+        {
+          "name": "status",
+          "data_type": "LowCardinality(String)",
+          "description": "status",
+          "default": null
+        },
+        {
+          "name": "as_of_block",
+          "data_type": "UInt64",
+          "description": "as of block",
+          "default": null
+        },
+        {
+          "name": "source_revision",
+          "data_type": "UInt64",
+          "description": "source revision",
+          "default": null
+        },
+        {
+          "name": "detector_version",
+          "data_type": "String",
+          "description": "detector version",
+          "default": null
+        },
+        {
+          "name": "cursor_json",
+          "data_type": "String",
+          "description": "cursor json",
+          "default": null
+        },
+        {
+          "name": "started_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "started at unix ms",
+          "default": null
+        },
+        {
+          "name": "completed_at_unix_ms",
+          "data_type": "Nullable(UInt64)",
+          "description": "completed at unix ms",
+          "default": null
+        },
+        {
+          "name": "truncated",
+          "data_type": "UInt8",
+          "description": "truncated",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "run_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`run_id`)>0) AND (`status` IN ('pending','waiting','running','complete','failed','stale','cancelled','truncated')) AND (isValidJSON(`cursor_json`)) AND (`truncated` IN (0,1)) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_exposure_seeds",
+      "purpose": "Current reviewed risk seed linked to an approved active intelligence claim.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "seed_id",
+          "data_type": "String",
+          "description": "seed id",
+          "default": null
+        },
+        {
+          "name": "address",
+          "data_type": "String",
+          "description": "address",
+          "default": null
+        },
+        {
+          "name": "claim_id",
+          "data_type": "String",
+          "description": "claim id",
+          "default": null
+        },
+        {
+          "name": "category",
+          "data_type": "LowCardinality(String)",
+          "description": "category",
+          "default": null
+        },
+        {
+          "name": "is_active",
+          "data_type": "UInt8",
+          "description": "is active",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "seed_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`seed_id`)>0) AND (`is_active` IN (0,1)) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_exposure_runs",
+      "purpose": "Publication marker for complete exposure results; failed/stale/running runs are never complete.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "run_id",
+          "data_type": "String",
+          "description": "run id",
+          "default": null
+        },
+        {
+          "name": "seed_id",
+          "data_type": "String",
+          "description": "seed id",
+          "default": null
+        },
+        {
+          "name": "status",
+          "data_type": "LowCardinality(String)",
+          "description": "status",
+          "default": null
+        },
+        {
+          "name": "as_of_block",
+          "data_type": "UInt64",
+          "description": "as of block",
+          "default": null
+        },
+        {
+          "name": "source_revision",
+          "data_type": "UInt64",
+          "description": "source revision",
+          "default": null
+        },
+        {
+          "name": "policy_version",
+          "data_type": "String",
+          "description": "policy version",
+          "default": null
+        },
+        {
+          "name": "max_hops",
+          "data_type": "UInt8",
+          "description": "max hops",
+          "default": null
+        },
+        {
+          "name": "started_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "started at unix ms",
+          "default": null
+        },
+        {
+          "name": "completed_at_unix_ms",
+          "data_type": "Nullable(UInt64)",
+          "description": "completed at unix ms",
+          "default": null
+        },
+        {
+          "name": "truncated",
+          "data_type": "UInt8",
+          "description": "truncated",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "run_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`run_id`)>0) AND (`status` IN ('pending','waiting','running','complete','failed','stale','cancelled','truncated')) AND (`truncated` IN (0,1)) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_exposure_paths",
+      "purpose": "Directional, amount-aware exposure with explicit attribution policy and uncertainty.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "path_id",
+          "data_type": "String",
+          "description": "path id",
+          "default": null
+        },
+        {
+          "name": "run_id",
+          "data_type": "String",
+          "description": "run id",
+          "default": null
+        },
+        {
+          "name": "subject_id",
+          "data_type": "String",
+          "description": "subject id",
+          "default": null
+        },
+        {
+          "name": "seed_id",
+          "data_type": "String",
+          "description": "seed id",
+          "default": null
+        },
+        {
+          "name": "direction",
+          "data_type": "LowCardinality(String)",
+          "description": "direction",
+          "default": null
+        },
+        {
+          "name": "hop_count",
+          "data_type": "UInt8",
+          "description": "hop count",
+          "default": null
+        },
+        {
+          "name": "asset_id",
+          "data_type": "String",
+          "description": "asset id",
+          "default": null
+        },
+        {
+          "name": "amount_raw",
+          "data_type": "UInt256",
+          "description": "amount raw",
+          "default": null
+        },
+        {
+          "name": "amount_share",
+          "data_type": "Float64",
+          "description": "amount share",
+          "default": null
+        },
+        {
+          "name": "exposure_score",
+          "data_type": "Float64",
+          "description": "exposure score",
+          "default": null
+        },
+        {
+          "name": "attribution_method",
+          "data_type": "LowCardinality(String)",
+          "description": "attribution method",
+          "default": null
+        },
+        {
+          "name": "fund_continuity_claimed",
+          "data_type": "UInt8",
+          "description": "fund continuity claimed",
+          "default": null
+        },
+        {
+          "name": "path_subjects",
+          "data_type": "Array(String)",
+          "description": "path subjects",
+          "default": null
+        },
+        {
+          "name": "relationship_ids",
+          "data_type": "Array(String)",
+          "description": "relationship ids",
+          "default": null
+        },
+        {
+          "name": "tx_hashes",
+          "data_type": "Array(String)",
+          "description": "tx hashes",
+          "default": null
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "run_id",
+        "path_id"
+      ],
+      "partition_by": null,
+      "indexes": [
+        {
+          "name": "idx_subject_id",
+          "expression": "subject_id",
+          "index_type": "bloom_filter(0.01)",
+          "granularity": 4
+        }
+      ],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`path_id`)>0) AND (length(`run_id`)>0) AND (((network_id='tron:mainnet' AND match(`asset_id`,'^(?:native:TRX|trc10:(?:0|[1-9][0-9]*)|trc20:41[0-9a-f]{40}|trc721:41[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:1' AND match(`asset_id`,'^(?:native:ETH|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='eip155:56' AND match(`asset_id`,'^(?:native:BNB|erc20:0x[0-9a-f]{40}|(?:erc721|erc1155):0x[0-9a-f]{40}(?:/(?:0|[1-9][0-9]*))?)$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`asset_id`,'^(?:native:BTC)$'))) AND (length(extract(`asset_id`,'([0-9]+)$'))<78 OR (length(extract(`asset_id`,'([0-9]+)$'))=78 AND extract(`asset_id`,'([0-9]+)$')<='115792089237316195423570985008687907853269984665640564039457584007913129639935'))) AND (network_id!='bip122:000000000019d6689c085ae165831e93' OR `amount_raw`<=2100000000000000) AND (isFinite(`amount_share`) AND `amount_share`>=0 AND `amount_share`<=1) AND (isFinite(`exposure_score`) AND `exposure_score`>=0 AND `exposure_score`<=1) AND (`fund_continuity_claimed` IN (0,1)) AND (arrayAll(x -> match(x,'^[a-z][a-z0-9_]*:[^[:cntrl:]]+$') AND (NOT startsWith(x,'tx:') AND NOT startsWith(x,'block:') OR ((network_id='tron:mainnet' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')))) AND (NOT startsWith(x,'outpoint:') OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(x,'^outpoint:[0-9a-f]{64}:(0|[1-9][0-9]*)$') AND toUInt64OrNull(extract(x,'([0-9]+)$'))<=4294967295)), `evidence_refs`)) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_risk_policies",
+      "purpose": "Versioned evidence policy definitions used by the central Analytical Node.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "policy_version",
+          "data_type": "String",
+          "description": "policy version",
+          "default": null
+        },
+        {
+          "name": "policy_name",
+          "data_type": "String",
+          "description": "policy name",
+          "default": null
+        },
+        {
+          "name": "enabled",
+          "data_type": "UInt8",
+          "description": "enabled",
+          "default": null
+        },
+        {
+          "name": "medium_threshold",
+          "data_type": "Float64",
+          "description": "medium threshold",
+          "default": null
+        },
+        {
+          "name": "high_threshold",
+          "data_type": "Float64",
+          "description": "high threshold",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "policy_version"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`policy_version`)>0) AND (`enabled` IN (0,1)) AND (isFinite(`medium_threshold`) AND `medium_threshold`>=0 AND `medium_threshold`<=100) AND (isFinite(`high_threshold`) AND `high_threshold`>=0 AND `high_threshold`<=100) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_risk_policy_rules",
+      "purpose": "Auditable policy rule and maximum evidence contribution.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "policy_version",
+          "data_type": "String",
+          "description": "policy version",
+          "default": null
+        },
+        {
+          "name": "rule_id",
+          "data_type": "String",
+          "description": "rule id",
+          "default": null
+        },
+        {
+          "name": "signal_type",
+          "data_type": "LowCardinality(String)",
+          "description": "signal type",
+          "default": null
+        },
+        {
+          "name": "max_contribution",
+          "data_type": "Float64",
+          "description": "max contribution",
+          "default": null
+        },
+        {
+          "name": "description",
+          "data_type": "String",
+          "description": "description",
+          "default": null
+        },
+        {
+          "name": "enabled",
+          "data_type": "UInt8",
+          "description": "enabled",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "policy_version",
+        "rule_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`policy_version`)>0) AND (length(`rule_id`)>0) AND (isFinite(`max_contribution`) AND `max_contribution`>=0 AND `max_contribution`<=100) AND (`enabled` IN (0,1)) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_wallet_risk_signals",
+      "purpose": "Persisted evidence behind a central risk assessment; never a probability claim.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "signal_id",
+          "data_type": "String",
+          "description": "signal id",
+          "default": null
+        },
+        {
+          "name": "assessment_id",
+          "data_type": "String",
+          "description": "assessment id",
+          "default": null
+        },
+        {
+          "name": "subject_id",
+          "data_type": "String",
+          "description": "subject id",
+          "default": null
+        },
+        {
+          "name": "policy_version",
+          "data_type": "String",
+          "description": "policy version",
+          "default": null
+        },
+        {
+          "name": "signal_type",
+          "data_type": "LowCardinality(String)",
+          "description": "signal type",
+          "default": null
+        },
+        {
+          "name": "contribution",
+          "data_type": "Float64",
+          "description": "contribution",
+          "default": null
+        },
+        {
+          "name": "summary",
+          "data_type": "String",
+          "description": "summary",
+          "default": null
+        },
+        {
+          "name": "evidence_refs",
+          "data_type": "Array(String)",
+          "description": "evidence refs",
+          "default": null
+        },
+        {
+          "name": "evidence_json",
+          "data_type": "String",
+          "description": "evidence json",
+          "default": null
+        },
+        {
+          "name": "as_of_block",
+          "data_type": "UInt64",
+          "description": "as of block",
+          "default": null
+        },
+        {
+          "name": "source_revision",
+          "data_type": "UInt64",
+          "description": "source revision",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "assessment_id",
+        "signal_id"
+      ],
+      "partition_by": null,
+      "indexes": [
+        {
+          "name": "idx_subject_id",
+          "expression": "subject_id",
+          "index_type": "bloom_filter(0.01)",
+          "granularity": 4
+        }
+      ],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`signal_id`)>0) AND (length(`assessment_id`)>0) AND (isFinite(`contribution`) AND `contribution`>=0 AND `contribution`<=100) AND (arrayAll(x -> match(x,'^[a-z][a-z0-9_]*:[^[:cntrl:]]+$') AND (NOT startsWith(x,'tx:') AND NOT startsWith(x,'block:') OR ((network_id='tron:mainnet' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(substring(x,position(x,':')+1),'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(substring(x,position(x,':')+1),'^[0-9a-f]{64}$')))) AND (NOT startsWith(x,'outpoint:') OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(x,'^outpoint:[0-9a-f]{64}:(0|[1-9][0-9]*)$') AND toUInt64OrNull(extract(x,'([0-9]+)$'))<=4294967295)), `evidence_refs`)) AND (isValidJSON(`evidence_json`)) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_wallet_risk_assessments",
+      "purpose": "Snapshot of central scoring with nullable score when evidence is insufficient.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "assessment_id",
+          "data_type": "String",
+          "description": "assessment id",
+          "default": null
+        },
+        {
+          "name": "subject_id",
+          "data_type": "String",
+          "description": "subject id",
+          "default": null
+        },
+        {
+          "name": "policy_version",
+          "data_type": "String",
+          "description": "policy version",
+          "default": null
+        },
+        {
+          "name": "risk_score",
+          "data_type": "Nullable(Float64)",
+          "description": "risk score",
+          "default": null
+        },
+        {
+          "name": "risk_level",
+          "data_type": "LowCardinality(String)",
+          "description": "risk level",
+          "default": null
+        },
+        {
+          "name": "probability_claimed",
+          "data_type": "UInt8",
+          "description": "probability claimed",
+          "default": null
+        },
+        {
+          "name": "signal_count",
+          "data_type": "UInt32",
+          "description": "signal count",
+          "default": null
+        },
+        {
+          "name": "exposure_run_id",
+          "data_type": "Nullable(String)",
+          "description": "exposure run id",
+          "default": null
+        },
+        {
+          "name": "limitations",
+          "data_type": "Array(String)",
+          "description": "limitations",
+          "default": null
+        },
+        {
+          "name": "as_of_block",
+          "data_type": "UInt64",
+          "description": "as of block",
+          "default": null
+        },
+        {
+          "name": "source_revision",
+          "data_type": "UInt64",
+          "description": "source revision",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "assessment_id"
+      ],
+      "partition_by": null,
+      "indexes": [
+        {
+          "name": "idx_subject_id",
+          "expression": "subject_id",
+          "index_type": "bloom_filter(0.01)",
+          "granularity": 4
+        }
+      ],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`assessment_id`)>0) AND (isNull(`risk_score`) OR (isFinite(`risk_score`) AND `risk_score`>=0 AND `risk_score`<=100)) AND (`risk_level` IN ('UNKNOWN','LOW','MEDIUM','HIGH','CRITICAL')) AND (`probability_claimed` IN (0,1)) AND (`revision`>0)"
+        }
+      ]
+    },
+    {
+      "name": "aml_bitcoin_inputs",
+      "purpose": "Bitcoin raw UTXO evidence; this table exists but has no applicable rows on the other networks.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash",
+          "default": null
+        },
+        {
+          "name": "transaction_index",
+          "data_type": "UInt32",
+          "description": "transaction index",
+          "default": null
+        },
+        {
+          "name": "input_index",
+          "data_type": "UInt32",
+          "description": "input index",
+          "default": null
+        },
+        {
+          "name": "address",
+          "data_type": "Nullable(String)",
+          "description": "address",
+          "default": null
+        },
+        {
+          "name": "script_hex",
+          "data_type": "String",
+          "description": "script hex",
+          "default": null
+        },
+        {
+          "name": "script_type",
+          "data_type": "LowCardinality(String)",
+          "description": "script type",
+          "default": null
+        },
+        {
+          "name": "value_sats",
+          "data_type": "UInt64",
+          "description": "value sats",
+          "default": null
+        },
+        {
+          "name": "prev_tx_hash",
+          "data_type": "String",
+          "description": "prev tx hash",
+          "default": null
+        },
+        {
+          "name": "prev_output_index",
+          "data_type": "UInt32",
+          "description": "prev output index",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "tx_hash",
+        "input_index"
+      ],
+      "partition_by": "intDiv(block_number, 100000)",
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('bip122:000000000019d6689c085ae165831e93')) AND (`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`block_hash`)>0) AND ((network_id='tron:mainnet' AND match(`block_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`block_hash`,'^[0-9a-f]{64}$'))) AND (length(`commit_id`)>0) AND (`revision`>0) AND (length(`tx_hash`)>0) AND ((network_id='tron:mainnet' AND match(`tx_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`tx_hash`,'^[0-9a-f]{64}$'))) AND (match(`script_hex`,'^(?:[0-9a-f]{2})*$')) AND (network_id='bip122:000000000019d6689c085ae165831e93' AND `value_sats`<=2100000000000000) AND ((network_id='tron:mainnet' AND match(`prev_tx_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`prev_tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`prev_tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`prev_tx_hash`,'^[0-9a-f]{64}$')))"
+        }
+      ]
+    },
+    {
+      "name": "aml_bitcoin_outputs",
+      "purpose": "Bitcoin raw UTXO evidence; this table exists but has no applicable rows on the other networks.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash",
+          "default": null
+        },
+        {
+          "name": "transaction_index",
+          "data_type": "UInt32",
+          "description": "transaction index",
+          "default": null
+        },
+        {
+          "name": "output_index",
+          "data_type": "UInt32",
+          "description": "output index",
+          "default": null
+        },
+        {
+          "name": "address",
+          "data_type": "Nullable(String)",
+          "description": "address",
+          "default": null
+        },
+        {
+          "name": "script_hex",
+          "data_type": "String",
+          "description": "script hex",
+          "default": null
+        },
+        {
+          "name": "script_type",
+          "data_type": "LowCardinality(String)",
+          "description": "script type",
+          "default": null
+        },
+        {
+          "name": "value_sats",
+          "data_type": "UInt64",
+          "description": "value sats",
+          "default": null
+        },
+        {
+          "name": "coinbase",
+          "data_type": "UInt8",
+          "description": "coinbase",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "tx_hash",
+        "output_index"
+      ],
+      "partition_by": "intDiv(block_number, 100000)",
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('bip122:000000000019d6689c085ae165831e93')) AND (`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`block_hash`)>0) AND ((network_id='tron:mainnet' AND match(`block_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`block_hash`,'^[0-9a-f]{64}$'))) AND (length(`commit_id`)>0) AND (`revision`>0) AND (length(`tx_hash`)>0) AND ((network_id='tron:mainnet' AND match(`tx_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`tx_hash`,'^[0-9a-f]{64}$'))) AND (match(`script_hex`,'^(?:[0-9a-f]{2})*$')) AND (network_id='bip122:000000000019d6689c085ae165831e93' AND `value_sats`<=2100000000000000) AND (`coinbase` IN (0,1))"
+        }
+      ]
+    },
+    {
+      "name": "aml_evm_logs",
+      "purpose": "EVM raw log evidence; not_applicable to Bitcoin and TRON adapters.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash",
+          "default": null
+        },
+        {
+          "name": "log_index",
+          "data_type": "UInt32",
+          "description": "log index",
+          "default": null
+        },
+        {
+          "name": "address",
+          "data_type": "String",
+          "description": "address",
+          "default": null
+        },
+        {
+          "name": "topics",
+          "data_type": "Array(String)",
+          "description": "topics",
+          "default": null
+        },
+        {
+          "name": "data",
+          "data_type": "String",
+          "description": "data",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "tx_hash",
+        "log_index"
+      ],
+      "partition_by": "intDiv(block_number, 100000)",
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('eip155:1','eip155:56')) AND (`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`block_hash`)>0) AND ((network_id='tron:mainnet' AND match(`block_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`block_hash`,'^[0-9a-f]{64}$'))) AND (length(`commit_id`)>0) AND (`revision`>0) AND (length(`tx_hash`)>0) AND ((network_id='tron:mainnet' AND match(`tx_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`tx_hash`,'^[0-9a-f]{64}$')))"
+        }
+      ]
+    },
+    {
+      "name": "aml_tron_contracts",
+      "purpose": "TRON raw contract payload evidence; not_applicable to the other adapters.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash",
+          "default": null
+        },
+        {
+          "name": "contract_index",
+          "data_type": "UInt32",
+          "description": "contract index",
+          "default": null
+        },
+        {
+          "name": "contract_type",
+          "data_type": "LowCardinality(String)",
+          "description": "contract type",
+          "default": null
+        },
+        {
+          "name": "payload_json",
+          "data_type": "String",
+          "description": "payload json",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC Unix milliseconds when the evidence or job was recorded.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "tx_hash",
+        "contract_index"
+      ],
+      "partition_by": "intDiv(block_number, 100000)",
+      "indexes": [],
+      "constraints": [
+        {
+          "name": "aml_columns_v2",
+          "expression": "(`network_id` IN ('tron:mainnet')) AND (`network_id` IN ('tron:mainnet','eip155:1','eip155:56','bip122:000000000019d6689c085ae165831e93')) AND (length(`block_hash`)>0) AND ((network_id='tron:mainnet' AND match(`block_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`block_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`block_hash`,'^[0-9a-f]{64}$'))) AND (length(`commit_id`)>0) AND (`revision`>0) AND (length(`tx_hash`)>0) AND ((network_id='tron:mainnet' AND match(`tx_hash`,'^[0-9a-f]{64}$')) OR (network_id='eip155:1' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='eip155:56' AND match(`tx_hash`,'^0x[0-9a-f]{64}$')) OR (network_id='bip122:000000000019d6689c085ae165831e93' AND match(`tx_hash`,'^[0-9a-f]{64}$'))) AND (isValidJSON(`payload_json`))"
+        }
+      ]
+    }
+  ],
+  "views": [
+    {
+      "name": "aml_sync_state_current",
+      "purpose": "Latest committed visibility fence for each network.",
+      "select": "SELECT * FROM {{database}}.aml_sync_state ORDER BY revision DESC LIMIT 1 BY network_id"
+    },
+    {
+      "name": "aml_ingested_blocks_canonical",
+      "purpose": "Complete block evidence selected by the shared publication fence; tuple argMax preserves nullable coverage values.",
+      "select": "SELECT network_id, block_number, data.1 AS block_hash, data.2 AS block_timestamp_unix_ms, data.3 AS commit_id, data.4 AS revision, data.5 AS parent_hash, data.6 AS canonical, data.7 AS ingestion_status, data.8 AS transaction_count, data.9 AS receipt_coverage, data.10 AS trace_coverage, data.11 AS prevout_coverage, data.12 AS source_id, data.13 AS created_at_unix_ms, data.14 AS expected_counts_json, data.15 AS raw_evidence_json FROM (SELECT b.network_id AS network_id, b.block_number AS block_number, argMax(tuple(b.block_hash, b.block_timestamp_unix_ms, b.commit_id, b.revision, b.parent_hash, b.canonical, b.ingestion_status, b.transaction_count, b.receipt_coverage, b.trace_coverage, b.prevout_coverage, b.source_id, b.created_at_unix_ms, b.expected_counts_json, b.raw_evidence_json), b.revision) AS data FROM {{database}}.aml_ingested_blocks AS b INNER JOIN {{database}}.aml_sync_state_current AS s ON b.network_id=s.network_id WHERE s.initialized=1 AND b.revision<=s.revision AND b.block_number<=s.last_block_number GROUP BY b.network_id,b.block_number) WHERE data.6=1 AND data.7='complete'"
+    },
+    {
+      "name": "aml_transactions_canonical",
+      "purpose": "Only facts matching the exact published block revision and commit.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.from_address AS from_address, f.to_address AS to_address, f.amount_raw AS amount_raw, f.fee_raw AS fee_raw, f.asset_id AS asset_id, f.decimals AS decimals, f.status AS status, f.coinbase AS coinbase, f.input_count AS input_count, f.output_count AS output_count, f.raw_evidence_json AS raw_evidence_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_transactions AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+    },
+    {
+      "name": "aml_address_relationships_canonical",
+      "purpose": "Only facts matching the exact published block revision and commit.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.relationship_id AS relationship_id, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.event_index AS event_index, f.from_subject_id AS from_subject_id, f.from_subject_type AS from_subject_type, f.to_subject_id AS to_subject_id, f.to_subject_type AS to_subject_type, f.from_address AS from_address, f.to_address AS to_address, f.asset_id AS asset_id, f.amount_raw AS amount_raw, f.decimals AS decimals, f.transfer_type AS transfer_type, f.attribution_method AS attribution_method, f.confidence AS confidence, f.prev_tx_hash AS prev_tx_hash, f.prev_output_index AS prev_output_index, f.output_index AS output_index, f.evidence_refs AS evidence_refs, f.created_at_unix_ms AS created_at_unix_ms, f.event_sub_index AS event_sub_index, f.trace_address AS trace_address, f.token_id AS token_id, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_address_relationships AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+    },
+    {
+      "name": "aml_transaction_features_canonical",
+      "purpose": "Only facts matching the exact published block revision and commit.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.feature_id AS feature_id, f.tx_hash AS tx_hash, f.subject_id AS subject_id, f.detector_version AS detector_version, f.features_json AS features_json, f.evidence_refs AS evidence_refs, f.created_at_unix_ms AS created_at_unix_ms, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_transaction_features AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+    },
+    {
+      "name": "aml_semantic_aml_events_canonical",
+      "purpose": "Only facts matching the exact published block revision and commit.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.event_id AS event_id, f.tx_hash AS tx_hash, f.subject_id AS subject_id, f.event_type AS event_type, f.protocol AS protocol, f.detector_version AS detector_version, f.confidence AS confidence, f.asset_in AS asset_in, f.asset_out AS asset_out, f.amount_in AS amount_in, f.amount_out AS amount_out, f.remote_network_id AS remote_network_id, f.evidence_refs AS evidence_refs, f.evidence_json AS evidence_json, f.created_at_unix_ms AS created_at_unix_ms, f.event_index AS event_index, f.event_sub_index AS event_sub_index, f.detector AS detector, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_semantic_aml_events AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+    },
+    {
+      "name": "aml_bitcoin_inputs_canonical",
+      "purpose": "Only facts matching the exact published block revision and commit.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.input_index AS input_index, f.address AS address, f.script_hex AS script_hex, f.script_type AS script_type, f.value_sats AS value_sats, f.prev_tx_hash AS prev_tx_hash, f.prev_output_index AS prev_output_index, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_bitcoin_inputs AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+    },
+    {
+      "name": "aml_bitcoin_outputs_canonical",
+      "purpose": "Only facts matching the exact published block revision and commit.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.output_index AS output_index, f.address AS address, f.script_hex AS script_hex, f.script_type AS script_type, f.value_sats AS value_sats, f.coinbase AS coinbase, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_bitcoin_outputs AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+    },
+    {
+      "name": "aml_evm_logs_canonical",
+      "purpose": "Only facts matching the exact published block revision and commit.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.log_index AS log_index, f.address AS address, f.topics AS topics, f.data AS data, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_evm_logs AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+    },
+    {
+      "name": "aml_tron_contracts_canonical",
+      "purpose": "Only facts matching the exact published block revision and commit.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.contract_index AS contract_index, f.contract_type AS contract_type, f.payload_json AS payload_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_tron_contracts AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+    },
+    {
+      "name": "aml_asset_metadata_current",
+      "purpose": "Latest record per network and logical identity.",
+      "select": "SELECT * FROM {{database}}.aml_asset_metadata ORDER BY revision DESC LIMIT 1 BY network_id,asset_id"
+    },
+    {
+      "name": "aml_metadata_jobs_current",
+      "purpose": "Latest record per network and logical identity.",
+      "select": "SELECT * FROM {{database}}.aml_metadata_jobs ORDER BY revision DESC LIMIT 1 BY network_id,job_id"
+    },
+    {
+      "name": "aml_ingestion_failures_current",
+      "purpose": "Latest record per network and logical identity.",
+      "select": "SELECT * FROM {{database}}.aml_ingestion_failures ORDER BY revision DESC LIMIT 1 BY network_id,failure_id"
+    },
+    {
+      "name": "aml_intelligence_sources_current",
+      "purpose": "Latest record per network and logical identity.",
+      "select": "SELECT * FROM {{database}}.aml_intelligence_sources ORDER BY revision DESC LIMIT 1 BY network_id,source_id"
+    },
+    {
+      "name": "aml_intelligence_claims_current",
+      "purpose": "Latest record per network and logical identity.",
+      "select": "SELECT * FROM {{database}}.aml_intelligence_claims ORDER BY revision DESC LIMIT 1 BY network_id,claim_id"
+    },
+    {
+      "name": "aml_cluster_claims_current",
+      "purpose": "Latest record per network and logical identity.",
+      "select": "SELECT * FROM {{database}}.aml_cluster_claims ORDER BY revision DESC LIMIT 1 BY network_id,claim_id"
+    },
+    {
+      "name": "aml_cluster_runs_current",
+      "purpose": "Latest record per network and logical identity.",
+      "select": "SELECT * FROM {{database}}.aml_cluster_runs ORDER BY revision DESC LIMIT 1 BY network_id,run_id"
+    },
+    {
+      "name": "aml_exposure_seeds_current",
+      "purpose": "Latest record per network and logical identity.",
+      "select": "SELECT * FROM {{database}}.aml_exposure_seeds ORDER BY revision DESC LIMIT 1 BY network_id,seed_id"
+    },
+    {
+      "name": "aml_exposure_runs_current",
+      "purpose": "Latest record per network and logical identity.",
+      "select": "SELECT * FROM {{database}}.aml_exposure_runs ORDER BY revision DESC LIMIT 1 BY network_id,run_id"
+    },
+    {
+      "name": "aml_wallet_risk_assessments_current",
+      "purpose": "Latest record per network and logical identity.",
+      "select": "SELECT * FROM {{database}}.aml_wallet_risk_assessments ORDER BY revision DESC LIMIT 1 BY network_id,assessment_id"
+    },
+    {
+      "name": "aml_ingestion_benchmarks_current",
+      "purpose": "Latest benchmark record per network and benchmark identity, including incomplete/failed runs.",
+      "select": "SELECT * FROM {{database}}.aml_ingestion_benchmarks ORDER BY revision DESC LIMIT 1 BY network_id,benchmark_id"
+    }
+  ]
+}

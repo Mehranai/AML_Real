@@ -1,0 +1,120 @@
+{
+  "scope": "Disposable fixture acceptance only; no deployed VM inspected or migrated. Legacy cutover remains DB-08.",
+  "clickhouse_version": "23.8.16.16",
+  "contract_version": 3,
+  "contract_checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e",
+  "databases": [
+    {
+      "network": "tron",
+      "database": "db04_core_tron",
+      "tables": 29,
+      "views": 21,
+      "table_columns": 404,
+      "normalized_ddl_sha256": "903ce91319f73372ce2c442916c227009e7c1c9859d774c576f39a1c82f2e62d",
+      "columns_sha256": "5568e7b410b34fed1c78e19015bd422a1435f92dabc70eee4c19e6cc9ec0ade9",
+      "migration_history": [
+        {
+          "schema_version": 1,
+          "checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
+        },
+        {
+          "schema_version": 2,
+          "checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+        },
+        {
+          "schema_version": 3,
+          "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+        }
+      ],
+      "identity": {
+        "network_id": "tron:mainnet",
+        "schema_version": 3,
+        "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+      }
+    },
+    {
+      "network": "ethereum",
+      "database": "db04_core_ethereum",
+      "tables": 29,
+      "views": 21,
+      "table_columns": 404,
+      "normalized_ddl_sha256": "903ce91319f73372ce2c442916c227009e7c1c9859d774c576f39a1c82f2e62d",
+      "columns_sha256": "5568e7b410b34fed1c78e19015bd422a1435f92dabc70eee4c19e6cc9ec0ade9",
+      "migration_history": [
+        {
+          "schema_version": 1,
+          "checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
+        },
+        {
+          "schema_version": 2,
+          "checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+        },
+        {
+          "schema_version": 3,
+          "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+        }
+      ],
+      "identity": {
+        "network_id": "eip155:1",
+        "schema_version": 3,
+        "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+      }
+    },
+    {
+      "network": "bsc",
+      "database": "db04_core_bsc",
+      "tables": 29,
+      "views": 21,
+      "table_columns": 404,
+      "normalized_ddl_sha256": "903ce91319f73372ce2c442916c227009e7c1c9859d774c576f39a1c82f2e62d",
+      "columns_sha256": "5568e7b410b34fed1c78e19015bd422a1435f92dabc70eee4c19e6cc9ec0ade9",
+      "migration_history": [
+        {
+          "schema_version": 1,
+          "checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
+        },
+        {
+          "schema_version": 2,
+          "checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+        },
+        {
+          "schema_version": 3,
+          "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+        }
+      ],
+      "identity": {
+        "network_id": "eip155:56",
+        "schema_version": 3,
+        "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+      }
+    },
+    {
+      "network": "bitcoin",
+      "database": "db04_core_bitcoin",
+      "tables": 29,
+      "views": 21,
+      "table_columns": 404,
+      "normalized_ddl_sha256": "903ce91319f73372ce2c442916c227009e7c1c9859d774c576f39a1c82f2e62d",
+      "columns_sha256": "5568e7b410b34fed1c78e19015bd422a1435f92dabc70eee4c19e6cc9ec0ade9",
+      "migration_history": [
+        {
+          "schema_version": 1,
+          "checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
+        },
+        {
+          "schema_version": 2,
+          "checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+        },
+        {
+          "schema_version": 3,
+          "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+        }
+      ],
+      "identity": {
+        "network_id": "bip122:000000000019d6689c085ae165831e93",
+        "schema_version": 3,
+        "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+      }
+    }
+  ]
+}

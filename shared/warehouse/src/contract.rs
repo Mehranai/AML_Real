@@ -71,6 +71,21 @@ pub fn identifier(value: &str) -> Result<()> {
     Ok(())
 }
 pub fn current_contract() -> Result<Contract> {
+    let mut contract = analytics_contract()?;
+    crate::visibility_schema::apply(&mut contract)?;
+    Ok(contract)
+}
+pub fn analytics_contract() -> Result<Contract> {
+    let mut contract = core_contract()?;
+    crate::analytics_schema::apply(&mut contract)?;
+    Ok(contract)
+}
+pub fn core_contract() -> Result<Contract> {
+    let mut contract = column_contract()?;
+    crate::core_schema::apply(&mut contract)?;
+    Ok(contract)
+}
+pub fn column_contract() -> Result<Contract> {
     let mut contract = baseline_contract()?;
     crate::semantics::upgrade_contract(&mut contract)?;
     contract.validate()?;

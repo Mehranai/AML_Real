@@ -110,7 +110,9 @@ bitcoin-core-data/
 wallet.dat
 wallet.dat.*
 node-data/
+# Private database backup archives and verification manifests
 backups/
+/dockerizd_bitcoin/intelligence-data/
 exports/
 snapshots/
 deployment-artifacts/

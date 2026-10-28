@@ -32,7 +32,10 @@ pub fn assess(network: &str, data: &Value) -> Value {
         }
     } else {
         for entity in array(data.get("entities")) {
-            if entity["is_exposure_seed"] == true && approved_label(entity) {
+            if entity["is_exposure_seed"] == true
+                && approved_label(entity)
+                && (network != "bitcoin" || bitcoin_label(entity, data))
+            {
                 let score = (number(&entity["risk_level"]) / 100.0).clamp(0.0, 1.0) * 70.0;
                 if score > identity_score {
                     identity_score = score;
@@ -153,6 +156,7 @@ pub fn assess(network: &str, data: &Value) -> Value {
     } else {
         array(data.get("entities")).iter().any(|e| {
             approved_label(e)
+                && (network != "bitcoin" || bitcoin_label(e, data))
                 && matches!(
                     text(&e["entity_type"]).to_ascii_lowercase().as_str(),
                     "exchange" | "dex" | "bridge" | "custodian"
@@ -193,7 +197,7 @@ pub fn assess(network: &str, data: &Value) -> Value {
     }
     if network == "bitcoin" {
         limitations.push("Bitcoin transaction connectivity does not allocate particular inputs to outputs or prove fund continuity.");
-        limitations.push("Bitcoin ownership, change and CoinJoin classifications are not inferred; reviewed risk labels and exposure evidence are not yet supplied by this adapter.");
+        limitations.push("Bitcoin ownership, change and CoinJoin classifications are not inferred. Reviewed address labels do not establish transaction fund continuity; directional exposure is not yet supplied by this adapter.");
         if data.pointer("/data_coverage/history_from_genesis") != Some(&json!(true)) {
             limitations.push("Bitcoin history is partial or empty; observed UTXOs are not a complete wallet balance.");
         }
@@ -251,6 +255,20 @@ fn approved_label(claim: &Value) -> bool {
         && !text(&claim["source_id"]).trim().is_empty()
         && !refs.is_empty()
         && refs.iter().all(|r| !text(r).trim().is_empty())
+}
+fn bitcoin_label(claim: &Value, data: &Value) -> bool {
+    let snapshot = &data["intelligence_snapshot"];
+    snapshot["contract"] == "bitcoin_intelligence_v1"
+        && snapshot["network_id"] == "bip122:000000000019d6689c085ae165831e93"
+        && snapshot["address"] == data["address"]
+        && snapshot["snapshot_id"]
+            .as_str()
+            .is_some_and(|id| id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+        && claim["network_id"] == snapshot["network_id"]
+        && claim["address"] == data["address"]
+        && claim["active"] == true
+        && !text(&claim["reviewed_by"]).trim().is_empty()
+        && claim["reviewed_at_unix_ms"].as_u64().is_some()
 }
 
 fn has_path_evidence(path: &Value, tron: bool) -> bool {

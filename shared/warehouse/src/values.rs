@@ -26,7 +26,7 @@ pub fn normalize_hash(network: Network, value: &str) -> Result<String> {
     ))
 }
 
-fn tron_contract(value: &str) -> Result<String> {
+pub(crate) fn tron_contract(value: &str) -> Result<String> {
     if value.starts_with("41") && hex(value, 42) {
         return Ok(value.to_ascii_lowercase());
     }
@@ -55,6 +55,32 @@ fn tron_contract(value: &str) -> Result<String> {
         "TRON contract checksum/network mismatch"
     );
     Ok(bytes[..21].iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Canonical wallet spelling for typed relationship subjects. Asset contract
+/// identities retain their existing hex41 convention; this is an explicit API
+/// boundary conversion, never an implicit rewrite of an already stored row.
+pub fn tron_wallet(value: &str) -> Result<String> {
+    let hex = tron_contract(value)?;
+    let mut bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let checksum = Sha256::digest(Sha256::digest(&bytes));
+    bytes.extend_from_slice(&checksum[..4]);
+    let alphabet = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let mut digits = Vec::new();
+    while bytes.iter().any(|b| *b != 0) {
+        let mut remainder = 0u32;
+        for byte in &mut bytes {
+            let value = remainder * 256 + u32::from(*byte);
+            *byte = (value / 58) as u8;
+            remainder = value % 58;
+        }
+        digits.push(alphabet[remainder as usize]);
+    }
+    digits.reverse();
+    Ok(String::from_utf8(digits)?)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

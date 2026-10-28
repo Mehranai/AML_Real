@@ -1,0 +1,376 @@
+{
+  "version": 5,
+  "migration_id": "20261027_0005_visibility",
+  "description": "Canonical source snapshots, append-only orphan markers and sealed derived-output visibility.",
+  "previous_checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec",
+  "columns": {
+    "aml_cluster_versions": [
+      {
+        "name": "run_id",
+        "data_type": "Nullable(String)",
+        "description": "Source cluster run; NULL means historical catalog provenance is unknown.",
+        "default": "NULL"
+      }
+    ],
+    "aml_asset_metadata": [
+      {
+        "name": "source_revision",
+        "data_type": "Nullable(UInt64)",
+        "description": "Exact published source snapshot for chain-observed metadata; NULL is unknown.",
+        "default": "NULL"
+      },
+      {
+        "name": "observed_block_hash",
+        "data_type": "Nullable(String)",
+        "description": "Canonical hash of observed_block; never inferred from a height alone.",
+        "default": "NULL"
+      }
+    ]
+  },
+  "tables": [
+    {
+      "name": "aml_analysis_publications",
+      "purpose": "Atomic visibility fence for derived outputs; stale source snapshots remain auditable but invisible.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Network scope of this analysis publication.",
+          "default": null
+        },
+        {
+          "name": "family",
+          "data_type": "LowCardinality(String)",
+          "description": "cluster, exposure or risk output family.",
+          "default": null
+        },
+        {
+          "name": "publication_id",
+          "data_type": "String",
+          "description": "run_id or assessment_id; never reused for a different output revision.",
+          "default": null
+        },
+        {
+          "name": "source_revision",
+          "data_type": "UInt64",
+          "description": "Exact chain publication fence used for all source reads.",
+          "default": null
+        },
+        {
+          "name": "as_of_block",
+          "data_type": "UInt64",
+          "description": "Canonical block at which the source analysis was evaluated.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Exact canonical hash of as_of_block.",
+          "default": null
+        },
+        {
+          "name": "output_revision",
+          "data_type": "UInt64",
+          "description": "Exact immutable output-row revision sealed by this publication.",
+          "default": null
+        },
+        {
+          "name": "status",
+          "data_type": "LowCardinality(String)",
+          "description": "complete or invalidated; latest status wins before visibility filtering.",
+          "default": null
+        },
+        {
+          "name": "row_counts_json",
+          "data_type": "String",
+          "description": "Exact output family row counts checked before publication.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication status revision.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Audit timestamp; never used as a source validity epoch.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "family",
+        "publication_id"
+      ],
+      "partition_by": null,
+      "indexes": [],
+      "constraints": []
+    }
+  ],
+  "views": [
+    {
+      "name": "aml_sync_state_current",
+      "purpose": "Latest whole publication row before state predicates; no older initialized fence may reappear.",
+      "select": "SELECT network_id, data.1 AS revision, data.2 AS initialized, data.3 AS start_block, data.4 AS last_block_number, data.5 AS last_block_hash, data.6 AS observed_rpc_height, data.7 AS published_at_unix_ms, data.8 AS source_cursor_json FROM (SELECT network_id,argMax(tuple(revision,initialized,start_block,last_block_number,last_block_hash,observed_rpc_height,published_at_unix_ms,source_cursor_json),revision) AS data FROM {{database}}.aml_sync_state GROUP BY network_id)"
+    },
+    {
+      "name": "aml_ingested_blocks_canonical",
+      "purpose": "Latest complete canonical marker inside the published observed range; rollback markers prevent resurrection.",
+      "select": "SELECT network_id, block_number, data.1 AS block_hash, data.2 AS block_timestamp_unix_ms, data.3 AS commit_id, data.4 AS revision, data.5 AS parent_hash, data.6 AS canonical, data.7 AS ingestion_status, data.8 AS transaction_count, data.9 AS receipt_coverage, data.10 AS trace_coverage, data.11 AS prevout_coverage, data.12 AS source_id, data.13 AS created_at_unix_ms, data.14 AS expected_counts_json, data.15 AS raw_evidence_json FROM (SELECT b.network_id AS network_id, b.block_number AS block_number, argMax(tuple(b.block_hash, b.block_timestamp_unix_ms, b.commit_id, b.revision, b.parent_hash, b.canonical, b.ingestion_status, b.transaction_count, b.receipt_coverage, b.trace_coverage, b.prevout_coverage, b.source_id, b.created_at_unix_ms, b.expected_counts_json, b.raw_evidence_json), b.revision) AS data,any(s.last_block_number) AS fence_tip,any(s.last_block_hash) AS fence_hash FROM {{database}}.aml_ingested_blocks AS b INNER JOIN {{database}}.aml_sync_state_current AS s ON b.network_id=s.network_id WHERE s.initialized=1 AND b.revision<=s.revision AND b.block_number>=s.start_block AND b.block_number<=s.last_block_number GROUP BY b.network_id,b.block_number) WHERE data.6=1 AND data.7='complete' AND (block_number<fence_tip OR data.1=fence_hash)"
+    },
+    {
+      "name": "aml_transactions_canonical",
+      "purpose": "Exact published network/height/hash/time/commit/revision fact fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.from_address AS from_address, f.to_address AS to_address, f.amount_raw AS amount_raw, f.fee_raw AS fee_raw, f.asset_id AS asset_id, f.decimals AS decimals, f.status AS status, f.coinbase AS coinbase, f.input_count AS input_count, f.output_count AS output_count, f.raw_evidence_json AS raw_evidence_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_transactions AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision AND f.block_timestamp_unix_ms=b.block_timestamp_unix_ms"
+    },
+    {
+      "name": "aml_address_relationships_canonical",
+      "purpose": "Exact published network/height/hash/time/commit/revision fact fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.relationship_id AS relationship_id, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.event_index AS event_index, f.from_subject_id AS from_subject_id, f.from_subject_type AS from_subject_type, f.to_subject_id AS to_subject_id, f.to_subject_type AS to_subject_type, f.from_address AS from_address, f.to_address AS to_address, f.asset_id AS asset_id, f.amount_raw AS amount_raw, f.decimals AS decimals, f.transfer_type AS transfer_type, f.attribution_method AS attribution_method, f.confidence AS confidence, f.prev_tx_hash AS prev_tx_hash, f.prev_output_index AS prev_output_index, f.output_index AS output_index, f.evidence_refs AS evidence_refs, f.created_at_unix_ms AS created_at_unix_ms, f.event_sub_index AS event_sub_index, f.trace_address AS trace_address, f.token_id AS token_id, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_address_relationships AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision AND f.block_timestamp_unix_ms=b.block_timestamp_unix_ms"
+    },
+    {
+      "name": "aml_transaction_features_canonical",
+      "purpose": "Exact published network/height/hash/time/commit/revision fact fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.feature_id AS feature_id, f.tx_hash AS tx_hash, f.subject_id AS subject_id, f.detector_version AS detector_version, f.features_json AS features_json, f.evidence_refs AS evidence_refs, f.created_at_unix_ms AS created_at_unix_ms, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_transaction_features AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision AND f.block_timestamp_unix_ms=b.block_timestamp_unix_ms"
+    },
+    {
+      "name": "aml_semantic_aml_events_canonical",
+      "purpose": "Exact published network/height/hash/time/commit/revision fact fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.event_id AS event_id, f.tx_hash AS tx_hash, f.subject_id AS subject_id, f.event_type AS event_type, f.protocol AS protocol, f.detector_version AS detector_version, f.confidence AS confidence, f.asset_in AS asset_in, f.asset_out AS asset_out, f.amount_in AS amount_in, f.amount_out AS amount_out, f.remote_network_id AS remote_network_id, f.evidence_refs AS evidence_refs, f.evidence_json AS evidence_json, f.created_at_unix_ms AS created_at_unix_ms, f.event_index AS event_index, f.event_sub_index AS event_sub_index, f.detector AS detector, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_semantic_aml_events AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision AND f.block_timestamp_unix_ms=b.block_timestamp_unix_ms"
+    },
+    {
+      "name": "aml_bitcoin_inputs_canonical",
+      "purpose": "Exact published network/height/hash/time/commit/revision fact fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.input_index AS input_index, f.address AS address, f.script_hex AS script_hex, f.script_type AS script_type, f.value_sats AS value_sats, f.prev_tx_hash AS prev_tx_hash, f.prev_output_index AS prev_output_index, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_bitcoin_inputs AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision AND f.block_timestamp_unix_ms=b.block_timestamp_unix_ms"
+    },
+    {
+      "name": "aml_bitcoin_outputs_canonical",
+      "purpose": "Exact published network/height/hash/time/commit/revision fact fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.output_index AS output_index, f.address AS address, f.script_hex AS script_hex, f.script_type AS script_type, f.value_sats AS value_sats, f.coinbase AS coinbase, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_bitcoin_outputs AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision AND f.block_timestamp_unix_ms=b.block_timestamp_unix_ms"
+    },
+    {
+      "name": "aml_evm_logs_canonical",
+      "purpose": "Exact published network/height/hash/time/commit/revision fact fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.log_index AS log_index, f.address AS address, f.topics AS topics, f.data AS data, f.created_at_unix_ms AS created_at_unix_ms, f.transaction_index AS transaction_index, f.removed AS removed, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_evm_logs AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision AND f.block_timestamp_unix_ms=b.block_timestamp_unix_ms"
+    },
+    {
+      "name": "aml_tron_contracts_canonical",
+      "purpose": "Exact published network/height/hash/time/commit/revision fact fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.contract_index AS contract_index, f.contract_type AS contract_type, f.payload_json AS payload_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_tron_contracts AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision AND f.block_timestamp_unix_ms=b.block_timestamp_unix_ms"
+    },
+    {
+      "name": "aml_metadata_discoveries_canonical",
+      "purpose": "Exact published network/height/hash/time/commit/revision fact fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.discovery_id AS discovery_id, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.asset_id AS asset_id, f.standard_hint AS standard_hint, f.evidence_id AS evidence_id, f.source_id AS source_id, f.evidence_refs AS evidence_refs, f.raw_evidence_json AS raw_evidence_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_metadata_discoveries AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision AND f.block_timestamp_unix_ms=b.block_timestamp_unix_ms"
+    },
+    {
+      "name": "aml_bitcoin_scripts_canonical",
+      "purpose": "Exact published network/height/hash/time/commit/revision fact fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.script_hash AS script_hash, f.script_hex AS script_hex, f.script_type AS script_type, f.address AS address, f.evidence_refs AS evidence_refs, f.raw_evidence_json AS raw_evidence_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_bitcoin_scripts AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision AND f.block_timestamp_unix_ms=b.block_timestamp_unix_ms"
+    },
+    {
+      "name": "aml_evm_traces_canonical",
+      "purpose": "Exact published network/height/hash/time/commit/revision fact fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.trace_id AS trace_id, f.transaction_index AS transaction_index, f.trace_address AS trace_address, f.trace_type AS trace_type, f.from_address AS from_address, f.to_address AS to_address, f.value_raw AS value_raw, f.success AS success, f.error_message AS error_message, f.source_id AS source_id, f.evidence_refs AS evidence_refs, f.raw_evidence_json AS raw_evidence_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_evm_traces AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision AND f.block_timestamp_unix_ms=b.block_timestamp_unix_ms"
+    },
+    {
+      "name": "aml_raw_transactions_canonical",
+      "purpose": "Exact published network/height/hash/time/commit/revision fact fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.source_id AS source_id, f.payload_json AS payload_json, f.receipt_json AS receipt_json, f.evidence_refs AS evidence_refs, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_raw_transactions AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision AND f.block_timestamp_unix_ms=b.block_timestamp_unix_ms"
+    },
+    {
+      "name": "aml_analysis_publications_current",
+      "purpose": "Latest whole row before publication/status predicates; audit projection, not a visibility grant.",
+      "select": "SELECT network_id,family,publication_id,data.1 AS source_revision,data.2 AS as_of_block,data.3 AS block_hash,data.4 AS output_revision,data.5 AS status,data.6 AS row_counts_json,data.7 AS revision,data.8 AS created_at_unix_ms FROM (SELECT network_id,family,publication_id,argMax(tuple(source_revision,as_of_block,block_hash,output_revision,status,row_counts_json,revision,created_at_unix_ms),revision) AS data FROM {{database}}.aml_analysis_publications GROUP BY network_id,family,publication_id)"
+    },
+    {
+      "name": "aml_cluster_runs_current",
+      "purpose": "Latest whole row before publication/status predicates; audit projection, not a visibility grant.",
+      "select": "SELECT network_id,run_id,data.1 AS status,data.2 AS as_of_block,data.3 AS source_revision,data.4 AS detector_version,data.5 AS cursor_json,data.6 AS started_at_unix_ms,data.7 AS completed_at_unix_ms,data.8 AS truncated,data.9 AS revision,data.10 AS created_at_unix_ms,data.11 AS entity_memberships,data.12 AS control_claims,data.13 AS error_message,data.14 AS settings_json,data.15 AS raw_evidence_json FROM (SELECT network_id,run_id,argMax(tuple(status,as_of_block,source_revision,detector_version,cursor_json,started_at_unix_ms,completed_at_unix_ms,truncated,revision,created_at_unix_ms,entity_memberships,control_claims,error_message,settings_json,raw_evidence_json),revision) AS data FROM {{database}}.aml_cluster_runs GROUP BY network_id,run_id)"
+    },
+    {
+      "name": "aml_exposure_runs_current",
+      "purpose": "Latest whole row before publication/status predicates; audit projection, not a visibility grant.",
+      "select": "SELECT network_id,run_id,data.1 AS seed_id,data.2 AS status,data.3 AS as_of_block,data.4 AS source_revision,data.5 AS policy_version,data.6 AS max_hops,data.7 AS started_at_unix_ms,data.8 AS completed_at_unix_ms,data.9 AS truncated,data.10 AS revision,data.11 AS created_at_unix_ms,data.12 AS seed_ids,data.13 AS seed_snapshot_json,data.14 AS detector_version,data.15 AS hop_decay,data.16 AS time_half_life_days,data.17 AS max_paths_per_subject,data.18 AS seed_count,data.19 AS path_count,data.20 AS settings_json,data.21 AS error_message,data.22 AS raw_evidence_json FROM (SELECT network_id,run_id,argMax(tuple(seed_id,status,as_of_block,source_revision,policy_version,max_hops,started_at_unix_ms,completed_at_unix_ms,truncated,revision,created_at_unix_ms,seed_ids,seed_snapshot_json,detector_version,hop_decay,time_half_life_days,max_paths_per_subject,seed_count,path_count,settings_json,error_message,raw_evidence_json),revision) AS data FROM {{database}}.aml_exposure_runs GROUP BY network_id,run_id)"
+    },
+    {
+      "name": "aml_cluster_claims_current",
+      "purpose": "Latest whole row before publication/status predicates; audit projection, not a visibility grant.",
+      "select": "SELECT network_id,claim_id,data.1 AS cluster_id,data.2 AS subject_id,data.3 AS heuristic,data.4 AS detector_version,data.5 AS confidence,data.6 AS review_status,data.7 AS source_id,data.8 AS evidence_refs,data.9 AS evidence_json,data.10 AS revision,data.11 AS created_at_unix_ms,data.12 AS left_subject_id,data.13 AS right_subject_id,data.14 AS same_entity,data.15 AS run_id,data.16 AS source_record_id,data.17 AS supersedes_claim_id,data.18 AS created_by,data.19 AS reviewed_by,data.20 AS review_id,data.21 AS cluster_type,data.22 AS address_role,data.23 AS raw_evidence_json FROM (SELECT network_id,claim_id,argMax(tuple(cluster_id,subject_id,heuristic,detector_version,confidence,review_status,source_id,evidence_refs,evidence_json,revision,created_at_unix_ms,left_subject_id,right_subject_id,same_entity,run_id,source_record_id,supersedes_claim_id,created_by,reviewed_by,review_id,cluster_type,address_role,raw_evidence_json),revision) AS data FROM {{database}}.aml_cluster_claims GROUP BY network_id,claim_id)"
+    },
+    {
+      "name": "aml_cluster_memberships_current",
+      "purpose": "Latest whole row before publication/status predicates; audit projection, not a visibility grant.",
+      "select": "SELECT network_id,cluster_id,cluster_version,subject_id,data.1 AS claim_id,data.2 AS status,data.3 AS revision,data.4 AS created_at_unix_ms,data.5 AS membership_id,data.6 AS run_id,data.7 AS entity_id,data.8 AS membership_type,data.9 AS confidence,data.10 AS review_id,data.11 AS cluster_type,data.12 AS address_role,data.13 AS evidence_json,data.14 AS raw_evidence_json FROM (SELECT network_id,cluster_id,cluster_version,subject_id,argMax(tuple(claim_id,status,revision,created_at_unix_ms,membership_id,run_id,entity_id,membership_type,confidence,review_id,cluster_type,address_role,evidence_json,raw_evidence_json),revision) AS data FROM {{database}}.aml_cluster_memberships GROUP BY network_id,cluster_id,cluster_version,subject_id)"
+    },
+    {
+      "name": "aml_cluster_versions_current",
+      "purpose": "Latest whole row before publication/status predicates; audit projection, not a visibility grant.",
+      "select": "SELECT network_id,cluster_id,cluster_version,data.1 AS cluster_type,data.2 AS display_name,data.3 AS change_type,data.4 AS change_reason,data.5 AS source_claim_ids,data.6 AS active_member_count,data.7 AS created_by,data.8 AS evidence_refs,data.9 AS raw_evidence_json,data.10 AS revision,data.11 AS created_at_unix_ms,data.12 AS run_id FROM (SELECT network_id,cluster_id,cluster_version,argMax(tuple(cluster_type,display_name,change_type,change_reason,source_claim_ids,active_member_count,created_by,evidence_refs,raw_evidence_json,revision,created_at_unix_ms,run_id),revision) AS data FROM {{database}}.aml_cluster_versions GROUP BY network_id,cluster_id,cluster_version)"
+    },
+    {
+      "name": "aml_exposure_paths_current",
+      "purpose": "Latest whole row before publication/status predicates; audit projection, not a visibility grant.",
+      "select": "SELECT network_id,run_id,path_id,data.1 AS subject_id,data.2 AS seed_id,data.3 AS direction,data.4 AS hop_count,data.5 AS asset_id,data.6 AS amount_raw,data.7 AS amount_share,data.8 AS exposure_score,data.9 AS attribution_method,data.10 AS fund_continuity_claimed,data.11 AS path_subjects,data.12 AS relationship_ids,data.13 AS tx_hashes,data.14 AS evidence_refs,data.15 AS revision,data.16 AS created_at_unix_ms,data.17 AS seed_entity_id,data.18 AS seed_category,data.19 AS seed_risk_level,data.20 AS time_weight,data.21 AS service_mediated,data.22 AS service_entity_id,data.23 AS continuity_type,data.24 AS first_transfer_unix_ms,data.25 AS last_transfer_unix_ms,data.26 AS detector_version,data.27 AS allocation_json,data.28 AS evidence_json,data.29 AS raw_evidence_json FROM (SELECT network_id,run_id,path_id,argMax(tuple(subject_id,seed_id,direction,hop_count,asset_id,amount_raw,amount_share,exposure_score,attribution_method,fund_continuity_claimed,path_subjects,relationship_ids,tx_hashes,evidence_refs,revision,created_at_unix_ms,seed_entity_id,seed_category,seed_risk_level,time_weight,service_mediated,service_entity_id,continuity_type,first_transfer_unix_ms,last_transfer_unix_ms,detector_version,allocation_json,evidence_json,raw_evidence_json),revision) AS data FROM {{database}}.aml_exposure_paths GROUP BY network_id,run_id,path_id)"
+    },
+    {
+      "name": "aml_address_exposures_current",
+      "purpose": "Latest whole row before publication/status predicates; audit projection, not a visibility grant.",
+      "select": "SELECT network_id,run_id,exposure_id,data.1 AS seed_id,data.2 AS source_subject_id,data.3 AS subject_id,data.4 AS hop_distance,data.5 AS exposure_score,data.6 AS path_count,data.7 AS last_tx_hash,data.8 AS last_seen_block,data.9 AS exposure_type,data.10 AS best_path_amount_share,data.11 AS best_path_time_weight,data.12 AS service_mediated,data.13 AS as_of_block,data.14 AS source_revision,data.15 AS evidence_refs,data.16 AS raw_evidence_json,data.17 AS revision,data.18 AS created_at_unix_ms FROM (SELECT network_id,run_id,exposure_id,argMax(tuple(seed_id,source_subject_id,subject_id,hop_distance,exposure_score,path_count,last_tx_hash,last_seen_block,exposure_type,best_path_amount_share,best_path_time_weight,service_mediated,as_of_block,source_revision,evidence_refs,raw_evidence_json,revision,created_at_unix_ms),revision) AS data FROM {{database}}.aml_address_exposures GROUP BY network_id,run_id,exposure_id)"
+    },
+    {
+      "name": "aml_wallet_risk_assessments_current",
+      "purpose": "Latest whole row before publication/status predicates; audit projection, not a visibility grant.",
+      "select": "SELECT network_id,assessment_id,data.1 AS subject_id,data.2 AS policy_version,data.3 AS risk_score,data.4 AS risk_level,data.5 AS probability_claimed,data.6 AS signal_count,data.7 AS exposure_run_id,data.8 AS limitations,data.9 AS as_of_block,data.10 AS source_revision,data.11 AS revision,data.12 AS created_at_unix_ms,data.13 AS top_reasons,data.14 AS evidence_refs,data.15 AS as_of_unix_ms,data.16 AS scoring_method,data.17 AS evidence_json,data.18 AS raw_evidence_json FROM (SELECT network_id,assessment_id,argMax(tuple(subject_id,policy_version,risk_score,risk_level,probability_claimed,signal_count,exposure_run_id,limitations,as_of_block,source_revision,revision,created_at_unix_ms,top_reasons,evidence_refs,as_of_unix_ms,scoring_method,evidence_json,raw_evidence_json),revision) AS data FROM {{database}}.aml_wallet_risk_assessments GROUP BY network_id,assessment_id)"
+    },
+    {
+      "name": "aml_wallet_risk_signals_current",
+      "purpose": "Latest whole row before publication/status predicates; audit projection, not a visibility grant.",
+      "select": "SELECT network_id,assessment_id,signal_id,data.1 AS subject_id,data.2 AS policy_version,data.3 AS signal_type,data.4 AS contribution,data.5 AS summary,data.6 AS evidence_refs,data.7 AS evidence_json,data.8 AS as_of_block,data.9 AS source_revision,data.10 AS revision,data.11 AS created_at_unix_ms,data.12 AS signal_strength,data.13 AS as_of_unix_ms,data.14 AS raw_evidence_json FROM (SELECT network_id,assessment_id,signal_id,argMax(tuple(subject_id,policy_version,signal_type,contribution,summary,evidence_refs,evidence_json,as_of_block,source_revision,revision,created_at_unix_ms,signal_strength,as_of_unix_ms,raw_evidence_json),revision) AS data FROM {{database}}.aml_wallet_risk_signals GROUP BY network_id,assessment_id,signal_id)"
+    },
+    {
+      "name": "aml_asset_metadata_current",
+      "purpose": "Latest whole row before publication/status predicates; audit projection, not a visibility grant.",
+      "select": "SELECT network_id,asset_id,data.1 AS symbol,data.2 AS name,data.3 AS decimals,data.4 AS asset_standard,data.5 AS source_id,data.6 AS source_reference,data.7 AS review_status,data.8 AS reviewed_by,data.9 AS evidence_refs,data.10 AS revision,data.11 AS created_at_unix_ms,data.12 AS total_supply_raw,data.13 AS code_hash,data.14 AS is_verified,data.15 AS metadata_status,data.16 AS observed_block,data.17 AS verified_at_unix_ms,data.18 AS reviewed_at_unix_ms,data.19 AS updated_at_unix_ms,data.20 AS raw_evidence_json,data.21 AS source_revision,data.22 AS observed_block_hash FROM (SELECT network_id,asset_id,argMax(tuple(symbol,name,decimals,asset_standard,source_id,source_reference,review_status,reviewed_by,evidence_refs,revision,created_at_unix_ms,total_supply_raw,code_hash,is_verified,metadata_status,observed_block,verified_at_unix_ms,reviewed_at_unix_ms,updated_at_unix_ms,raw_evidence_json,source_revision,observed_block_hash),revision) AS data FROM {{database}}.aml_asset_metadata GROUP BY network_id,asset_id)"
+    },
+    {
+      "name": "aml_metadata_jobs_current",
+      "purpose": "Latest whole row before publication/status predicates; audit projection, not a visibility grant.",
+      "select": "SELECT network_id,job_id,data.1 AS asset_id,data.2 AS status,data.3 AS attempts,data.4 AS next_attempt_unix_ms,data.5 AS last_error,data.6 AS revision,data.7 AS created_at_unix_ms,data.8 AS discovery_id,data.9 AS discovered_block,data.10 AS source_revision,data.11 AS last_error_class,data.12 AS started_at_unix_ms,data.13 AS completed_at_unix_ms,data.14 AS updated_at_unix_ms,data.15 AS raw_evidence_json FROM (SELECT network_id,job_id,argMax(tuple(asset_id,status,attempts,next_attempt_unix_ms,last_error,revision,created_at_unix_ms,discovery_id,discovered_block,source_revision,last_error_class,started_at_unix_ms,completed_at_unix_ms,updated_at_unix_ms,raw_evidence_json),revision) AS data FROM {{database}}.aml_metadata_jobs GROUP BY network_id,job_id)"
+    },
+    {
+      "name": "aml_analysis_publications_visible",
+      "purpose": "Only sealed analyses of the exact current source fence and canonical as-of hash; any publication change invalidates old outputs conservatively.",
+      "select": "SELECT p.network_id AS network_id, p.family AS family, p.publication_id AS publication_id, p.source_revision AS source_revision, p.as_of_block AS as_of_block, p.block_hash AS block_hash, p.output_revision AS output_revision, p.status AS status, p.row_counts_json AS row_counts_json, p.revision AS revision, p.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_analysis_publications_current AS p INNER JOIN {{database}}.aml_sync_state_current AS s ON p.network_id=s.network_id AND p.source_revision=s.revision INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON p.network_id=b.network_id AND p.as_of_block=b.block_number AND p.block_hash=b.block_hash WHERE p.status='complete' AND s.initialized=1 AND p.as_of_block<=s.last_block_number"
+    },
+    {
+      "name": "aml_cluster_runs_visible",
+      "purpose": "Derived rows require the exact sealed output revision and a still-current canonical source snapshot; historical/unsealed rows remain audit-only.",
+      "select": "SELECT f.network_id AS network_id, f.run_id AS run_id, f.status AS status, f.as_of_block AS as_of_block, f.source_revision AS source_revision, f.detector_version AS detector_version, f.cursor_json AS cursor_json, f.started_at_unix_ms AS started_at_unix_ms, f.completed_at_unix_ms AS completed_at_unix_ms, f.truncated AS truncated, f.revision AS revision, f.created_at_unix_ms AS created_at_unix_ms, f.entity_memberships AS entity_memberships, f.control_claims AS control_claims, f.error_message AS error_message, f.settings_json AS settings_json, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_cluster_runs_current AS f INNER JOIN {{database}}.aml_analysis_publications_visible AS p ON f.network_id=p.network_id AND f.run_id=p.publication_id AND f.revision=p.output_revision WHERE p.family='cluster' AND f.status='complete' AND f.truncated=0 AND f.source_revision=p.source_revision AND f.as_of_block=p.as_of_block"
+    },
+    {
+      "name": "aml_cluster_claims_visible",
+      "purpose": "Derived rows require the exact sealed output revision and a still-current canonical source snapshot; historical/unsealed rows remain audit-only.",
+      "select": "SELECT f.network_id AS network_id, f.claim_id AS claim_id, f.cluster_id AS cluster_id, f.subject_id AS subject_id, f.heuristic AS heuristic, f.detector_version AS detector_version, f.confidence AS confidence, f.review_status AS review_status, f.source_id AS source_id, f.evidence_refs AS evidence_refs, f.evidence_json AS evidence_json, f.revision AS revision, f.created_at_unix_ms AS created_at_unix_ms, f.left_subject_id AS left_subject_id, f.right_subject_id AS right_subject_id, f.same_entity AS same_entity, f.run_id AS run_id, f.source_record_id AS source_record_id, f.supersedes_claim_id AS supersedes_claim_id, f.created_by AS created_by, f.reviewed_by AS reviewed_by, f.review_id AS review_id, f.cluster_type AS cluster_type, f.address_role AS address_role, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_cluster_claims_current AS f INNER JOIN {{database}}.aml_analysis_publications_visible AS p ON f.network_id=p.network_id AND f.run_id=p.publication_id AND f.revision=p.output_revision INNER JOIN {{database}}.aml_cluster_runs_visible AS a ON f.network_id=a.network_id AND f.run_id=a.run_id AND f.revision=a.revision WHERE p.family='cluster'"
+    },
+    {
+      "name": "aml_cluster_memberships_visible",
+      "purpose": "Derived rows require the exact sealed output revision and a still-current canonical source snapshot; historical/unsealed rows remain audit-only.",
+      "select": "SELECT f.network_id AS network_id, f.cluster_id AS cluster_id, f.cluster_version AS cluster_version, f.subject_id AS subject_id, f.claim_id AS claim_id, f.status AS status, f.revision AS revision, f.created_at_unix_ms AS created_at_unix_ms, f.membership_id AS membership_id, f.run_id AS run_id, f.entity_id AS entity_id, f.membership_type AS membership_type, f.confidence AS confidence, f.review_id AS review_id, f.cluster_type AS cluster_type, f.address_role AS address_role, f.evidence_json AS evidence_json, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_cluster_memberships_current AS f INNER JOIN {{database}}.aml_analysis_publications_visible AS p ON f.network_id=p.network_id AND f.run_id=p.publication_id AND f.revision=p.output_revision INNER JOIN {{database}}.aml_cluster_runs_visible AS a ON f.network_id=a.network_id AND f.run_id=a.run_id AND f.revision=a.revision WHERE p.family='cluster'"
+    },
+    {
+      "name": "aml_cluster_versions_visible",
+      "purpose": "Derived rows require the exact sealed output revision and a still-current canonical source snapshot; historical/unsealed rows remain audit-only.",
+      "select": "SELECT f.network_id AS network_id, f.cluster_id AS cluster_id, f.cluster_version AS cluster_version, f.cluster_type AS cluster_type, f.display_name AS display_name, f.change_type AS change_type, f.change_reason AS change_reason, f.source_claim_ids AS source_claim_ids, f.active_member_count AS active_member_count, f.created_by AS created_by, f.evidence_refs AS evidence_refs, f.raw_evidence_json AS raw_evidence_json, f.revision AS revision, f.created_at_unix_ms AS created_at_unix_ms, f.run_id AS run_id FROM {{database}}.aml_cluster_versions_current AS f INNER JOIN {{database}}.aml_analysis_publications_visible AS p ON f.network_id=p.network_id AND f.run_id=p.publication_id AND f.revision=p.output_revision INNER JOIN {{database}}.aml_cluster_runs_visible AS a ON f.network_id=a.network_id AND f.run_id=a.run_id AND f.revision=a.revision WHERE p.family='cluster'"
+    },
+    {
+      "name": "aml_exposure_runs_visible",
+      "purpose": "Derived rows require the exact sealed output revision and a still-current canonical source snapshot; historical/unsealed rows remain audit-only.",
+      "select": "SELECT f.network_id AS network_id, f.run_id AS run_id, f.seed_id AS seed_id, f.status AS status, f.as_of_block AS as_of_block, f.source_revision AS source_revision, f.policy_version AS policy_version, f.max_hops AS max_hops, f.started_at_unix_ms AS started_at_unix_ms, f.completed_at_unix_ms AS completed_at_unix_ms, f.truncated AS truncated, f.revision AS revision, f.created_at_unix_ms AS created_at_unix_ms, f.seed_ids AS seed_ids, f.seed_snapshot_json AS seed_snapshot_json, f.detector_version AS detector_version, f.hop_decay AS hop_decay, f.time_half_life_days AS time_half_life_days, f.max_paths_per_subject AS max_paths_per_subject, f.seed_count AS seed_count, f.path_count AS path_count, f.settings_json AS settings_json, f.error_message AS error_message, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_exposure_runs_current AS f INNER JOIN {{database}}.aml_analysis_publications_visible AS p ON f.network_id=p.network_id AND f.run_id=p.publication_id AND f.revision=p.output_revision WHERE p.family='exposure' AND f.status='complete' AND f.truncated=0 AND f.source_revision=p.source_revision AND f.as_of_block=p.as_of_block"
+    },
+    {
+      "name": "aml_exposure_paths_visible",
+      "purpose": "Derived rows require the exact sealed output revision and a still-current canonical source snapshot; historical/unsealed rows remain audit-only.",
+      "select": "SELECT f.network_id AS network_id, f.path_id AS path_id, f.run_id AS run_id, f.subject_id AS subject_id, f.seed_id AS seed_id, f.direction AS direction, f.hop_count AS hop_count, f.asset_id AS asset_id, f.amount_raw AS amount_raw, f.amount_share AS amount_share, f.exposure_score AS exposure_score, f.attribution_method AS attribution_method, f.fund_continuity_claimed AS fund_continuity_claimed, f.path_subjects AS path_subjects, f.relationship_ids AS relationship_ids, f.tx_hashes AS tx_hashes, f.evidence_refs AS evidence_refs, f.revision AS revision, f.created_at_unix_ms AS created_at_unix_ms, f.seed_entity_id AS seed_entity_id, f.seed_category AS seed_category, f.seed_risk_level AS seed_risk_level, f.time_weight AS time_weight, f.service_mediated AS service_mediated, f.service_entity_id AS service_entity_id, f.continuity_type AS continuity_type, f.first_transfer_unix_ms AS first_transfer_unix_ms, f.last_transfer_unix_ms AS last_transfer_unix_ms, f.detector_version AS detector_version, f.allocation_json AS allocation_json, f.evidence_json AS evidence_json, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_exposure_paths_current AS f INNER JOIN {{database}}.aml_analysis_publications_visible AS p ON f.network_id=p.network_id AND f.run_id=p.publication_id AND f.revision=p.output_revision INNER JOIN {{database}}.aml_exposure_runs_visible AS a ON f.network_id=a.network_id AND f.run_id=a.run_id AND f.revision=a.revision WHERE p.family='exposure'"
+    },
+    {
+      "name": "aml_address_exposures_visible",
+      "purpose": "Derived rows require the exact sealed output revision and a still-current canonical source snapshot; historical/unsealed rows remain audit-only.",
+      "select": "SELECT f.network_id AS network_id, f.exposure_id AS exposure_id, f.run_id AS run_id, f.seed_id AS seed_id, f.source_subject_id AS source_subject_id, f.subject_id AS subject_id, f.hop_distance AS hop_distance, f.exposure_score AS exposure_score, f.path_count AS path_count, f.last_tx_hash AS last_tx_hash, f.last_seen_block AS last_seen_block, f.exposure_type AS exposure_type, f.best_path_amount_share AS best_path_amount_share, f.best_path_time_weight AS best_path_time_weight, f.service_mediated AS service_mediated, f.as_of_block AS as_of_block, f.source_revision AS source_revision, f.evidence_refs AS evidence_refs, f.raw_evidence_json AS raw_evidence_json, f.revision AS revision, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_address_exposures_current AS f INNER JOIN {{database}}.aml_analysis_publications_visible AS p ON f.network_id=p.network_id AND f.run_id=p.publication_id AND f.revision=p.output_revision INNER JOIN {{database}}.aml_exposure_runs_visible AS a ON f.network_id=a.network_id AND f.run_id=a.run_id AND f.revision=a.revision WHERE p.family='exposure' AND f.source_revision=p.source_revision AND f.as_of_block=p.as_of_block"
+    },
+    {
+      "name": "aml_wallet_risk_assessments_visible",
+      "purpose": "Derived rows require the exact sealed output revision and a still-current canonical source snapshot; historical/unsealed rows remain audit-only.",
+      "select": "SELECT f.network_id AS network_id, f.assessment_id AS assessment_id, f.subject_id AS subject_id, f.policy_version AS policy_version, f.risk_score AS risk_score, f.risk_level AS risk_level, f.probability_claimed AS probability_claimed, f.signal_count AS signal_count, f.exposure_run_id AS exposure_run_id, f.limitations AS limitations, f.as_of_block AS as_of_block, f.source_revision AS source_revision, f.revision AS revision, f.created_at_unix_ms AS created_at_unix_ms, f.top_reasons AS top_reasons, f.evidence_refs AS evidence_refs, f.as_of_unix_ms AS as_of_unix_ms, f.scoring_method AS scoring_method, f.evidence_json AS evidence_json, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_wallet_risk_assessments_current AS f INNER JOIN {{database}}.aml_analysis_publications_visible AS p ON f.network_id=p.network_id AND f.assessment_id=p.publication_id AND f.revision=p.output_revision LEFT JOIN {{database}}.aml_exposure_runs_visible AS e ON f.network_id=e.network_id AND f.exposure_run_id=e.run_id WHERE p.family='risk' AND f.source_revision=p.source_revision AND f.as_of_block=p.as_of_block AND (isNull(f.exposure_run_id) OR e.run_id=ifNull(f.exposure_run_id,'') AND e.source_revision=f.source_revision)"
+    },
+    {
+      "name": "aml_wallet_risk_signals_visible",
+      "purpose": "Derived rows require the exact sealed output revision and a still-current canonical source snapshot; historical/unsealed rows remain audit-only.",
+      "select": "SELECT f.network_id AS network_id, f.signal_id AS signal_id, f.assessment_id AS assessment_id, f.subject_id AS subject_id, f.policy_version AS policy_version, f.signal_type AS signal_type, f.contribution AS contribution, f.summary AS summary, f.evidence_refs AS evidence_refs, f.evidence_json AS evidence_json, f.as_of_block AS as_of_block, f.source_revision AS source_revision, f.revision AS revision, f.created_at_unix_ms AS created_at_unix_ms, f.signal_strength AS signal_strength, f.as_of_unix_ms AS as_of_unix_ms, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_wallet_risk_signals_current AS f INNER JOIN {{database}}.aml_analysis_publications_visible AS p ON f.network_id=p.network_id AND f.assessment_id=p.publication_id AND f.revision=p.output_revision INNER JOIN {{database}}.aml_wallet_risk_assessments_visible AS a ON f.network_id=a.network_id AND f.assessment_id=a.assessment_id AND f.revision=a.revision WHERE p.family='risk' AND f.source_revision=p.source_revision AND f.as_of_block=p.as_of_block"
+    },
+    {
+      "name": "aml_asset_metadata_visible",
+      "purpose": "Off-chain catalogs remain catalogs; chain-observed metadata requires exact current source revision and canonical observed hash. Unknown historical provenance is audit-only.",
+      "select": "SELECT f.network_id AS network_id, f.asset_id AS asset_id, f.symbol AS symbol, f.name AS name, f.decimals AS decimals, f.asset_standard AS asset_standard, f.source_id AS source_id, f.source_reference AS source_reference, f.review_status AS review_status, f.reviewed_by AS reviewed_by, f.evidence_refs AS evidence_refs, f.revision AS revision, f.created_at_unix_ms AS created_at_unix_ms, f.total_supply_raw AS total_supply_raw, f.code_hash AS code_hash, f.is_verified AS is_verified, f.metadata_status AS metadata_status, f.observed_block AS observed_block, f.verified_at_unix_ms AS verified_at_unix_ms, f.reviewed_at_unix_ms AS reviewed_at_unix_ms, f.updated_at_unix_ms AS updated_at_unix_ms, f.raw_evidence_json AS raw_evidence_json, f.source_revision AS source_revision, f.observed_block_hash AS observed_block_hash FROM {{database}}.aml_asset_metadata_current AS f LEFT JOIN {{database}}.aml_sync_state_current AS s ON f.network_id=s.network_id LEFT JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.observed_block=b.block_number AND f.observed_block_hash=b.block_hash WHERE (isNull(f.observed_block) AND isNull(f.source_revision) AND isNull(f.observed_block_hash)) OR (isNotNull(f.observed_block) AND isNotNull(f.observed_block_hash) AND f.source_revision=s.revision AND s.initialized=1 AND b.block_hash=ifNull(f.observed_block_hash,''))"
+    },
+    {
+      "name": "aml_metadata_jobs_visible",
+      "purpose": "A chain-discovered job requires canonical discovery evidence and current source epoch; orphaned/stale discoveries cannot be dispatched as current.",
+      "select": "SELECT f.network_id AS network_id, f.job_id AS job_id, f.asset_id AS asset_id, f.status AS status, f.attempts AS attempts, f.next_attempt_unix_ms AS next_attempt_unix_ms, f.last_error AS last_error, f.revision AS revision, f.created_at_unix_ms AS created_at_unix_ms, f.discovery_id AS discovery_id, f.discovered_block AS discovered_block, f.source_revision AS source_revision, f.last_error_class AS last_error_class, f.started_at_unix_ms AS started_at_unix_ms, f.completed_at_unix_ms AS completed_at_unix_ms, f.updated_at_unix_ms AS updated_at_unix_ms, f.raw_evidence_json AS raw_evidence_json FROM {{database}}.aml_metadata_jobs_current AS f LEFT JOIN {{database}}.aml_sync_state_current AS s ON f.network_id=s.network_id LEFT JOIN {{database}}.aml_metadata_discoveries_canonical AS d ON f.network_id=d.network_id AND f.discovery_id=d.discovery_id AND f.asset_id=d.asset_id AND f.discovered_block=d.block_number WHERE (isNull(f.discovery_id) AND isNull(f.discovered_block) AND isNull(f.source_revision)) OR (isNotNull(f.discovery_id) AND isNotNull(f.discovered_block) AND f.source_revision=s.revision AND s.initialized=1 AND d.discovery_id=ifNull(f.discovery_id,''))"
+    }
+  ],
+  "rules": [
+    {
+      "table": "aml_analysis_publications",
+      "column": "network_id",
+      "kind": "network"
+    },
+    {
+      "table": "aml_analysis_publications",
+      "column": "family",
+      "kind": "enum",
+      "values": [
+        "cluster",
+        "exposure",
+        "risk"
+      ]
+    },
+    {
+      "table": "aml_analysis_publications",
+      "column": "publication_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_analysis_publications",
+      "column": "source_revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_analysis_publications",
+      "column": "output_revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_analysis_publications",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_analysis_publications",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_analysis_publications",
+      "column": "status",
+      "kind": "enum",
+      "values": [
+        "complete",
+        "invalidated"
+      ]
+    },
+    {
+      "table": "aml_analysis_publications",
+      "column": "row_counts_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_cluster_versions",
+      "column": "run_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "source_revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_asset_metadata",
+      "column": "observed_block_hash",
+      "kind": "hash"
+    }
+  ]
+}

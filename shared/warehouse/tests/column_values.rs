@@ -16,12 +16,20 @@ fn every_shared_table_has_a_valid_value_fixture_for_each_applicable_network() ->
         aml_warehouse::baseline_contract()?.checksum()?,
         "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
     );
-    assert_eq!(contract.version, 2);
+    assert_eq!(contract.version, 5);
+    assert_eq!(
+        aml_warehouse::column_contract()?.checksum()?,
+        "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+    );
     for network in Network::ALL {
         for table in &contract.tables {
             let applicable = match table.name.as_str() {
-                "aml_bitcoin_inputs" | "aml_bitcoin_outputs" => network == Network::Bitcoin,
-                "aml_evm_logs" => matches!(network, Network::Ethereum | Network::Bsc),
+                "aml_bitcoin_inputs" | "aml_bitcoin_outputs" | "aml_bitcoin_scripts" => {
+                    network == Network::Bitcoin
+                }
+                "aml_evm_logs" | "aml_evm_traces" => {
+                    matches!(network, Network::Ethereum | Network::Bsc)
+                }
                 "aml_tron_contracts" => network == Network::Tron,
                 _ => true,
             };

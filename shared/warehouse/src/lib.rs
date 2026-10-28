@@ -1,13 +1,23 @@
 //! The same versioned warehouse contract is embedded by all four adapters.
 //! Legacy objects are deliberately outside this namespace during migration.
+pub mod analytics;
+pub mod analytics_schema;
 pub mod contract;
+pub mod core;
+pub mod core_schema;
 pub mod migration;
 pub mod publication;
+pub mod relationships;
 pub mod semantics;
 pub mod types;
 pub mod values;
+pub mod visibility;
+pub mod visibility_schema;
 
-pub use contract::{Contract, baseline_contract, current_contract};
+pub use contract::{
+    Contract, analytics_contract, baseline_contract, column_contract, core_contract,
+    current_contract,
+};
 pub use migration::{Connection, SchemaSummary, initialize, validate};
 pub use types::{Network, RawAmount, UnixMillis};
 

@@ -152,6 +152,74 @@ class DataDictionaryTests(unittest.TestCase):
             for column in obj["columns"]:
                 self.assertNotEqual(column["unit"], "requires_unit_decision", (obj["name"], column["name"]))
 
+    def test_current_core_target_does_not_relabel_the_historical_baseline(self):
+        self.assertEqual(self.report["schema_version"],1)
+        self.assertEqual(self.report["counts"]["common"]["table_columns"],376)
+        current=self.report["target_core_contract"]
+        self.assertEqual((current["version"],current["tables"],current["views"],current["table_columns"]),(3,29,21,404))
+        self.assertIn("DB-08",current["scope"])
+
+    def test_stale_current_core_columns_are_rejected(self):
+        read=dictionary.read_json
+        def changed(path):
+            data=read(path)
+            if path.name == "core-contract-v3.json":
+                data["tables"][0]["columns"].pop()
+            return data
+        with patch.object(dictionary,"read_json",side_effect=changed),self.assertRaisesRegex(ValueError,"column export is stale"):
+            dictionary.build(self.snapshot)
+    def test_analytics_target_preserves_baseline_and_records_nine_additive_tables(self):
+        target=self.report["target_analytics_contract"]
+        self.assertEqual((target["version"],target["tables"],target["views"],target["table_columns"]),(4,38,40,668))
+        self.assertEqual(len(target["new_tables"]),9)
+        self.assertEqual(self.report["schema_version"],1)
+    def test_analytics_plan_keeps_pair_claim_endpoints_and_original_types(self):
+        mapping=next(m for m in self.report["target_analytics_mapping"] if m["chain"]=="ethereum" and m["source_object"]=="address_cluster_claims")
+        fields={c["source"]:c for c in mapping["columns"]}
+        self.assertEqual(fields["right_address"]["candidate"],"aml_cluster_claims.right_subject_id")
+        self.assertTrue(all(c["source_type"] and c["original_evidence_path"] for c in fields.values()))
+        self.assertIn("no backfill",mapping["status"])
+    def test_changed_analytics_view_cannot_pass_as_the_current_export(self):
+        original=dictionary.read_json
+        def changed(path):
+            data=original(path)
+            if path.name=="analytics-contract-v4.json":data["views"][-1]["select"]="SELECT 1"
+            return data
+        with patch.object(dictionary,"read_json",side_effect=changed),self.assertRaisesRegex(ValueError,"view export is stale"):
+            dictionary.build(self.snapshot)
+    def test_relationship_contract_does_not_claim_a_storage_migration_or_legacy_cutover(self):
+        contract=self.report["relationship_interpretation"]
+        self.assertEqual(contract["version"],"typed_relationships_v1")
+        self.assertEqual(contract["storage_schema_version"],5)
+        self.assertEqual(contract["introduced_storage_schema_version"],4)
+        self.assertFalse(contract["mutates_storage"])
+        self.assertIn("DB-08",contract["other_networks"])
+    def test_visibility_contract_preserves_history_and_exports_current_target(self):
+        target=self.report["target_visibility_contract"]
+        self.assertEqual((target["version"],target["tables"],target["views"],target["table_columns"]),(5,39,53,682))
+        self.assertIn("DB-08",target["scope"])
+    def test_backup_proof_is_separate_from_schema_migration_and_cutover(self):
+        recovery = self.report["migration_recovery"]
+        self.assertEqual(recovery["stage"], "DB-08A")
+        self.assertEqual(recovery["storage_schema_version"], 5)
+        self.assertFalse(recovery["schema_changed"])
+        self.assertFalse(recovery["cutover_allowed"])
+        for source in recovery["source_manifest"]:
+            self.assertEqual(source["normalized_sha256"], dictionary.normalized_hash(dictionary.ROOT / source["path"]))
+        self.assertEqual(len(recovery["remaining"]), 3)
+        acceptance = dictionary.read_json(dictionary.ROOT / recovery["acceptance"])
+        self.assertEqual({n["network"] for n in acceptance["networks"]}, set(dictionary.NETWORKS))
+        self.assertFalse(acceptance["shared_schema_changed"])
+        self.assertTrue(all(n["restore_verified"] and not n["cutover_allowed"] for n in acceptance["networks"]))
+    def test_changed_visibility_view_export_is_rejected(self):
+        original=dictionary.read_json
+        def changed(path):
+            data=original(path)
+            if path.name=="current-contract.json":data["views"][-1]["select"]="SELECT 1"
+            return data
+        with patch.object(dictionary,"read_json",side_effect=changed),self.assertRaisesRegex(ValueError,"visibility view export is stale"):
+            dictionary.build(self.snapshot)
+
 
 if __name__ == "__main__":
     unittest.main()

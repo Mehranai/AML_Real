@@ -347,6 +347,7 @@ async fn create(
             holdings.insert("storage".into(), json!("central_investigation_snapshot"));
         }
     }
+    refresh_source_validity(&app, &mut data, &network).await;
     let id = nanoid!(32);
     let (nodes, edges) = normalize_graph(&id, network_id, &network, &data).map_err(internal)?;
     let timestamp = now();
@@ -401,38 +402,115 @@ fn normalize_graph(
     let mut nodes = BTreeMap::new();
     let key = |address: &str| format!("{id}:{network_id}:{address}");
     for node in raw_nodes {
-        let address = if network == "tron" {
+        let typed = network == "bitcoin" && node["subject_id"].is_string();
+        let address = if typed {
+            risk::text(&node["subject_id"])
+        } else if network == "tron" {
             risk::text(&node["id"])
         } else {
             risk::text(&node["address"])
         };
         ensure!(!address.is_empty(), "empty graph node");
-        nodes.insert(address.to_string(),json!({"key":key(address),"address":address,
-            "subject_key":format!("{network_id}:{address}"),"label":node.get("label").unwrap_or(&json!(address)),
+        let kind = risk::text(&node["node_type"]);
+        if typed {
+            ensure!(
+                ["address", "transaction", "script"].contains(&kind),
+                "unknown Bitcoin graph subject type"
+            );
+            ensure!(
+                risk::text(&node["subject_type"]) == kind,
+                "inconsistent subject type"
+            );
+            ensure!(
+                if kind == "address" {
+                    risk::text(&node["address"]) == address
+                } else {
+                    node["address"].is_null()
+                },
+                "non-address subject has an address value"
+            );
+        }
+        let address_value = if network == "bitcoin" && ["transaction", "script"].contains(&kind) {
+            Value::Null
+        } else {
+            json!(address)
+        };
+        nodes.insert(address.to_string(),json!({"key":key(address),"address":address_value.clone(),
+            "address_value":address_value,"subject_id":address,"subject_type":if kind.is_empty(){"address"}else{kind},
+            "subject_key":if typed{format!("{network_id}:{kind}:{address}")}else{format!("{network_id}:{address}")},"label":node.get("label").unwrap_or(&json!(address)),
             "node_type":node.get("node_type").unwrap_or(&json!("address")),
             "evidence_json":node.to_string()}));
     }
     let mut edges = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for edge in raw_edges {
-        let from = risk::text(
-            &edge[if network == "tron" {
-                "from"
-            } else {
-                "from_address"
-            }],
-        );
-        let to = risk::text(
-            &edge[if network == "tron" {
-                "to"
-            } else {
-                "to_address"
-            }],
-        );
+        let typed = network == "bitcoin"
+            && edge["from_subject_id"].is_string()
+            && edge["to_subject_id"].is_string();
+        let from = if typed {
+            risk::text(&edge["from_subject_id"])
+        } else {
+            risk::text(
+                &edge[if network == "tron" {
+                    "from"
+                } else {
+                    "from_address"
+                }],
+            )
+        };
+        let to = if typed {
+            risk::text(&edge["to_subject_id"])
+        } else {
+            risk::text(
+                &edge[if network == "tron" {
+                    "to"
+                } else {
+                    "to_address"
+                }],
+            )
+        };
         ensure!(
             nodes.contains_key(from) && nodes.contains_key(to),
             "edge endpoint missing"
         );
+        if network == "bitcoin" {
+            let from_kind = risk::text(&nodes[from]["subject_type"]);
+            let to_kind = risk::text(&nodes[to]["subject_type"]);
+            if typed {
+                ensure!(
+                    risk::text(&edge["from_subject_type"]) == from_kind
+                        && risk::text(&edge["to_subject_type"]) == to_kind,
+                    "Bitcoin edge/subject types disagree"
+                );
+            }
+            let valid = match risk::text(&edge["transfer_type"]) {
+                "utxo_input" => {
+                    ["address", "script"].contains(&from_kind) && to_kind == "transaction"
+                }
+                "utxo_output" => {
+                    from_kind == "transaction" && ["address", "script"].contains(&to_kind)
+                }
+                _ => false,
+            };
+            ensure!(
+                valid,
+                "Bitcoin graph cannot assert a pairwise address transfer"
+            );
+            for claim in [
+                "fund_continuity_claimed",
+                "amount_allocation_claimed",
+                "ownership_claimed",
+            ] {
+                ensure!(
+                    if typed {
+                        edge[claim] == false
+                    } else {
+                        edge[claim] != true
+                    },
+                    "unsupported Bitcoin graph claim"
+                );
+            }
+        }
         let edge_id = risk::text(&edge["id"]);
         ensure!(
             !edge_id.is_empty() && seen.insert(edge_id),
@@ -440,7 +518,10 @@ fn normalize_graph(
         );
         // Preserve raw amounts as strings; never coerce token quantities into floats.
         edges.push(json!({"edge_id":edge_id,"from_key":key(from),"to_key":key(to),
-            "from_address":from,"to_address":to,"tx_hash":edge["tx_hash"],"amount":edge["amount"],
+            "from_address":if typed{edge["from_address"].clone()}else{json!(from)},"to_address":if typed{edge["to_address"].clone()}else{json!(to)},
+            "from_subject_id":from,"to_subject_id":to,"from_subject_type":nodes[from]["subject_type"],"to_subject_type":nodes[to]["subject_type"],
+            "fund_continuity_claimed":if typed{json!(false)}else{Value::Null},"amount_allocation_claimed":if typed{json!(false)}else{Value::Null},
+            "tx_hash":edge["tx_hash"],"amount":edge["amount"],
             "asset_id":edge.get("asset_id").or_else(||edge.get("token_address")).unwrap_or(&Value::Null),
             "block_number":edge["block_number"],"transfer_type":edge["transfer_type"],"evidence_json":edge.to_string()}));
     }
@@ -473,7 +554,7 @@ async fn reopen(
     Path(id): Path<String>,
 ) -> Result<Response, Failure> {
     let owner = owner(&app, &headers)?;
-    let data = app
+    let mut data = app
         .store
         .read(&id, &owner.hash, now())
         .await
@@ -482,7 +563,135 @@ async fn reopen(
             StatusCode::NOT_FOUND,
             "Investigation not found or expired",
         ))?;
+    let network = data["investigation"]["network"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
+    refresh_source_validity(&app, &mut data, &network).await;
     Ok(response(data, owner))
+}
+
+fn annotate_source_validity(data: &mut Value, current: Option<&Value>) {
+    let source = &data["source_snapshot"];
+    let expected = source["snapshot_id"]
+        .as_str()
+        .filter(|id| id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()));
+    let mut status = if let Some(current) = current {
+        let actual = &current["source_snapshot"];
+        if expected.is_none()
+            || source["contract"] != "canonical_v1"
+            || actual["contract"] != "canonical_v1"
+            || source["network_id"] != data["network_id"]
+            || current["network_id"] != data["network_id"]
+            || actual["network_id"] != data["network_id"]
+        {
+            "unverified"
+        } else if actual["snapshot_id"] == source["snapshot_id"]
+            && actual["source_revision"] == source["source_revision"]
+            && actual["block_hash"] == source["block_hash"]
+            && actual["as_of_block"] == source["as_of_block"]
+        {
+            "current"
+        } else {
+            "stale"
+        }
+    } else {
+        "unverified"
+    };
+    if status == "current"
+        && (data.get("intelligence_snapshot").is_some()
+            || data["entities"].as_array().is_some_and(|v| !v.is_empty()))
+    {
+        let expected = &data["intelligence_snapshot"];
+        let actual = &current.unwrap()["intelligence_snapshot"];
+        let valid = |value: &Value| {
+            value["contract"] == "bitcoin_intelligence_v1"
+                && value["network_id"] == data["network_id"]
+                && value["address"] == data["address"]
+                && value["snapshot_id"]
+                    .as_str()
+                    .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        };
+        status = if !valid(expected) || !valid(actual) {
+            "unverified"
+        } else if actual["snapshot_id"] != expected["snapshot_id"] {
+            "stale"
+        } else {
+            "current"
+        };
+    }
+    data["source_validity"] = json!({"status":status,"checked_at_unix_ms":now(),"current_risk_usable":status=="current","historical_evidence_preserved":true});
+    if status != "current" && data.get("risk_engine").is_some() {
+        if data.get("historical_risk_engine").is_none() {
+            data["historical_risk_engine"] = data["risk_engine"].clone();
+        }
+        data["risk_engine"] = json!({"risk_score":null,"risk_level":"UNKNOWN","signals":[],"policy_version":"source_snapshot_invalid",
+            "limitations":["Historical snapshot: its source is changed or could not be verified. Run a new investigation before using current risk."]});
+    }
+}
+async fn refresh_source_validity(app: &App, data: &mut Value, network: &str) {
+    if network != "bitcoin" {
+        return;
+    }
+    let current = async {
+        let upstream = app.upstreams.get(network).context("missing upstream")?;
+        let mut response = app
+            .http
+            .get(format!("{upstream}/status"))
+            .header("x-aml-service-key", &app.key)
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await?;
+        ensure!(response.status().is_success(), "source status unavailable");
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            ensure!(
+                bytes.len() + chunk.len() <= 65536,
+                "source status exceeds bound"
+            );
+            bytes.extend_from_slice(&chunk);
+        }
+        let mut current: Value = serde_json::from_slice(&bytes)?;
+        if data.get("intelligence_snapshot").is_some()
+            || data["entities"].as_array().is_some_and(|v| !v.is_empty())
+        {
+            let address = data["address"]
+                .as_str()
+                .filter(|a| valid_address("bitcoin", a))
+                .context("invalid intelligence address")?;
+            let mut response = app
+                .http
+                .get(format!(
+                    "{upstream}/api/bitcoin/wallet/{address}/intelligence/snapshot"
+                ))
+                .header("x-aml-service-key", &app.key)
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await?;
+            ensure!(
+                response.status().is_success(),
+                "intelligence snapshot unavailable"
+            );
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
+                ensure!(
+                    bytes.len() + chunk.len() <= 65536,
+                    "intelligence snapshot exceeds bound"
+                );
+                bytes.extend_from_slice(&chunk);
+            }
+            let attribution: Value = serde_json::from_slice(&bytes)?;
+            ensure!(
+                attribution["network_id"] == data["network_id"],
+                "intelligence network mismatch"
+            );
+            current["intelligence_snapshot"] = attribution["intelligence_snapshot"].clone();
+        }
+        Ok::<Value, anyhow::Error>(current)
+    }
+    .await
+    .ok();
+    annotate_source_validity(data, current.as_ref());
 }
 async fn export(
     State(app): State<App>,
@@ -508,11 +717,154 @@ async fn export(
             StatusCode::NOT_FOUND,
             "Investigation not found or expired",
         ))?;
-    Ok(response(json!({"investigation":data}), owner))
+    let mut result = json!({"investigation":data});
+    if result["investigation"]["network"] == "bitcoin" {
+        let mut snapshot = app
+            .store
+            .read(&id, &owner.hash, now())
+            .await
+            .map_err(internal)?
+            .ok_or(Failure(StatusCode::NOT_FOUND, "Investigation not found"))?;
+        refresh_source_validity(&app, &mut snapshot, "bitcoin").await;
+        result["source_validity"] = snapshot["source_validity"].clone();
+        result["risk_engine"] = snapshot["risk_engine"].clone();
+    }
+    Ok(response(result, owner))
 }
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn reopen_and_export_keep_stale_evidence_but_suppress_current_risk() {
+        let network = "bip122:000000000019d6689c085ae165831e93";
+        let payload = serde_json::json!({"network_id":network,"source_snapshot":{"contract":"canonical_v1","snapshot_id":"a".repeat(64),"network_id":network,"source_revision":"10","block_hash":"b".repeat(64),"as_of_block":7},"risk_engine":{"risk_score":90,"risk_level":"HIGH"}});
+        let metadata = serde_json::json!({"id":"fixture","network":"bitcoin","network_id":network,"state":"saved"});
+        let query = axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+            let payload = payload.clone();
+            let metadata = metadata.clone();
+            async move {
+                let rows = if body["statement"]
+                    .as_str()
+                    .unwrap()
+                    .contains("RETURN i.payload_json")
+                {
+                    serde_json::json!([[payload.to_string(), metadata]])
+                } else {
+                    serde_json::json!([[metadata]])
+                };
+                axum::Json(serde_json::json!({"data":{"values":rows},"errors":[]}))
+            }
+        });
+        let current = serde_json::json!({"network_id":network,"source_snapshot":{"contract":"canonical_v1","snapshot_id":"c".repeat(64),"network_id":network,"source_revision":"11","block_hash":"d".repeat(64),"as_of_block":7}});
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let router = axum::Router::new()
+            .route("/db/neo4j/query/v2", query)
+            .route(
+                "/status",
+                axum::routing::get(move || async move { axum::Json(current) }),
+            );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let http = reqwest::Client::new();
+        let app = super::App {
+            store: super::Store::new(http.clone(), &url, String::new()),
+            http,
+            upstreams: std::collections::HashMap::from([("bitcoin".into(), url)]),
+            key: "fixture".into(),
+            ttl_ms: 1000,
+            requests: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+        };
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-aml-service-key", "fixture".parse().unwrap());
+        headers.insert("x-aml-user", "fixture-user".parse().unwrap());
+        headers.insert("content-type", "application/json".parse().unwrap());
+        let response = super::reopen(
+            axum::extract::State(app.clone()),
+            headers.clone(),
+            axum::extract::Path("fixture".into()),
+        )
+        .await
+        .unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
+        let data: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(data["source_validity"]["status"], "stale");
+        assert!(data["risk_engine"]["risk_score"].is_null());
+        assert_eq!(data["historical_risk_engine"]["risk_score"], 90);
+        let response = super::export(
+            axum::extract::State(app),
+            headers,
+            axum::extract::Path("fixture".into()),
+        )
+        .await
+        .unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), 65536)
+            .await
+            .unwrap();
+        let data: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(data["source_validity"]["status"], "stale");
+        assert!(data["risk_engine"]["risk_score"].is_null());
+        server.abort();
+    }
+    #[test]
+    fn changed_or_unverifiable_sources_cannot_supply_current_risk() {
+        let network = "bip122:000000000019d6689c085ae165831e93";
+        let mut data = serde_json::json!({"network_id":network,"source_snapshot":{"contract":"canonical_v1","snapshot_id":"a".repeat(64),"network_id":network,"source_revision":"10","block_hash":"b".repeat(64),"as_of_block":7},"risk_engine":{"risk_score":90,"risk_level":"HIGH","signals":["original"]}});
+        let original = data.clone();
+        let status =
+            serde_json::json!({"network_id":network,"source_snapshot":data["source_snapshot"]});
+        super::annotate_source_validity(&mut data, Some(&status));
+        assert_eq!(data["source_validity"]["status"], "current");
+        assert_eq!(data["risk_engine"]["risk_score"], 90);
+        let mut changed = status.clone();
+        changed["source_snapshot"]["source_revision"] = serde_json::json!("11");
+        super::annotate_source_validity(&mut data, Some(&changed));
+        assert_eq!(data["source_validity"]["status"], "stale");
+        assert!(data["risk_engine"]["risk_score"].is_null());
+        assert_eq!(data["historical_risk_engine"], original["risk_engine"]);
+        super::annotate_source_validity(&mut data, None);
+        assert_eq!(data["source_validity"]["status"], "unverified");
+        assert_eq!(data["historical_risk_engine"], original["risk_engine"]);
+        let mut wrong = original;
+        let mut foreign = status;
+        foreign["network_id"] = serde_json::json!("eip155:1");
+        super::annotate_source_validity(&mut wrong, Some(&foreign));
+        assert_eq!(wrong["source_validity"]["status"], "unverified");
+    }
+    #[tokio::test]
+    async fn source_status_is_checked_over_http_and_failure_is_explicit() {
+        let network = "bip122:000000000019d6689c085ae165831e93";
+        let snapshot = serde_json::json!({"contract":"canonical_v1","snapshot_id":"a".repeat(64),"network_id":network,"source_revision":"10","block_hash":"b".repeat(64),"as_of_block":7});
+        let result = serde_json::json!({"network_id":network,"source_snapshot":snapshot});
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let router = axum::Router::new().route(
+            "/status",
+            axum::routing::get(move || async move { axum::Json(result) }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let http = reqwest::Client::new();
+        let app = super::App {
+            store: super::Store::new(http.clone(), &url, String::new()),
+            http,
+            upstreams: std::collections::HashMap::from([("bitcoin".into(), url)]),
+            key: "fixture".into(),
+            ttl_ms: 1000,
+            requests: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+        };
+        let mut data = serde_json::json!({"network_id":network,"source_snapshot":snapshot});
+        super::refresh_source_validity(&app, &mut data, "bitcoin").await;
+        assert_eq!(data["source_validity"]["status"], "current");
+        server.abort();
+        let _ = server.await;
+        super::refresh_source_validity(&app, &mut data, "bitcoin").await;
+        assert_eq!(data["source_validity"]["status"], "unverified");
+    }
     #[test]
     fn bitcoin_preserves_transaction_nodes_and_satoshi_evidence() {
         let data = serde_json::json!({"graph":{"nodes":[
@@ -536,6 +888,82 @@ mod tests {
         ));
         assert!(!super::valid_address("bitcoin", "tb1qtest"));
     }
+
+    #[tokio::test]
+    #[ignore = "requires Bitcoin intelligence ClickHouse acceptance JSON"]
+    async fn reviewed_bitcoin_clickhouse_evidence_reaches_policy_and_stale_snapshots_are_disabled()
+    {
+        let proof: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(std::env::var("BITCOIN_INTELLIGENCE_ACCEPTANCE").unwrap()).unwrap(),
+        )
+        .unwrap();
+        for state in ["pending", "source_inactive", "revoked"] {
+            let result = super::risk::assess("bitcoin", &proof[state]);
+            assert_eq!(result["risk_level"], "UNKNOWN", "{state}");
+            assert!(result["signals"].as_array().unwrap().is_empty());
+        }
+        let approved = &proof["approved"];
+        let risk = super::risk::assess("bitcoin", approved);
+        assert_eq!(risk["risk_score"], 70.0);
+        assert_eq!(risk["signals"][0]["signal_type"], "APPROVED_RISK_LABEL");
+        assert_eq!(
+            risk["signals"][0]["evidence"]["source_id"],
+            "fixture-source"
+        );
+        let mut invalid = approved.clone();
+        invalid["intelligence_snapshot"] = serde_json::Value::Null;
+        assert!(super::risk::assess("bitcoin", &invalid)["risk_score"].is_null());
+        let live = std::sync::Arc::new(std::sync::RwLock::new(
+            approved["intelligence_snapshot"].clone(),
+        ));
+        let read = live.clone();
+        let chain = serde_json::json!({"network_id":approved["network_id"],"source_snapshot":approved["source_snapshot"]});
+        let network = approved["network_id"].clone();
+        let path = format!(
+            "/api/bitcoin/wallet/{}/intelligence/snapshot",
+            approved["address"].as_str().unwrap()
+        );
+        let router = axum::Router::new().route("/status", axum::routing::get(move || async move { axum::Json(chain) }))
+            .route(&path, axum::routing::get(move || { let snapshot = read.read().unwrap().clone(); let network=network.clone(); async move { axum::Json(serde_json::json!({"network_id":network,"intelligence_snapshot":snapshot})) } }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let http = reqwest::Client::new();
+        let app = super::App {
+            store: super::Store::new(http.clone(), &url, String::new()),
+            http,
+            upstreams: std::collections::HashMap::from([("bitcoin".into(), url)]),
+            key: "fixture".into(),
+            ttl_ms: 1000,
+            requests: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+        };
+        let mut saved = approved.clone();
+        saved["risk_engine"] = risk.clone();
+        super::refresh_source_validity(&app, &mut saved, "bitcoin").await;
+        assert_eq!(saved["source_validity"]["status"], "current");
+        for state in ["source_inactive", "revoked"] {
+            *live.write().unwrap() = proof[state]["intelligence_snapshot"].clone();
+            let mut saved = approved.clone();
+            saved["risk_engine"] = risk.clone();
+            super::refresh_source_validity(&app, &mut saved, "bitcoin").await;
+            assert_eq!(saved["source_validity"]["status"], "stale");
+            assert!(saved["risk_engine"]["risk_score"].is_null());
+            assert_eq!(saved["historical_risk_engine"]["risk_score"], 70.0);
+        }
+        *live.write().unwrap() = serde_json::Value::Null;
+        super::refresh_source_validity(&app, &mut saved, "bitcoin").await;
+        assert_eq!(saved["source_validity"]["status"], "unverified");
+        if let Ok(path) = std::env::var("BITCOIN_INTELLIGENCE_CENTRAL_ACCEPTANCE") {
+            let mut report = proof.clone();
+            for state in ["pending", "approved", "source_inactive", "revoked"] {
+                report[state]["risk_engine"] = super::risk::assess("bitcoin", &proof[state]);
+            }
+            std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+        }
+        server.abort();
+    }
     use super::*;
     #[test]
     fn network_and_investigation_scoping() {
@@ -552,6 +980,53 @@ mod tests {
                 "tron:mainnet",
                 "tron",
                 &json!({"nodes":[],"edges":[{"id":"1","from":"a","to":"b"}]})
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn typed_bitcoin_subjects_remain_typed_in_central_storage() {
+        let wallet = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT";
+        let tx = format!("tx:{}:{}", "a".repeat(64), "b".repeat(64));
+        let script = format!("script:{}", "c".repeat(64));
+        let node = |id: &str, kind: &str, address: Value| json!({"id":id,"subject_id":id,"subject_type":kind,"node_type":kind,"address":address});
+        let edge = |id: &str, from: &str, to: &str, from_type: &str, to_type: &str, kind: &str| {
+            json!({"id":id,"from_subject_id":from,"to_subject_id":to,"from_subject_type":from_type,"to_subject_type":to_type,
+            "from_address":if from_type=="address"{Some(from)}else{None},"to_address":if to_type=="address"{Some(to)}else{None},"transfer_type":kind,"amount":"1","asset_id":"native:BTC","tx_hash":"b".repeat(64),"fund_continuity_claimed":false,"ownership_claimed":false,"amount_allocation_claimed":false})
+        };
+        let mut data = json!({"graph":{"nodes":[node(wallet,"address",json!(wallet)),node(&tx,"transaction",Value::Null),node(&script,"script",Value::Null)],
+            "edges":[edge("in",wallet,&tx,"address","transaction","utxo_input"),edge("out",&tx,&script,"transaction","script","utxo_output")]}});
+        let (nodes, edges) = normalize_graph(
+            "snapshot",
+            "bip122:000000000019d6689c085ae165831e93",
+            "bitcoin",
+            &data,
+        )
+        .unwrap();
+        assert_eq!(nodes.iter().filter(|n| n["address"].is_null()).count(), 2);
+        assert_eq!(edges[0]["amount"], "1");
+        assert!(edges[0]["to_address"].is_null());
+        assert_eq!(edges[1]["to_subject_id"], script);
+        assert_eq!(edges[1]["to_subject_type"], "script");
+        data["graph"]["edges"][0]["fund_continuity_claimed"] = json!(true);
+        assert!(
+            normalize_graph(
+                "snapshot",
+                "bip122:000000000019d6689c085ae165831e93",
+                "bitcoin",
+                &data
+            )
+            .is_err()
+        );
+        data["graph"]["edges"][0]["fund_continuity_claimed"] = json!(false);
+        data["graph"]["edges"][0]["to_subject_id"] = json!(wallet);
+        data["graph"]["edges"][0]["to_subject_type"] = json!("address");
+        assert!(
+            normalize_graph(
+                "snapshot",
+                "bip122:000000000019d6689c085ae165831e93",
+                "bitcoin",
+                &data
             )
             .is_err()
         );

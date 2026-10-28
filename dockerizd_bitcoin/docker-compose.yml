@@ -128,6 +128,15 @@ services:
     volumes: ["bitcoin_writer_lock:/var/lock/bitcoin"]
     extra_hosts: ["host.docker.internal:host-gateway"]
 
+  bitcoin-intelligence:
+    <<: *app
+    profiles: ["tools"]
+    command: ["bitcoin_aml", "intelligence", "--help"]
+    restart: "no"
+    stdin_open: true
+    environment: *database
+    volumes: ["bitcoin_writer_lock:/var/lock/bitcoin"]
+
   bitcoin-rpc-probe:
     <<: *app
     profiles: ["tools"]

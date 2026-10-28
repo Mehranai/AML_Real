@@ -52,7 +52,18 @@ impl Database {
         .await
     }
     pub async fn block_hash(&self, height: u64) -> Result<Option<String>> {
-        let rows: Vec<Value> = self.rows("SELECT block_hash FROM aml_ingested_blocks_canonical WHERE network_id={network:String} AND block_number={height:UInt64}", &[("network",crate::NETWORK_ID.into()),("height", height.to_string())]).await?;
+        let rows = aml_warehouse::core::read(
+            &self.warehouse_connection(),
+            self.database(),
+            aml_warehouse::Network::Bitcoin,
+            aml_warehouse::core::View::Blocks,
+            &aml_warehouse::core::Query {
+                from: Some(height),
+                to: Some(height),
+                limit: 1,
+            },
+        )
+        .await?;
         Ok(rows
             .first()
             .and_then(|v| v["block_hash"].as_str())
@@ -60,13 +71,22 @@ impl Database {
     }
     pub async fn status(&self) -> Result<Value> {
         let s = self.state().await?;
+        let snapshot =
+            aml_warehouse::visibility::Snapshot::from_state(crate::warehouse::to_state(&s))?;
+        let failures = crate::failures::summary(self, &s).await?;
+        aml_warehouse::visibility::unchanged(
+            &self.warehouse_connection(),
+            self.database(),
+            &snapshot,
+        )
+        .await?;
         Ok(
             json!({"api_version":"1.0","network_id":crate::NETWORK_ID,"graph_storage":"main_vm",
             "initialized":s.initialized == 1,"last_synced_block":if s.initialized == 1 {Some(s.tip_height)} else {None},
             "block_hash":s.tip_hash,"start_block":s.start_height,"history_from_genesis":s.initialized == 1 && s.start_height == 0,
             "observed_rpc_height":s.observed_rpc_height,"revision":s.revision.to_string(),"published_at_unix_ms":s.published_at,
             "coverage_scope":"confirmed_ingested_blocks","mempool_included":false,
-            "ingestion_failures":crate::failures::summary(self,&s).await?}),
+            "source_snapshot":snapshot.value(),"ingestion_failures":failures}),
         )
     }
 }

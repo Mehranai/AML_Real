@@ -235,6 +235,15 @@ async fn pipeline_visibility_restart_utxos_paths_and_reorg() -> Result<()> {
     assert_eq!(source_holdings["balance_sats"], "5000000000"); // first reward was spent; second remains.
     assert_eq!(source_holdings["immature_sats"], "5000000000");
     let investigation = api::investigation(&db, &recipient, 40).await?;
+    assert_eq!(investigation["source_snapshot"]["contract"], "canonical_v1");
+    assert_eq!(
+        investigation["source_snapshot"]["source_revision"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()?,
+        initial.revision
+    );
+    assert_eq!(investigation["source_snapshot"]["finality"], "not_asserted");
     assert_eq!(investigation["graph"]["edges"].as_array().unwrap().len(), 2);
     let path = api::find_paths(&db, &source, &recipient, 3, 200).await?;
     assert_eq!(path["paths"][0]["fund_continuity_claimed"], false);
@@ -301,6 +310,10 @@ async fn pipeline_visibility_restart_utxos_paths_and_reorg() -> Result<()> {
     *blocks.write().unwrap() = vec![genesis, replacement.clone()];
     let rollback = ingestion::reconcile(&db, &rpc, &state2, &config, 1).await?;
     assert_eq!(rollback.tip_height, 0);
+    assert_ne!(
+        db.status().await?["source_snapshot"]["snapshot_id"],
+        investigation["source_snapshot"]["snapshot_id"]
+    );
     warehouse::migration_ready(&db).await?; // completion survives subsequent reorgs.
     assert_eq!(
         api::wallet_holdings(&db, &recipient).await?["balance_sats"],

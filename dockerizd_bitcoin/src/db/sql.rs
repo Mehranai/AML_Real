@@ -9,5 +9,25 @@ pub fn column_sql() -> anyhow::Result<String> {
     Ok(super::migrations::COLUMN_SQL.replace("\r\n", "\n"))
 }
 pub fn schema_sql() -> anyhow::Result<String> {
-    Ok(format!("{}{}", baseline_sql()?, column_sql()?))
+    Ok(format!(
+        "{}{}{}{}{}",
+        baseline_sql()?,
+        column_sql()?,
+        core_sql()?,
+        analytics_sql()?,
+        visibility_sql()?
+    ))
+}
+pub fn core_sql() -> anyhow::Result<String> {
+    aml_warehouse::core_schema::statements("bitcoin_aml", super::migrations::CORE_SQL)?;
+    Ok(super::migrations::CORE_SQL.replace("\r\n", "\n"))
+}
+pub fn analytics_sql() -> anyhow::Result<String> {
+    aml_warehouse::analytics_schema::statements("bitcoin_aml", super::migrations::ANALYTICS_SQL)?;
+    Ok(super::migrations::ANALYTICS_SQL.replace("\r\n", "\n"))
+}
+
+pub fn visibility_sql() -> anyhow::Result<String> {
+    aml_warehouse::visibility_schema::statements("bitcoin_aml", super::migrations::VISIBILITY_SQL)?;
+    Ok(super::migrations::VISIBILITY_SQL.replace("\r\n", "\n"))
 }

@@ -180,6 +180,10 @@ def runtime_archive(root, destination, role, values):
     directory = Path(DIRECTORIES[role])
     compose = directory / ("compose.yaml" if role == "main" else "docker-compose.yml")
     paths = [Path("scripts/vm.sh"), compose]
+    if role != "main":
+        paths.extend(Path(name) for name in (
+            "scripts/warehouse_backup.py", "shared/clickhouse/backup_disk.xml",
+            "shared/clickhouse/backup.compose.yml"))
     if role == "tron":
         paths.append(directory / "sql/init_database_tron.sql")
     if role == "main":

@@ -162,7 +162,10 @@ pub async fn reserve(db: &impl Connection, database: &str, block: &Block) -> Res
         db,
         database,
         "aml_ingested_blocks",
-        &[serde_json::to_value(reservation)?],
+        &[crate::core_schema::extend(
+            "aml_ingested_blocks",
+            serde_json::to_value(reservation)?,
+        )?],
     )
     .await
 }
@@ -175,17 +178,7 @@ pub async fn facts(
     rows: &[Value],
 ) -> Result<()> {
     ensure!(
-        [
-            "aml_transactions",
-            "aml_address_relationships",
-            "aml_transaction_features",
-            "aml_semantic_aml_events",
-            "aml_bitcoin_inputs",
-            "aml_bitcoin_outputs",
-            "aml_evm_logs",
-            "aml_tron_contracts"
-        ]
-        .contains(&table),
+        crate::core::FACTS.contains(&table),
         "unsupported block fact table"
     );
     let header = serde_json::to_value(block)?;
@@ -208,13 +201,20 @@ pub async fn facts(
 }
 
 pub async fn complete(db: &impl Connection, database: &str, block: &Block) -> Result<()> {
-    insert(
-        db,
-        database,
-        "aml_ingested_blocks",
-        &[serde_json::to_value(block)?],
-    )
-    .await
+    let network = Network::parse(&block.network_id)?;
+    crate::migration::validate_identity(db, database, network).await?;
+    let mut counts = std::collections::BTreeMap::new();
+    for table in crate::core::FACTS {
+        let count=db.query(&format!("SELECT toString(count()) FROM {database}.{table} FINAL WHERE network_id={} AND block_number={} AND block_hash={} AND commit_id={} AND revision={}",literal(network.id()),block.block_number,literal(&block.block_hash),literal(&block.commit_id),block.revision)).await?;
+        counts.insert(
+            table.into(),
+            count
+                .first()
+                .context("missing complete count")?
+                .parse::<u64>()?,
+        );
+    }
+    crate::core::complete(db, database, block, &counts, "{}").await
 }
 
 pub async fn publish(
@@ -236,12 +236,39 @@ pub async fn publish(
         state(db, database, network).await? == *previous,
         "warehouse checkpoint changed; single writer ownership required"
     );
+    crate::visibility::Snapshot::from_state(previous.clone())?;
+    crate::visibility::Snapshot::from_state(next.clone())?;
+    let rollback = previous.initialized == 1
+        && (next.initialized == 0 || next.last_block_number < previous.last_block_number);
+    if previous.initialized == 1 && next.initialized == 1 {
+        ensure!(
+            next.start_block == previous.start_block,
+            "cannot change an initialized observed range"
+        );
+        if next.last_block_number == previous.last_block_number {
+            ensure!(
+                next.last_block_hash == previous.last_block_hash,
+                "a replacement branch requires rollback first"
+            );
+        }
+        if next.last_block_number > previous.last_block_number {
+            ensure!(
+                previous.last_block_number.checked_add(1) == Some(next.last_block_number),
+                "cannot publish a block gap"
+            );
+        }
+    }
     if next.initialized == 1 {
         ensure!(
             next.last_block_number >= next.start_block,
             "invalid publication range"
         );
-        let rows = db.query(&format!("SELECT toJSONString(map('hash',block_hash,'canonical',toString(canonical),'status',ingestion_status)) FROM {database}.aml_ingested_blocks FINAL WHERE network_id={} AND block_number={} AND revision<={} ORDER BY revision DESC LIMIT 1", literal(network.id()), next.last_block_number, next.revision)).await?;
+        let source = if rollback {
+            "aml_ingested_blocks_canonical"
+        } else {
+            "aml_ingested_blocks FINAL"
+        };
+        let rows = db.query(&format!("SELECT toJSONString(map('hash',block_hash,'canonical',toString(canonical),'status',ingestion_status,'parent_hash',parent_hash,'revision',toString(revision))) FROM {database}.{source} WHERE network_id={} AND block_number={} AND revision<={} ORDER BY revision DESC LIMIT 1", literal(network.id()), next.last_block_number, next.revision)).await?;
         let block: Value =
             serde_json::from_str(rows.first().context("cannot publish a missing block")?)?;
         ensure!(
@@ -250,12 +277,75 @@ pub async fn publish(
                 && block["status"] == "complete",
             "cannot publish an incomplete or conflicting block"
         );
+        if !rollback
+            && (previous.initialized == 0 || next.last_block_number > previous.last_block_number)
+        {
+            ensure!(
+                block["revision"]
+                    .as_str()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    == Some(next.revision),
+                "publication must use the exact complete-marker revision"
+            );
+            ensure!(
+                previous.initialized == 0 || block["parent_hash"] == previous.last_block_hash,
+                "publication parent mismatch"
+            );
+        }
     }
+    if rollback {
+        orphan_suffix(db, database, network, previous, next).await?;
+    }
+    ensure!(
+        state(db, database, network).await? == *previous,
+        "checkpoint changed before publication; exclusive writer required"
+    );
     insert(
         db,
         database,
         "aml_sync_state",
-        &[serde_json::to_value(next)?],
+        &[crate::core_schema::extend(
+            "aml_sync_state",
+            serde_json::to_value(next)?,
+        )?],
     )
     .await
+}
+
+/// Tombstones are above the old fence, so a crash before the new state leaves
+/// the old snapshot visible. They remain in history after a successful rollback.
+async fn orphan_suffix(
+    db: &impl Connection,
+    database: &str,
+    network: Network,
+    previous: &State,
+    next: &State,
+) -> Result<()> {
+    let contract = crate::current_contract()?;
+    let table = contract
+        .tables
+        .iter()
+        .find(|t| t.name == "aml_ingested_blocks")
+        .context("block schema missing")?;
+    let filter = if next.initialized == 1 {
+        format!("block_number>{}", next.last_block_number)
+    } else {
+        "1=1".into()
+    };
+    let rows=db.query(&format!("SELECT toJSONString(tuple({})) FROM {database}.aml_ingested_blocks_canonical WHERE network_id={} AND {filter} ORDER BY block_number LIMIT 10001",crate::core::projection(&table.columns),literal(network.id()))).await?;
+    ensure!(
+        rows.len() <= 10000,
+        "rollback exceeds the common 10000-block bound; operator recovery required"
+    );
+    let mut rows = crate::core::decode_rows("aml_ingested_blocks", network, rows)?;
+    ensure!(
+        !rows.is_empty() || previous.last_block_number == 0,
+        "rollback has no canonical suffix"
+    );
+    for row in &mut rows {
+        row["revision"] = serde_json::json!(next.revision);
+        row["canonical"] = serde_json::json!(0);
+        row["ingestion_status"] = serde_json::json!("orphaned");
+    }
+    insert(db, database, "aml_ingested_blocks", &rows).await
 }

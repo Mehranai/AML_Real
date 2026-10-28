@@ -16,6 +16,15 @@ async fn main() -> Result<std::process::ExitCode> {
         print!("{}", bitcoin_aml::db::schema_sql()?);
         return Ok(std::process::ExitCode::SUCCESS);
     }
+    if mode == "intelligence"
+        && matches!(
+            std::env::args().nth(2).as_deref(),
+            None | Some("--help" | "-h")
+        )
+    {
+        println!("{}", bitcoin_aml::intelligence::cli::USAGE);
+        return Ok(std::process::ExitCode::SUCCESS);
+    }
     let tool_args = if matches!(mode.as_str(), "failures" | "repair" | "scan-gaps") {
         let args = std::env::args().skip(2).collect::<Vec<_>>();
         if args == ["--help"] || args == ["-h"] {
@@ -65,6 +74,14 @@ async fn main() -> Result<std::process::ExitCode> {
     }
     let db = Database::new(DatabaseConfig::from_env()?)?;
     match mode.as_str() {
+        "intelligence" => {
+            let result = bitcoin_aml::intelligence::cli::run(
+                &db,
+                &std::env::args().skip(2).collect::<Vec<_>>(),
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
         "failures" => {
             db.ready().await?;
             println!(
@@ -173,7 +190,7 @@ async fn main() -> Result<std::process::ExitCode> {
             tokio::select! { result = work => result?, _ = shutdown() => {} }
         }
         _ => anyhow::bail!(
-            "usage: bitcoin_aml [schema|warehouse-backfill --max-blocks N|probe [--compact]|failures|scan-gaps|repair|api|ingest|once|--healthcheck] (tools accept --help)"
+            "usage: bitcoin_aml [schema|warehouse-backfill --max-blocks N|intelligence|probe [--compact]|failures|scan-gaps|repair|api|ingest|once|--healthcheck] (tools accept --help)"
         ),
     }
     Ok(std::process::ExitCode::SUCCESS)

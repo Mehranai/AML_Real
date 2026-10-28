@@ -438,7 +438,7 @@ async fn identical_contract_upgrade_guards_and_canonical_visibility() -> Result<
     }
 
     let ledger = "warehouse_test_bsc";
-    db.execute(&format!("INSERT INTO {ledger}.aml_schema_migrations (network_id,migration_id,schema_version,checksum,revision,created_at_unix_ms) VALUES ('{}','{}',2,'tampered',18446744073709551615,1)",Network::Bsc.id(),contract.migration_id)).await?;
+    db.execute(&format!("INSERT INTO {ledger}.aml_schema_migrations (network_id,migration_id,schema_version,checksum,revision,created_at_unix_ms) VALUES ('{}','{}',4,'tampered',18446744073709551615,1)",Network::Bsc.id(),contract.migration_id)).await?;
     assert!(initialize(&db, ledger, Network::Bsc).await.is_err());
     Ok(())
 }

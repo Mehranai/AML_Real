@@ -2,10 +2,21 @@
 
 > وضعیت: پیاده‌سازی پایه است و هنوز از نظر schema و امکانات AML با شبکه‌های دیگر هم‌سطح نیست. برنامه اصلاح شامل یکسان‌سازی ساختار دیتابیس هر چهار شبکه و تکمیل قابلیت‌ها در [TODO به‌روزشده](../TODO_BITCOIN.md) ثبت شده است. یکسان‌بودن نسخه ClickHouse به معنی یکسان‌بودن schema نیست.
 
-اولویت فعلی، تکمیل مراحل DB پیش از ING-04 است. [بازبینی ساختار و مسیرهای واقعی دیتابیس](../docs/warehouse/DB_STRUCTURE_AUDIT_FA.md).
+اولویت عملی فعلی، رساندن دادهٔ بیت‌کوین به تحلیل قابل استفاده است؛ مهاجرت نهایی DB همچنان باز می‌ماند. [بازبینی ساختار و مسیرهای واقعی دیتابیس](../docs/warehouse/DB_STRUCTURE_AUDIT_FA.md).
 DB-01 (فرهنگ داده و نگاشت) و DB-03 (قواعد ستون‌ها و ارتقای نسخهٔ ۲) تکمیل شده‌اند؛
-مرحلهٔ بعد DB-04 است. [قرارداد و ارتقای نسخهٔ ۲](../docs/warehouse/DB03_COLUMN_CONTRACT_FA.md).
+قرارداد دادهٔ پایه در [DB-04](../docs/warehouse/DB04_CORE_CONTRACT_FA.md)، قرارداد تحلیلی/تخصصی نسخهٔ ۴ در [DB-05](../docs/warehouse/DB05_ANALYTICS_CONTRACT_FA.md) و مدل و query مشترک ارتباط‌ها در [DB-06](../docs/warehouse/DB06_RELATIONSHIPS_FA.md) قرار دارند؛ [DB-07: snapshot، visibility و نسخهٔ ۵](../docs/warehouse/DB07_VISIBILITY_FA.md) نیز تکمیل شده؛ مرحلهٔ بعد DB-08 است. [قرارداد و ارتقای نسخهٔ ۲](../docs/warehouse/DB03_COLUMN_CONTRACT_FA.md).
 [خروجی DB-01 و شکاف‌های مانع انتقال داده](../docs/warehouse/DB01_DATA_MAP_FA.md).
+
+زیرگام [DB-08A؛ backup و restore قابل‌تطبیق](../docs/warehouse/DB08A_BACKUP_RESTORE_FA.md)
+با دیسک مستقل هر VM و آزمون بومی چهار شبکه تکمیل شد. schema نسخهٔ ۵ ثابت است؛
+نگاشت/backfill و انتقال مسیرهای فعال همچنان DB-08B تا DB-08D هستند و DB-08 بسته نیست.
+[نتیجهٔ آزمون](../docs/warehouse/DB08A_VALIDATION.md).
+
+**AML-01 تکمیل شد:** source، import برچسب pending و review مستقل از جدول‌های مشترک
+موجود مصرف می‌شوند؛ ادعای فعال به تحقیق، سیاست ریسک مرکزی و پنل می‌رسد. لغو یا
+تغییر منبع، ریسک snapshot قبلی را از مصرف جاری خارج می‌کند. هیچ migration یا
+مدل امتیازدهی تازه‌ای اضافه نشده است. [فرمان‌ها و مرز قابلیت](INTELLIGENCE.md)،
+[گزارش پذیرش](INTELLIGENCE_VALIDATION.md). گام عملی بعد exposure است.
 
 ## ساختار کد و SQL فعال
 
@@ -21,7 +32,7 @@ SQL نصب فعال در `sql/migrations/20261022_0001_shared_warehouse.sql` ش�
 منتقل شده و فقط fixture ارتقا و ممیزی است. جزئیات و فرمان تولید: [راهنمای SQL](sql/README.md).
 نسخهٔ ۲ از `sql/migrations/20261026_0002_column_contract.sql` مصرف می‌شود؛
 قیدهای مقدار را پس از بررسی تاریخچه اضافه و ledger/identity را به‌روزرسانی
-می‌کند. `--print-sql` هر دو فایل را چاپ می‌کند.
+می‌کند. نسخهٔ ۳ از `sql/migrations/20261026_0003_core_evidence.sql`، ۲۸ ستون و view جاری benchmark را اضافه می‌کند. نسخهٔ ۴ از `sql/migrations/20261027_0004_analytics_specialized.sql` نتیجه را به ۳۸ جدول، ۴۰ view و ۶۶۸ ستون جدول می‌رساند. `--print-sql` هر چهار migration را چاپ می‌کند. ایجاد این جدول‌ها به معنی پیاده‌سازی workerها و قابلیت‌های AML بیت‌کوین نیست.
 
 ```bash
 bitcoin_init_schema --print-sql  # No database or RPC configuration required.

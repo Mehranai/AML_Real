@@ -1,0 +1,13 @@
+# Optional overlay; use with ONE network's base Compose file and project.
+# A project-scoped volume gives each network its own independent backup disk.
+services:
+  clickhouse:
+    volumes:
+      - type: bind
+        source: ${AML_CLICKHOUSE_BACKUP_CONFIG:?Set absolute path to shared/clickhouse/backup_disk.xml}
+        target: /etc/clickhouse-server/config.d/aml_backups.xml
+        read_only: true
+      - aml_clickhouse_backups:/var/lib/clickhouse/backups
+
+volumes:
+  aml_clickhouse_backups:

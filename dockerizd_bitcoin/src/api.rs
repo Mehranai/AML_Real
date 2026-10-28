@@ -1,6 +1,6 @@
 use crate::{
     db::Database,
-    model::{self, Input, Output},
+    model,
     warehouse::{self, INPUTS, OUTPUTS},
 };
 use anyhow::{Result, ensure};
@@ -49,6 +49,14 @@ pub fn router(api: Api) -> Router {
             get(investigate),
         )
         .route("/api/bitcoin/wallet/{address}/holdings", get(holdings))
+        .route(
+            "/api/bitcoin/wallet/{address}/intelligence",
+            get(intelligence),
+        )
+        .route(
+            "/api/bitcoin/wallet/{address}/intelligence/snapshot",
+            get(intelligence_snapshot),
+        )
         .route("/api/bitcoin/wallet/{address}/paths/{target}", get(paths))
         .route_layer(middleware::from_fn_with_state(api.clone(), authorize));
     Router::new().merge(protected)
@@ -78,13 +86,19 @@ async fn authorize(
             "Bitcoin query capacity reached",
         );
     };
-    match tokio::time::timeout(Duration::from_secs(120), next.run(request)).await {
+    let mut response = match tokio::time::timeout(Duration::from_secs(120), next.run(request)).await
+    {
         Ok(value) => value,
         Err(_) => failure(
             StatusCode::GATEWAY_TIMEOUT,
             "Bitcoin query exceeded time limit",
         ),
-    }
+    };
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 fn failure(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({"error":message}))).into_response()
@@ -139,119 +153,25 @@ fn default_limit() -> usize {
     40
 }
 
-#[derive(Default)]
-pub struct Graph {
-    nodes: BTreeMap<String, Value>,
-    edges: BTreeMap<String, Value>,
-    pub truncated: bool,
-}
-impl Graph {
-    fn node(&mut self, id: &str, kind: &str) {
-        self.nodes
-            .entry(id.into())
-            .or_insert_with(|| json!({"id":id,"address":id,"label":id,"node_type":kind}));
-    }
-    pub fn value(&self) -> Value {
-        json!({"nodes":self.nodes.values().collect::<Vec<_>>(),"edges":self.edges.values().collect::<Vec<_>>(),
-            "truncated":self.truncated,"model":"address_transaction_utxo","ownership_claimed":false,
-            "amount_allocation_claimed":false})
-    }
-    fn merge(&mut self, other: Graph, max_nodes: usize) {
-        self.truncated |= other.truncated;
-        for (id, node) in other.nodes {
-            if self.nodes.len() < max_nodes || self.nodes.contains_key(&id) {
-                self.nodes.insert(id, node);
-            } else {
-                self.truncated = true;
-            }
-        }
-        for (id, edge) in other.edges {
-            if self
-                .nodes
-                .contains_key(edge["from_address"].as_str().unwrap_or(""))
-                && self
-                    .nodes
-                    .contains_key(edge["to_address"].as_str().unwrap_or(""))
-                && self.edges.len() < 2000
-            {
-                self.edges.insert(id, edge);
-            } else {
-                self.truncated = true;
-            }
-        }
-    }
-}
-pub fn graph_from_rows(root: &str, inputs: &[Input], outputs: &[Output], truncated: bool) -> Graph {
-    let mut graph = Graph {
-        truncated,
-        ..Graph::default()
-    };
-    graph.node(root, "address");
-    for input in inputs {
-        let subject = input.output.subject();
-        let tx = format!("tx:{}:{}", input.block_hash, input.txid);
-        graph.node(
-            &subject,
-            if input.output.address.is_empty() {
-                "script"
-            } else {
-                "address"
-            },
-        );
-        graph.node(&tx, "transaction");
-        let id = format!(
-            "{}:{}:in:{}",
-            input.block_hash, input.txid, input.input_index
-        );
-        graph.edges.insert(id.clone(), json!({"id":id,"from_address":subject,"to_address":tx,
-            "tx_hash":input.txid,"block_number":input.block_height,"block_timestamp_unix_ms":input.block_time * 1000,
-            "amount":input.output.value_sats.to_string(),"asset_id":"native:BTC","decimals":8,
-            "transfer_type":"utxo_input","prev_txid":input.prev_txid,"prev_vout":input.prev_vout,"input_index":input.input_index}));
-    }
-    for output in outputs {
-        let subject = output.output.subject();
-        let tx = format!("tx:{}:{}", output.block_hash, output.txid);
-        graph.node(
-            &subject,
-            if output.output.address.is_empty() {
-                "script"
-            } else {
-                "address"
-            },
-        );
-        graph.node(&tx, "transaction");
-        let id = format!(
-            "{}:{}:out:{}",
-            output.block_hash, output.txid, output.output_index
-        );
-        graph.edges.insert(id.clone(), json!({"id":id,"from_address":tx,"to_address":subject,
-            "tx_hash":output.txid,"block_number":output.block_height,"block_timestamp_unix_ms":output.block_time * 1000,
-            "amount":output.output.value_sats.to_string(),"asset_id":"native:BTC","decimals":8,
-            "transfer_type":"utxo_output","output_index":output.output_index,"coinbase":output.coinbase == 1}));
-    }
-    graph
-}
+pub type Graph = aml_warehouse::relationships::Graph;
 pub async fn wallet_graph(db: &Database, address: &str, limit: usize) -> Result<Graph> {
-    let rows: Vec<Value> = db.rows(&format!("SELECT txid,max(block_height) AS height FROM (SELECT txid,block_height FROM ({OUTPUTS}) WHERE address={{address:String}} UNION ALL SELECT txid,block_height FROM ({INPUTS}) WHERE address={{address:String}}) GROUP BY txid ORDER BY height DESC,txid LIMIT {{limit:UInt32}}"), &[("address",address.into()),("limit",(limit + 1).to_string())]).await?;
-    let mut ids = rows
-        .iter()
-        .take(limit)
-        .filter_map(|v| v["txid"].as_str())
-        .collect::<Vec<_>>();
-    if ids.is_empty() {
-        return Ok(graph_from_rows(address, &[], &[], false));
-    }
-    ids.sort_unstable();
-    // Hashes come from stored validated evidence, not URL text; parameterize the array.
-    let params = [("ids", format!("['{}']", ids.join("','")))];
-    let inputs: Vec<Input> = db.rows(&format!("SELECT * FROM ({INPUTS}) WHERE txid IN {{ids:Array(String)}} ORDER BY block_height DESC,tx_index,input_index LIMIT 9001"), &params).await?;
-    let outputs: Vec<Output> = db.rows(&format!("SELECT * FROM ({OUTPUTS}) WHERE txid IN {{ids:Array(String)}} ORDER BY block_height DESC,tx_index,output_index LIMIT 9001"), &params).await?;
-    Ok(graph_from_rows(
-        address,
-        &inputs[..inputs.len().min(9000)],
-        &outputs[..outputs.len().min(9000)],
-        rows.len() > limit || inputs.len() > 9000 || outputs.len() > 9000,
-    ))
+    use aml_warehouse::{
+        Network,
+        relationships::{self, Query, Subject},
+    };
+    let subject = Subject::address(Network::Bitcoin, address)?;
+    Ok(relationships::read_neighborhood(
+        &db.warehouse_connection(),
+        db.database(),
+        Network::Bitcoin,
+        &subject,
+        Query {
+            max_transactions: limit,
+            max_edges: 2000,
+        },
+    )
+    .await?
+    .graph)
 }
 async fn unchanged(db: &Database, revision: u64) -> Result<()> {
     ensure!(
@@ -259,6 +179,9 @@ async fn unchanged(db: &Database, revision: u64) -> Result<()> {
         "Bitcoin checkpoint changed during query; retry for a coherent snapshot"
     );
     Ok(())
+}
+fn source_snapshot(state: &crate::db::SyncState) -> Result<Value> {
+    Ok(aml_warehouse::visibility::Snapshot::from_state(crate::warehouse::to_state(state))?.value())
 }
 pub async fn wallet_holdings(db: &Database, address: &str) -> Result<Value> {
     let state = db.state().await?;
@@ -270,7 +193,7 @@ pub async fn wallet_holdings(db: &Database, address: &str) -> Result<Value> {
         json!({"network_id":crate::NETWORK_ID,"address":address,"asset_id":"native:BTC","symbol":"BTC","decimals":8,
         "balance_sats":sats.to_string(),"balance_decimal":model::decimal(sats),"immature_sats":immature.to_string(),
         "mature_sats":sats.saturating_sub(immature).to_string(),"utxo_count":rows[0]["utxo_count"],
-        "as_of_block":if state.initialized==1 {Some(state.tip_height)} else {None},
+        "source_snapshot":source_snapshot(&state)?,"as_of_block":if state.initialized==1 {Some(state.tip_height)} else {None},
         "history_complete":state.initialized==1 && state.start_height==0,"scope":"ingested_confirmed_utxos",
         "mempool_included":false,"persisted":true,"revision":state.revision.to_string()}),
     )
@@ -283,20 +206,46 @@ async fn holdings(
 }
 pub async fn investigation(db: &Database, address: &str, limit: usize) -> Result<Value> {
     let state = db.state().await?;
+    let attribution = crate::intelligence::read(db, address).await?;
     let coverage = db.status().await?;
     let graph = wallet_graph(db, address, limit).await?;
     let stats: Vec<Value> = db.rows(&format!("SELECT count() AS transfer_count,uniqExact(tuple(txid,block_hash)) AS transaction_count FROM (SELECT txid,block_hash FROM ({OUTPUTS}) WHERE address={{address:String}} UNION ALL SELECT txid,block_hash FROM ({INPUTS}) WHERE address={{address:String}})"), &[("address",address.into())]).await?;
     let holdings = wallet_holdings(db, address).await?;
     unchanged(db, state.revision).await?;
+    ensure!(
+        crate::intelligence::read(db, address).await?.snapshot == attribution.snapshot,
+        "Bitcoin intelligence changed during investigation; retry"
+    );
     Ok(
         json!({"api_version":"1.0","network_id":crate::NETWORK_ID,"address":address,
-        "graph":graph.value(),"fingerprint":stats[0],"holdings":holdings,"data_coverage":coverage,
-        "entities":[],"semantic_events":[],"exposure_paths":[],
+        "source_snapshot":source_snapshot(&state)?,"graph":graph.value(),"fingerprint":stats[0],"holdings":holdings,"data_coverage":coverage,
+        "entities":attribution.entities,"intelligence_snapshot":attribution.snapshot,
+        "intelligence":{"claims":attribution.claims,"sources":attribution.sources,"automatic_approval":false},
+        "semantic_events":[],"exposure_paths":[],
         "data_quality":{"unresolved_inputs":0,"mempool_included":false,"ownership_claimed":false,
             "limitations":["Transaction connectivity does not allocate an input to a particular output.",
             "Common input and change heuristics are not ownership evidence; CoinJoin is not labeled as laundering.",
             "Holdings cover the ingested confirmed block window; check history_complete and as_of_block."]}}),
     )
+}
+async fn intelligence(
+    State(api): State<Api>,
+    Path(raw): Path<String>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    let address = address(&raw)?;
+    let value = crate::intelligence::read(&api.db, &address).await?;
+    Ok(Json(
+        json!({"network_id":crate::NETWORK_ID,"address":address,"intelligence_snapshot":value.snapshot,"entities":value.entities,"claims":value.claims,"sources":value.sources}),
+    ))
+}
+async fn intelligence_snapshot(
+    State(api): State<Api>,
+    Path(raw): Path<String>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    let value = crate::intelligence::read(&api.db, &address(&raw)?).await?;
+    Ok(Json(
+        json!({"network_id":crate::NETWORK_ID,"intelligence_snapshot":value.snapshot}),
+    ))
 }
 async fn investigate(
     State(api): State<Api>,
@@ -335,13 +284,19 @@ pub async fn find_paths(
     cap: usize,
 ) -> Result<Value> {
     let state = db.state().await?;
-    let mut graph = Graph::default();
-    graph.node(source, "address");
-    graph.node(target, "address");
-    let mut queue = VecDeque::from([(source.to_owned(), 0)]);
+    let mut graph = Graph::new(aml_warehouse::Network::Bitcoin);
+    graph.node(aml_warehouse::relationships::Subject::address(
+        aml_warehouse::Network::Bitcoin,
+        source,
+    )?)?;
+    graph.node(aml_warehouse::relationships::Subject::address(
+        aml_warehouse::Network::Bitcoin,
+        target,
+    )?)?;
+    let mut queue = VecDeque::from([(source.to_owned(), 0, None::<(u64, u64)>)]);
     let mut seen = HashSet::from([source.to_owned()]);
     let mut parent = HashMap::<String, (String, Vec<String>, String)>::new();
-    'search: while let Some((current, depth)) = queue.pop_front() {
+    'search: while let Some((current, depth, after)) = queue.pop_front() {
         if depth >= hops {
             continue;
         }
@@ -349,17 +304,25 @@ pub async fn find_paths(
         let ins: BTreeMap<_, _> = local
             .edges
             .values()
-            .filter(|e| e["from_address"] == current && e["transfer_type"] == "utxo_input")
-            .map(|e| (e["to_address"].as_str().unwrap().to_owned(), e.clone()))
+            .filter(|e| e["from_subject_id"] == current && e["transfer_type"] == "utxo_input")
+            .filter(|e| {
+                after.is_none_or(|p| {
+                    (
+                        e["block_number"].as_u64().unwrap_or(0),
+                        e["transaction_index"].as_u64().unwrap_or(0),
+                    ) > p
+                })
+            })
+            .map(|e| (e["to_subject_id"].as_str().unwrap().to_owned(), e.clone()))
             .collect();
         for input in ins.values() {
-            let tx = input["to_address"].as_str().unwrap();
+            let tx = input["to_subject_id"].as_str().unwrap();
             for output in local
                 .edges
                 .values()
-                .filter(|e| e["from_address"] == tx && e["transfer_type"] == "utxo_output")
+                .filter(|e| e["from_subject_id"] == tx && e["transfer_type"] == "utxo_output")
             {
-                let next = output["to_address"].as_str().unwrap();
+                let next = output["to_subject_id"].as_str().unwrap();
                 if next.starts_with("script:") || seen.contains(next) {
                     continue;
                 }
@@ -379,10 +342,17 @@ pub async fn find_paths(
                         tx.into(),
                     ),
                 );
-                queue.push_back((next.into(), depth + 1));
+                queue.push_back((
+                    next.into(),
+                    depth + 1,
+                    Some((
+                        input["block_number"].as_u64().unwrap(),
+                        input["transaction_index"].as_u64().unwrap(),
+                    )),
+                ));
             }
         }
-        graph.merge(local, 2000);
+        graph.merge(local, 2000)?;
         if seen.contains(target) {
             break 'search;
         }
@@ -415,7 +385,7 @@ pub async fn find_paths(
     unchanged(db, state.revision).await?;
     Ok(
         json!({"api_version":"1.0","network_id":crate::NETWORK_ID,"source":source,"target":target,
-        "graph":graph.value(),"paths":paths,"max_hops":hops,"searched_addresses":seen.len(),
+        "source_snapshot":source_snapshot(&state)?,"graph":graph.value(),"paths":paths,"max_hops":hops,"searched_addresses":seen.len(),
         "search_complete":false,"path_limit":1,"revision":state.revision.to_string(),
         "limitations":["Bounded transaction connectivity search; absence of a result does not prove no path.",
         "Address reuse and multiple inputs prevent attribution of particular funds along this path."]}),
@@ -452,7 +422,7 @@ async fn paths(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::DatabaseConfig, model::ScriptOutput};
+    use crate::config::DatabaseConfig;
     use axum::{body::Body, http::Request};
     use tower::ServiceExt;
     #[tokio::test]
@@ -490,42 +460,31 @@ mod tests {
         }
     }
     #[test]
-    fn multi_input_graph_does_not_invent_pairwise_transfers() {
-        let output = ScriptOutput {
-            address: "source".into(),
-            script_hex: "00".into(),
-            script_type: "x".into(),
-            value_sats: 123,
+    fn typed_transaction_nodes_are_not_addresses() {
+        use aml_warehouse::{
+            Network,
+            relationships::{Graph, Kind, Subject},
         };
-        let input = Input {
-            commit_id: "c".into(),
-            block_height: 1,
-            block_hash: "b".into(),
-            block_time: 1,
-            txid: "t".into(),
-            tx_index: 1,
-            input_index: 0,
-            prev_txid: "p".into(),
-            prev_vout: 0,
-            output: output.clone(),
-        };
-        let target = Output {
-            commit_id: "c".into(),
-            block_height: 1,
-            block_hash: "b".into(),
-            block_time: 1,
-            txid: "t".into(),
-            tx_index: 1,
-            output_index: 0,
-            coinbase: 0,
-            output: ScriptOutput {
-                address: "target".into(),
-                ..output
-            },
-        };
-        let graph = graph_from_rows("source", &[input], &[target], false).value();
-        assert_eq!(graph["nodes"].as_array().unwrap().len(), 3);
-        assert_eq!(graph["edges"][0]["to_address"], "tx:b:t");
-        assert_eq!(graph["amount_allocation_claimed"], false);
+        let mut graph = Graph::new(Network::Bitcoin);
+        let tx = format!("tx:{}:{}", "a".repeat(64), "b".repeat(64));
+        graph
+            .node(Subject::address(Network::Bitcoin, "1BoatSLRHtKNngkdXEeobR76b53LETtpyT").unwrap())
+            .unwrap();
+        graph
+            .node(Subject::new(Network::Bitcoin, Kind::Transaction, &tx).unwrap())
+            .unwrap();
+        let value = graph.value();
+        assert_eq!(value["nodes"].as_array().unwrap().len(), 2);
+        assert!(value["edges"].as_array().unwrap().is_empty());
+        assert!(
+            value["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["node_type"] == "transaction")
+                .unwrap()["address"]
+                .is_null()
+        );
+        assert_eq!(value["amount_allocation_claimed"], false);
     }
 }

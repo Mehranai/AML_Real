@@ -77,7 +77,18 @@ pub async fn write_block(
     // Verify every persisted column, including UInt256 decimal strings, before
     // writing the complete marker or moving the visibility fence.
     verify_rows(db, &block, &tables).await?;
-    publication::complete(&connection, db.database(), &block).await?;
+    let counts = tables
+        .iter()
+        .map(|(table, rows)| (table.to_string(), rows.len() as u64))
+        .collect();
+    aml_warehouse::core::complete(
+        &connection,
+        db.database(),
+        &block,
+        &counts,
+        &serde_json::to_string(source)?,
+    )
+    .await?;
     if let Some(expected) = legacy_fence {
         ensure!(
             db.legacy_state().await? == *expected,

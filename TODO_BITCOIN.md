@@ -17,10 +17,10 @@
 |---|---|---|
 | schema پایه | جدول‌های `ingested_blocks`، `transactions`، `address_relationships`، `transaction_features`، `semantic_aml_events`، `sync_state` و viewهای مرتبط وجود دارند؛ مسیرهای قدیمی هنوز متفاوت‌اند | قرارداد مشترک نصب شده و دادهٔ پایهٔ بیت‌کوین از شش جدول `aml_*` مصرف می‌شود؛ انتقال سه شبکهٔ دیگر و جدول‌های تحلیلی باز است |
 | شناسه و زمان | Ethereum/BSC از `network_id` و `block_timestamp_unix_ms` استفاده می‌کنند؛ در بخش‌هایی از TRON نام‌هایی مانند `chain` و `timestamp` وجود دارد | دادهٔ پایهٔ بیت‌کوین اکنون network/height/hash/commit/revision مشترک و زمان میلی‌ثانیه دارد؛ یکسان‌سازی مصرف کل چهار شبکه باز است |
-| migration | Ethereum/BSC migrationهای مرحله‌ای دارند؛ TRON baseline و سازوکار schema زمان اجرا دارد | init/check مشترک نسخه‌دار و backfill مستقل دادهٔ پایهٔ بیت‌کوین اضافه شده‌اند؛ ارتقای تمام تاریخچهٔ تحلیلی و restore هنوز باز است |
-| intelligence | source، برچسب، review و entity در شبکه‌های فعلی وجود دارد؛ نام‌گذاری یکسان نیست، از جمله `address_entity`، `address_entities` و `intelligence_claims` | storage، import و چرخه review وجود ندارد؛ `entities` همیشه خالی است |
+| migration | Ethereum/BSC migrationهای مرحله‌ای دارند؛ TRON baseline و سازوکار schema زمان اجرا دارد | init/check مشترک نسخه‌دار و backfill مستقل دادهٔ پایهٔ بیت‌کوین اضافه شده‌اند؛ backup/restore آزمایشی DB-08A پاس شده، اما انتقال کل تاریخچهٔ تحلیلی و مسیرهای فعال باز است |
+| intelligence | source، برچسب، review و entity در شبکه‌های فعلی وجود دارد؛ نام‌گذاری یکسان نیست، از جمله `address_entity`، `address_entities` و `intelligence_claims` | ثبت source، import فقط pending، review جداگانه، تاریخچهٔ شواهد تصمیم و entities فعال به API و پنل بیت‌کوین وصل شدند؛ دادهٔ واقعی هنوز وارد نشده است |
 | clustering و exposure | در TRON/Ethereum worker و در BSC تحلیل هنگام تحقیق و ابزار intelligence وجود دارد | کشف کاندیدا، عضویت نسخه‌دار، seed، propagation و نتیجه exposure وجود ندارد |
-| ریسک | Analytical Node از شواهد برچسب و exposure استفاده می‌کند؛ Ethereum جدول‌های policy، signal و assessment نیز دارد | adapter شواهد ریسک تولید نمی‌کند؛ با زیادشدن تراکنش‌ها هم خروجی فعلی `UNKNOWN` می‌ماند |
+| ریسک | Analytical Node از شواهد برچسب و exposure استفاده می‌کند؛ Ethereum جدول‌های policy، signal و assessment نیز دارد | برچسب معتبرِ دارای ریسک صریح اکنون به سیاست مرکزی می‌رسد و سیگنال می‌سازد؛ exposure و ثبت خانوادهٔ assessment مشترک هنوز بازند؛ نبود شاهد همچنان UNKNOWN است |
 | تحقیق آدرس | fingerprint، activity، asset flows، counterparties، semantic events، entities، clusters، exposure و coverage ارائه می‌شود؛ قالب پاسخ‌ها نیازمند هماهنگی است | fingerprint فقط دو شمارنده دارد؛ بیشتر پنل‌ها و داده‌های تحلیلی غایب‌اند |
 | عملیات | ابزارهای probe، replay، repair، failure tracking، benchmark و worker در سطح‌های مختلف وجود دارند | backfill، probe، failure/dead-letter پایدار، اسکن gap و repair انتخابی اضافه شده‌اند؛ بازپخش مستقل تاریخچه و benchmark هنوز باز هستند |
 | پنل و آزمون | پنل‌ها و آزمون‌های هر شبکه موجودند، ولی به معنی برابری کامل بین شبکه‌ها نیستند | پنل ساده و تست پایه اضافه شده؛ آزمون برابری schema، امکانات AML و پذیرش روی داده واقعی انجام نشده است |
@@ -39,12 +39,14 @@
 
 ## تمرکز ادامهٔ کار
 
-**اصلاح ترتیب کار پس از بازبینی ساختار:** عبور به ING-04 زود بود. تا تعیین و اجرای مسیر DB، قابلیت ingestion جدید اضافه نمی‌شود. پوشه‌بندی بیت‌کوین و SQL نصب فعال اصلاح شده‌اند؛ DB-01 با ممیزی همهٔ خانواده‌ها و DB-03 با قرارداد مقدار نسخهٔ ۲ تکمیل شده‌اند. یکسان‌سازی نهایی جدول‌ها و مسیرهای فعال در DB-04 تا DB-09 باقی است.
+**اصلاح ترتیب کار پس از بازبینی ساختار:** عبور به ING-04 زود بود. تا تعیین و اجرای مسیر DB، قابلیت ingestion جدید اضافه نمی‌شود. پوشه‌بندی بیت‌کوین و SQL نصب فعال اصلاح شده‌اند؛ DB-01 تا DB-07 در محدودهٔ قرارداد مقصد، روابط و visibility تکمیل شده‌اند. انتقال مسیرهای فعال و عملیات در DB-08 و DB-09 باقی است.
 
 - [x] **DB-STRUCT:** بیت‌کوین به `db/{mod,client,migrations,queries,sql}`، `storage`، `domain`، `bitcoin` و binary مستقل schema تفکیک شد؛ SQL نصب فعال در `sql/migrations` از قرارداد مشترک تولید و پیش از DDL کنترل می‌شود. SQL قدیمی در `sql/legacy` حفظ شد. [گزارش آزمون](docs/warehouse/DB_STRUCTURE_VALIDATION.md).
 - [x] **DB-AUDIT پایه:** مسیر فعال init/write/read دادهٔ پایهٔ چهار شبکه و تفاوت ساختار کامل با baseline بررسی و مستند شد؛ برابری baseline چهار database موقت دوباره آزمون شد. [ممیزی](docs/warehouse/DB_STRUCTURE_AUDIT_FA.md). ممیزی تمام خانواده‌ها، ستون‌ها و مسیرهای worker در DB-01 زیر تکمیل شد؛ اجرای زندهٔ workerها و پذیرش داده همچنان باز است.
 
-**قدم بعدی قطعی: DB-04**؛ DB-01 با فرهنگ داده و نگاشت تکمیل شد و DB-03 در ۲۰۲۶-۱۰-۲۶ با ۲۱۷ قاعدهٔ مقدار، اعتبارسنجی Rust، CHECKهای مشترک و ارتقای قابل‌ادامهٔ نسخهٔ ۱ به ۲ تکمیل شد. [قرارداد ستون‌ها](docs/warehouse/DB03_COLUMN_CONTRACT_FA.md)، [نتیجهٔ آزمون‌ها](docs/warehouse/DB03_VALIDATION.md). اکنون جدول‌ها/viewهای دادهٔ پایه و مسیرهای مصرف چهار شبکه، سپس DB-05 تا DB-09 و پذیرش P0 تکمیل می‌شوند. ING-04 تا این مرحله جلو نمی‌رود.
+**اولویت عملی پس از بازنگری دامنه:** زنجیرهٔ منبع → برچسب pending → review → تحقیق → سیاست ریسک مرکزی → پنل در AML-01 تکمیل شد. توسعهٔ schema بدون نیاز مشخص ادامه پیدا نمی‌کند. **گام عملی بعد، AML-03: exposure مبتنی بر seed تأییدشده و شواهد UTXO است**؛ clustering، workerها و پذیرش نهایی بازند. [راهنمای برچسب و review](dockerizd_bitcoin/INTELLIGENCE.md)، [نتایج](dockerizd_bitcoin/INTELLIGENCE_VALIDATION.md).
+
+DB-08B (نگاشت)، DB-08C (backfill و مسیرهای فعال)، DB-08D (تطبیق تحلیل) و DB-09 همچنان بازند و برای یکسان‌سازی نهایی چهار شبکه باید تکمیل شوند؛ پایان AML-01 به معنی پایان مهاجرت نیست. DB-08A، پشتیبان بومی و restore آزمایشی چهار شبکه، تکمیل شده است. schema نسخهٔ ۵ ثابت و دیتابیس هر VM مستقل است. [شرح DB-08A](docs/warehouse/DB08A_BACKUP_RESTORE_FA.md).
 
 بازبینی معماری در ۲۰۲۶-۱۰-۲۲ انجام شد: جداسازی ClickHouse هر VM تأیید شد؛ تغییرات آزمایشی انتقال اتریوم در کد فعال وجود ندارند و کارهای قبلی بیت‌کوین حفظ شده‌اند. [گزارش بررسی و آزمون‌های مجدد](docs/warehouse/ARCHITECTURE_AUDIT_FA.md).
 
@@ -73,19 +75,50 @@
 - [x] افزودن `warehouse-backfill --max-blocks N` با ادامه از checkpoint، رد gap/تاریخچه ناقص، تطبیق تمام ستون‌های چهار جدول fact و مقادیر دقیق پیش از انتشار؛ جدول‌های قدیمی برای ممیزی حفظ می‌شوند.
 - [x] جلوگیری از آماده‌شدن API و ingest تا تکمیل انتقال تاریخچهٔ قبلی؛ رسید انتقال پس از reorg معتبر می‌ماند و retry بلاک نیمه‌تمام revision تازه می‌گیرد.
 - [x] ثبت نتیجهٔ اجرای نهایی آزمون‌های گام دوم در [گزارش اعتبارسنجی](docs/warehouse/VALIDATION.md): ۱۱ آزمون بیت‌کوین، ۷ آزمون بستهٔ مشترک، ۲ آزمون درایور، ۴۴ آزمون Python و Clippy سخت‌گیرانه پاس شدند؛ آزمون روی دیتابیس مستقر و restore جزو این گام نیست.
-- [ ] ادامهٔ همین انتقال برای writer/readerهای TRON، Ethereum و BSC و سپس جدول‌ها و workerهای تحلیلی؛ DB-03 تا DB-09 هنوز در مقیاس چهار شبکه بسته نشده‌اند.
+- [ ] ادامهٔ همین انتقال برای writer/readerهای TRON، Ethereum و BSC و سپس جدول‌ها و workerهای تحلیلی؛ قرارداد مقصد DB-03 تا DB-05 و مدل/query مشترک روابط DB-06 تکمیل شده، اما DB-08/DB-09 و یکسان‌شدن کل مسیر فعال بازند.
 
 - [x] **DB-01: فرهنگ داده و ماتریس نگاشت.** تمام table/viewها و ستون‌های DDL فعلی هر چهار شبکه و ledgerهای کد، writer/reader و call chain، واحد، کلید، revision، index/TTL، وابستگی view و وضعیت مصرف source مستند شدند. مقصد پیشنهادی، ورودی لازم مقصد و داده‌های فاقد نگاشت بدون اتلاف صریح‌اند؛ gap با حذف داده بسته نمی‌شود. [فرهنگ داده و تصمیم‌ها](docs/warehouse/DB01_DATA_MAP_FA.md)، [JSON قابل کنترل](docs/warehouse/data-dictionary.json). این مرحله ممیزی و طراحی نگاشت است؛ تغییر runtime/backfill و پذیرش زنده در DB-03 تا DB-09 باقی است.
 - [x] **DB-02: یک منبع DDL و migration مشترک.** بسته مشترک schema برای هر چهار شبکه تهیه و از init/schema job همه آن‌ها مصرف شود. ثبت نسخه و checksum، تشخیص schema ناقص یا تغییرکرده و فرمان check یکسان پیاده شود. migrationهای اجراشده قبلی بازنویسی نشوند. **انجام‌شده برای baseline مشترک نسخه ۱ در namespace `aml_*`؛ backfill و تغییر reader/writer در DB-08 همچنان باز است.**
 - [x] **DB-03: استاندارد ستون‌ها و انواع در قرارداد مشترک.** نوع و بازهٔ همهٔ ستون‌های درج، قالب network/hash، زمان میلی‌ثانیه و تبدیل صریح بدون overflow، revision مثبت، مقدار UInt256 به‌صورت رشتهٔ دقیق، BTC/ساتوشی با decimals=8، شناسهٔ دارایی/توکن NFT، confidence/score، review و nullable استاندارد و کنترل شدند. نسخهٔ ۲ همان ۲۹ جدول و ۲۰ view را با ۲۱۷ قاعده و یک CHECK در هر جدول مصرف می‌کند؛ نسخهٔ ۱ دست‌نخورده و ارتقای نیمه‌تمام قابل ادامه است. [شرح و مرز انجام‌شده](docs/warehouse/DB03_COLUMN_CONTRACT_FA.md). تغییر writer/readerهای legacy و یکسان‌شدن کل دیتابیس فعال همچنان DB-04 تا DB-08 است.
-- [ ] **DB-04: جدول‌ها و viewهای داده پایه.** ساختار مصوب `ingested_blocks`، `transactions`، `address_relationships`، `transaction_features`، `semantic_aml_events`، `sync_state`، `ingestion_failures`، `ingestion_benchmarks` و viewهای canonical/current در هر چهار database یکسان شود؛ صرفاً تغییر نام `bitcoin_transactions` کافی نیست.
-- [ ] **DB-05: جدول‌های تحلیلی و تخصصی.** قرارداد واحد برای asset/token metadata، jobها، intelligence source/claim/review، entity/exchange، cluster claim/membership/run، exposure seed/run/path و risk policy/rule/signal/assessment تعریف و در هر چهار شبکه ایجاد شود. اختلاف نام‌ها و مدل‌های فعلی با migration و readerهای سازگار رفع شود. جدول‌های input/output/outpoint/script بیت‌کوین و raw/log شبکه‌های دیگر هم در بسته DDL مشترک قرار بگیرند.
-- [ ] **DB-06: رابطه‌های سازگار با UTXO.** گره آدرس، تراکنش و script با نوع مشخص در مدل مشترک قابل نمایش باشند. leg ورودی و خروجی بیت‌کوین به شواهد outpoint قابل برگشت باشد؛ آدرس فرستنده ساختگی یا حاصل‌ضرب همه ورودی‌ها در خروجی‌ها به‌عنوان انتقال قطعی ذخیره نشود. queryهای مشترک address relationships و گراف باید این معنا را رعایت کنند.
-- [ ] **DB-07: یک قرارداد canonical و visibility.** قواعد commit، hash/revision، finality/confirmation، پوشش داده، orphan و checkpoint در همه adapterها با قرارداد مشترک سازگار شوند. هیچ تحلیل، aggregate، cache یا API از fact خام منتشرنشده استفاده نکند؛ reorg باید خروجی‌های وابسته را هم stale یا نامعتبر کند.
+- [x] **DB-04: قرارداد جدول‌ها و viewهای داده پایه.** هشت خانوادهٔ `ingested_blocks`، `transactions`، `address_relationships`، `transaction_features`، `semantic_aml_events`، `sync_state`، `ingestion_failures` و `ingestion_benchmarks` در schema مشترک نسخهٔ ۳ تکمیل شدند؛ ۲۸ ستون حفظ شواهد/trace/ترتیب رویداد/چرخهٔ خطا/benchmark، viewهای canonical/current و reader مشترک محدود برای هر چهار شبکه اضافه شدند. writer بیت‌کوین شمارش factهای commit و شواهد leg و خطا را ثبت می‌کند. ارتقای نسخهٔ ۱ و ۲، حفظ مقادیر قبلی، ادامهٔ قطع وسط ستون/constraint/view و رد drift روی ClickHouse موقت آزمون شدند. **این تیک مربوط به قرارداد مقصد و دسترسی مشترک است؛ تغییر نهایی writer/readerهای legacy سه شبکه و انتقال تاریخچه همچنان DB-08 است و P0 بسته نیست.** [شرح محدوده](docs/warehouse/DB04_CORE_CONTRACT_FA.md)، [نتیجهٔ تست‌ها](docs/warehouse/DB04_VALIDATION.md).
+- [x] **DB-05: قرارداد جدول‌های تحلیلی و تخصصی.** نسخهٔ ۴ با ۹ جدول جدید، ۱۱۰ ستون تکمیلی و ۱۹ view جدید، خانواده‌های metadata/job/discovery، source/claim/review، entity/exchange، protocol registry، cluster، exposure و risk را تکمیل کرد. input/output/outpoint موجود با script، trace و raw envelope در یک بستهٔ schema قرار دارند. reader مشترک، انتخاب آخرین revision پیش از فیلتر تأیید، حفظ JSON اصلی و migration افزایشی روی چهار دیتابیس موقت آزمون شدند. **محدودهٔ انجام‌شده، قرارداد مقصد و دسترسی مشترک است؛ worker/APIهای AML و تغییر نهایی writer/readerهای legacy یا انتقال تاریخچه تکمیل نشده‌اند.** [شرح](docs/warehouse/DB05_ANALYTICS_CONTRACT_FA.md)، [پذیرش و تست](docs/warehouse/DB05_VALIDATION.md).
+- [x] **DB-06: رابطه‌های سازگار با UTXO.** مدل `typed_relationships_v1`، گره‌های address/transaction/script با آدرس nullable و کلید محدود به شبکه و query مشترک canonical اضافه شدند. هر leg بیت‌کوین با fact ورودی/خروجی و outpoint/index/مبلغ/subject تطبیق می‌یابد؛ شاهد مفقود یا ناسازگار و snapshot متغیر خطا می‌دهند. writer و گراف/API بیت‌کوین، پنل و تبدیل payload مرکزی این مدل را حفظ می‌کنند؛ حاصل‌ضرب ورودی/خروجی یا ادعای مالکیت/continuity ساخته نمی‌شود. **schema نسخهٔ ۴ ثابت است؛ انتقال legacy سه شبکه در DB-08 و اجرای زندهٔ Neo4j/VMها در پذیرش نهایی باز است.** [شرح](docs/warehouse/DB06_RELATIONSHIPS_FA.md)، [تست و پذیرش](docs/warehouse/DB06_VALIDATION.md).
+- [x] **DB-07: یک قرارداد canonical و visibility.** نسخهٔ ۵ با seal خروجی‌های cluster/exposure/risk و aggregate، provenance nullable برای metadata/cluster versions، viewهای canonical/visible و کنترل snapshot مشترک پیاده شد. انتشار ترتیب/parent/revision و کامل‌بودن خانوادهٔ تراکنش را کنترل می‌کند؛ rollback نشانگر orphan افزایشی دارد و تغییر source fence خروجی وابسته را از مصرف جاری خارج می‌کند. API بیت‌کوین snapshot و no-store دارد؛ create/reopen/Export مرکزی، source قدیمی یا تأییدنشده را با UNKNOWN و هشدار تاریخی نشان می‌دهد. **این تیک قرارداد مقصد و اتصال فعال بیت‌کوین است؛ reader/writer و worker/cacheهای legacy سه شبکه در DB-08، و اتصال چرخهٔ intelligence به detectorها در مراحل AML باقی است.** [شرح و محدودیت‌ها](docs/warehouse/DB07_VISIBILITY_FA.md)، [گزارش آزمون](docs/warehouse/DB07_VALIDATION.md).
 - [ ] **DB-08: مهاجرت بدون از‌دست‌رفتن داده.** تبدیل داده schema فعلی هر چهار شبکه، backfill جدول‌های تحلیلی و تغییر reader/writerها مرحله‌ای باشد. شمارش، جمع مبالغ، checkpoint، hash/revision و نتایج تحقیق قبل و بعد مقایسه شوند؛ بازیابی از backup آزمون شود. حذف volume یا پاک‌کردن تاریخچه راه‌حل migration نباشد.
 - [ ] **DB-09: تنظیمات و نگهداری مشترک.** نسخه و image پین‌شده ClickHouse، سیاست اتصال و timeout، batch insert، partition، index، TTL و کنترل دسترسی یکسان و قابل پیکربندی شوند. مسیر اتصال به ClickHouse محلی یا موجود برای همه شبکه‌ها قرارداد واحد داشته باشد و جداسازی شبکه با کلید و validation حفظ شود.
 
 **معیار بستن P0:** پس از init و پس از upgrade، فهرست table/viewها، `DESCRIBE`، نوع ستون‌ها، engine، partition و index هر چهار database با schema مصوب تطبیق داشته باشد. queryهای مشترک با تغییر فقط database و مقدار `network_id` روی هر چهار شبکه اجرا شوند و fixture شبکه دیگر را برنگردانند.
+
+جزئیات گام تکمیل‌شدهٔ DB-05:
+
+- [x] تطبیق شکاف‌های DB-01 و تعریف قرارداد دادهٔ تحلیلی و تخصصی بدون حذف ستون مبدأ.
+- [x] migration افزایشی نسخهٔ ۴، SQL قابل بررسی بیت‌کوین و reader مشترک با جداسازی شبکه.
+- [x] پذیرش روی چهار دیتابیس ClickHouse آزمایشی، ارتقای دادهٔ fixture، ادامه پس از قطع، review/revocation و هر دو درایور.
+- [x] ثبت گزارش نهایی، checksum و نتیجهٔ تست‌ها و تعیین DB-06 به‌عنوان مرحلهٔ بعد.
+
+جزئیات DB-08؛ ترتیب اجرای وابسته:
+
+- [x] **DB-08A:** ابزار backup بومی مستقل هر VM، manifest شامل schema و fingerprint همهٔ ستون‌ها/ردیف‌های فیزیکی، restore فقط در database جدید و ادامه با UUID ثبت‌شده پیاده شد؛ مبلغ صحیح بالاتر از UInt256، NULL، باینری/بیت float، ترتیب آرایه، زمان، نسخه‌ها، checkpoint/ledger و عدم دوباره‌شماری MV روی دو ClickHouse موقت و هر چهار شبکه آزمون شدند. config اختیاری و ابزار در بستهٔ VMهای شبکه قرار دارند. **این تیک مربوط به ابزار و اثبات fixture است؛ backup دادهٔ واقعی یا cutover انجام نشده است.** [گزارش](docs/warehouse/DB08A_VALIDATION.md).
+- [ ] **DB-08B:** codec و نگاشت بدون اتلاف هر خانواده و گزارش صریح دادهٔ فاقد hash/ترتیب/provenance؛ انتقال آزمایشی و مقایسهٔ شمارش، جمع مبلغ، checkpoint و تحقیق.
+- [ ] **DB-08C:** backfill قابل ادامه و اتصال writer/readerهای فعال TRON، Ethereum و BSC با حفظ barrier و rollback؛ دیتابیس خالی جای تاریخچهٔ قبلی ننشیند.
+- [ ] **DB-08D:** انتقال خانواده‌های تحلیلی و سازگاری worker/cacheهای قدیمی، تطبیق رفتار تحقیق و خروجی ML موجود TRON؛ پذیرش نهایی cutover و مسیر بازگشت.
+
+پاس‌شدن backup/restore فقط پیش‌نیاز DB-08 است؛ مجوز تغییر مسیر فعال یا پایان P0 نیست.
+
+جزئیات گام تکمیل‌شدهٔ DB-07:
+
+- [x] snapshot مشترک، مرز confirmation/finality و کنترل خواندن سازگار.
+- [x] migration نسخهٔ ۵ با viewهای visibility و publication خروجی‌های تحلیلی؛ حفظ نسخه‌های قبلی.
+- [x] کنترل ترتیب/والد در انتشار، orphan marker افزایشی و آزمون عدم بازگشت دادهٔ شاخهٔ قدیمی.
+- [x] اتصال API و snapshot مرکزی بیت‌کوین، نشان‌دادن stale و منع cache نتیجهٔ قدیمی به‌عنوان نتیجهٔ جاری.
+- [x] آزمون چهار شبکه، migration/قطع/ادامه، دادهٔ منتشرنشده و نتایج وابسته؛ ثبت گزارش پذیرش.
+
+جزئیات گام تکمیل‌شدهٔ DB-06:
+
+- [x] مدل مشترک address/transaction/script، هویت محدود به شبکه و معنای متفاوت انتقال مشاهده‌شده و leg بیت‌کوین.
+- [x] query مشترک canonical با تطبیق outpoint/index/مبلغ/subject و واکشی بر اساس وقوع دقیق تراکنش؛ بدون حاصل‌ضرب ورودی‌ها و خروجی‌ها.
+- [x] اتصال writer و گراف/API بیت‌کوین، نمایش پنل و حفظ subjectهای نوع‌دار در مسیر مرکزی تحقیق.
+- [x] تست چندورودی/چندخروجی، script بدون آدرس، یک ساتوشی، هم‌هش در دو بلاک، دادهٔ ناقص/منتشرنشده و دو درایور؛ ثبت گزارش پذیرش.
 
 ## P1 — تکمیل زنجیره داده و ابزارهای عملیاتی بیت‌کوین
 
@@ -99,10 +132,12 @@
 
 ## P1 — امکانات AML و تحلیل هم‌سطح شبکه‌های موجود
 
-- [ ] **AML-01: intelligence قابل ممیزی.** ثبت source، import برچسب entity/exchange، evidence refs، confidence، reviewer، وضعیت pending/approved/rejected/revoked و تاریخچه review پیاده شود. فقط ادعای فعال و تأییدشده وارد attribution و seed ریسک شود؛ اصلاح یا لغو برچسب نتایج وابسته را نامعتبر کند.
+- [x] **AML-01: intelligence قابل ممیزی.** source و import فقط pending، evidence refs/confidence و بازهٔ اعتبار، review جداگانه با expected_revision، وضعیت approved/rejected/revoked و تاریخچهٔ تصمیم با snapshot شواهد در سه جدول موجود پیاده شدند. API و پنل برچسب فعال را نمایش می‌دهند؛ source غیرفعال، ویرایش، انقضا و review ناقص approval قبلی را فعال نمی‌کنند. سیاست مرکزی از برچسب معتبر سیگنال موجود می‌سازد و ایجاد/reopen/Export، snapshot برچسب را هم کنترل می‌کنند. CLI واقعی، ClickHouse، سیاست مرکزی و نمایش پنل روی fixture آزمون شدند. **بدون دادهٔ واقعی/rollout؛ تاریخچهٔ review ماندگار است، نه تمام نسخه‌های فیزیکی claim یا تمام تغییرهای registry؛ exposure و workerهای آینده باید این reader/snapshot را مصرف کنند.** [راهنما](dockerizd_bitcoin/INTELLIGENCE.md)، [پذیرش](dockerizd_bitcoin/INTELLIGENCE_VALIDATION.md).
 - [ ] **AML-02: clustering و کاندیداها.** تولید candidate، ثبت claim و membership نسخه‌دار با منبع و confidence و endpoint مشاهده/بررسی اضافه شود. common-input و change heuristic فقط lead باشند؛ در سناریوهای مشارکتی یا CoinJoin احتمالی نباید به مالکیت قطعی یا seed ریسک تبدیل شوند.
 - [ ] **AML-03: exposure واقعی.** seedهای تأییدشده، run قابل پیگیری، مسیر ورودی/خروجی مستقیم و چندمرحله‌ای، سهم مقدار، جهت، ترتیب زمانی، hop، decay و مرز سرویس/صرافی پیاده و در ClickHouse ذخیره شود. `exposure_paths` از داده واقعی پر شود؛ اتصال صرف دو آدرس از طریق تراکنش به معنی تخصیص تمام مبلغ یا پیوستگی قطعی همان ساتوشی‌ها نباشد. روش تخصیص UTXO و حدود عدم‌قطعیت باید نسخه‌دار و آزمون‌شده باشد.
 - [ ] **AML-04: ریسک توضیح‌پذیر.** داده معتبر بیت‌کوین به policy مرکزی برسد و policy version، signal، contribution، evidence و assessment مطابق schema مشترک قابل ذخیره و بازیابی باشند. آدرس با شواهد معتبر باید واقعاً ارزیابی شود؛ `UNKNOWN` ثابت جایگزین پیاده‌سازی نباشد. نبود شواهد هم نباید امتیاز صفر یا برچسب سالم بسازد.
+
+مسیر برچسب مستقیم تا signal سیاست مرکزی و snapshot تحقیق در AML-01 تکمیل شده؛ AML-04 به‌دلیل exposure و ثبت/بازیابی assessment در خانوادهٔ مشترک همچنان باز است.
 - [ ] **AML-05: fingerprint و activity.** ورودی/خروجی، تعداد تراکنش و انتقال، کارمزد، زمان اولین/آخرین فعالیت، روند زمانی، fan-in/fan-out و counterparties با فیلتر و پوشش داده محاسبه شوند؛ fingerprint به دو شمارنده محدود نماند.
 - [ ] **AML-06: semantic evidence بیت‌کوین.** detectorهای قابل‌اعمال مانند consolidation، fan-out، الگوی peeling و CoinJoin احتمالی با نسخه، confidence، tx/outpoint refs و محدودیت روشن اضافه شوند. الگوی رفتاری به‌تنهایی برچسب پول‌شویی نباشد؛ eventهای bridge/mixer فقط با evidence و registry معتبر تولید شوند.
 - [ ] **AML-07: asset metadata و holdings.** BTC در قرارداد مشترک دارایی، symbol/decimals/source/verification و snapshot موجودی قرار بگیرد. UTXO خرج‌شده/خرج‌نشده، coinbase immature، بازه ناقص و ارتفاع snapshot درست نمایش داده شوند؛ net flow معادل balance نباشد و برای آدرس دلخواه به RPC مختص wallet مالک تکیه نشود. توکن‌ها و eventهای مختص EVM با `not_applicable` مشخص شوند.
@@ -127,6 +162,6 @@
 
 ## ترتیب اجرا و معیار نهایی
 
-اول قرارداد و schema مشترک هر چهار شبکه و طرح migration، سپس ingestion/ابزارها و زنجیره AML، بعد API/پنل و در پایان پذیرش و rollout انجام شود. صرف افزودن جدول، endpoint، worker روشن یا داده خالی، تکمیل قابلیت نیست؛ برای هر قابلیت writer، داده ذخیره‌شده، reader، نمایش و آزمون پذیرش لازم است.
+با اولویت عملی جدید، قابلیت‌های AML بیت‌کوین روی قرارداد موجود نسخهٔ ۵ تا API، سیاست مرکزی و پنل کامل می‌شوند؛ زیرساخت تازه فقط برای رفع مانع مشخص همان قابلیت اضافه می‌شود. مهاجرت نهایی هر چهار شبکه و پذیرش P0 همچنان پیش‌نیاز اعلام یکسان‌سازی کامل و rollout نهایی هستند. صرف افزودن جدول، endpoint، worker روشن یا داده خالی، تکمیل قابلیت نیست؛ برای هر قابلیت writer، داده ذخیره‌شده، reader، نمایش و آزمون پذیرش لازم است.
 
 **مرحله اول، انتقال دادهٔ پایهٔ بیت‌کوین، probe، دریافت قابل‌اتکاتر و failure/repair گام پنجم انجام شده‌اند؛ replay مستقل، مهاجرت نهایی چهار شبکه، جدول‌های تحلیلی و تکمیل امکانات AML همچنان باز هستند. نصب و آزمون‌ها روی ClickHouse موقت و RPC کنترل‌شده انجام شده‌اند و به معنی اجرای migration روی دیتابیس مستقر یا تأیید نود واقعی نیستند.**

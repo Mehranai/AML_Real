@@ -35,7 +35,10 @@ async fn native_driver_initialization_and_readonly_validation() -> Result<()> {
         &NativeConnection(&client),
         database,
         "aml_sync_state",
-        &[serde_json::to_value(&state)?],
+        &[aml_warehouse::core_schema::extend(
+            "aml_sync_state",
+            serde_json::to_value(&state)?,
+        )?],
     )
     .await?;
     assert_eq!(
@@ -43,7 +46,67 @@ async fn native_driver_initialization_and_readonly_validation() -> Result<()> {
             .await?,
         state
     );
+    for view in aml_warehouse::core::View::ALL {
+        let rows = aml_warehouse::core::read(
+            &NativeConnection(&client),
+            database,
+            Network::Bsc,
+            view,
+            &Default::default(),
+        )
+        .await?;
+        assert_eq!(
+            rows.len(),
+            usize::from(matches!(view, aml_warehouse::core::View::State))
+        );
+    }
+    for table in [
+        "aml_asset_metadata",
+        "aml_protocol_registry",
+        "aml_entity_addresses",
+        "aml_cluster_memberships",
+        "aml_wallet_risk_signals",
+    ] {
+        assert!(
+            aml_warehouse::analytics::read(
+                &NativeConnection(&client),
+                database,
+                Network::Bsc,
+                table,
+                aml_warehouse::analytics::Mode::Current,
+                10
+            )
+            .await?
+            .is_empty()
+        );
+    }
     let readonly = client.with_option("readonly", "1");
+    let subject = aml_warehouse::relationships::Subject::address(
+        Network::Bsc,
+        &format!("0x{}", "1".repeat(40)),
+    )?;
+    let empty = aml_warehouse::relationships::read_neighborhood(
+        &NativeConnection(&readonly),
+        database,
+        Network::Bsc,
+        &subject,
+        Default::default(),
+    )
+    .await?;
+    assert_eq!(empty.graph.nodes.len(), 1);
+    assert!(empty.graph.edges.is_empty());
+    let query = aml_warehouse::relationships::query_template()
+        .lines()
+        .filter(|l| !l.starts_with("--"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("{{database}}", database)
+        .replace("{{network}}", &format!("'{}'", Network::Bsc.id()))
+        .replace("{{projection}}", "r.relationship_id")
+        .replace("{{selector}}", "1=0")
+        .replace("{{witness_selector}}", "1=0")
+        .replace("{{limit}}", "1");
+    assert!(NativeConnection(&readonly).query(&query).await?.is_empty());
     let summary = validate(&NativeConnection(&readonly), database, Network::Bsc).await?;
     assert!(!summary.newly_applied);
     assert!(

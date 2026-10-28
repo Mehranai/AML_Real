@@ -1,0 +1,87 @@
+{
+  "scope": "DB-08A disposable legacy+shared-v5 snapshots; no runtime cutover",
+  "clickhouse_version": "23.8.16.16",
+  "row_encoding": "typed_hex_v1",
+  "shared_schema_version": 5,
+  "shared_schema_changed": false,
+  "cutover_allowed": false,
+  "tests": [
+    "exact all-column multiset",
+    "unbounded integer totals",
+    "binary/float bits",
+    "nullable values",
+    "array order",
+    "timestamps",
+    "all physical revisions",
+    "legacy checkpoints and migration ledgers",
+    "materialized-view no double count",
+    "source isolation after backup",
+    "existing target refusal"
+  ],
+  "networks": [
+    {
+      "network": "tron",
+      "backup_operation_id": "7e87fe58-bb72-4325-9c94-c40cae64987a",
+      "restore_operation_id": "c34f0c2e-11d4-4301-8ead-e3649805e5db",
+      "source_sha256": "311112bf4442b9cf17c8fdaa8f84246ba8eadf92798c3311a7e70e4ca48ea366",
+      "objects": 130,
+      "physical_tables": 70,
+      "rows": 13,
+      "restore_verified": true,
+      "cutover_allowed": false,
+      "remaining": [
+        "lossless source-to-target mapping",
+        "backfill reconciliation",
+        "active writer/reader and worker parity"
+      ]
+    },
+    {
+      "network": "ethereum",
+      "backup_operation_id": "6bfab0da-3b18-4c4e-aeb0-c5535e2c15f3",
+      "restore_operation_id": "83f79ef7-e29b-4b90-a079-c440b402ece1",
+      "source_sha256": "82cb2312bd813598fd3285d17f87b45f08e0f82b3d6154a3c672ce4a8b50eef9",
+      "objects": 132,
+      "physical_tables": 67,
+      "rows": 22,
+      "restore_verified": true,
+      "cutover_allowed": false,
+      "remaining": [
+        "lossless source-to-target mapping",
+        "backfill reconciliation",
+        "active writer/reader and worker parity"
+      ]
+    },
+    {
+      "network": "bsc",
+      "backup_operation_id": "a526940b-9e8d-4796-b623-f176ed4e72e6",
+      "restore_operation_id": "3d5d3b81-7b0d-4258-97af-8d984046053e",
+      "source_sha256": "294c1f210b4a6a185665387a5114dbbc12c3a6ca09517a16d01b072d43722f90",
+      "objects": 123,
+      "physical_tables": 55,
+      "rows": 11,
+      "restore_verified": true,
+      "cutover_allowed": false,
+      "remaining": [
+        "lossless source-to-target mapping",
+        "backfill reconciliation",
+        "active writer/reader and worker parity"
+      ]
+    },
+    {
+      "network": "bitcoin",
+      "backup_operation_id": "89b83b81-b7a6-4731-a158-769a89504cfc",
+      "restore_operation_id": "dabb11be-0543-4395-8599-98170e6da3a1",
+      "source_sha256": "3978ba743d53cda4c1b2918938c8b7cdb9e8e970610b1fa00af1cacf9fd14fdf",
+      "objects": 104,
+      "physical_tables": 45,
+      "rows": 10,
+      "restore_verified": true,
+      "cutover_allowed": false,
+      "remaining": [
+        "lossless source-to-target mapping",
+        "backfill reconciliation",
+        "active writer/reader and worker parity"
+      ]
+    }
+  ]
+}

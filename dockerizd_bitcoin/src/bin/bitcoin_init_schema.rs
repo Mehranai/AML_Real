@@ -10,7 +10,7 @@ async fn main() -> Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args == ["--help"] || args == ["-h"] {
         println!(
-            "Usage: bitcoin_init_schema [--check|--print-sql]\nApplies the shared baseline and v2 column migration; --check is read-only, --print-sql needs no database configuration."
+            "Usage: bitcoin_init_schema [--check|--print-sql]\nApplies shared migrations v1 through v5; --check is read-only, --print-sql needs no database configuration."
         );
         return Ok(());
     }

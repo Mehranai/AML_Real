@@ -1,0 +1,136 @@
+{
+  "scope": "Disposable fixtures; no deployed VM, legacy history cutover or AML worker rollout.",
+  "clickhouse_version": "23.8.16.16",
+  "contract_version": 4,
+  "contract_checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec",
+  "databases": [
+    {
+      "network": "tron",
+      "database": "db05_review_tron",
+      "tables": 38,
+      "views": 40,
+      "table_columns": 668,
+      "normalized_ddl_sha256": "4f00cba4c62310bc79764129a92f1b48d5fdb1741c606d278c243c0857cb3b1c",
+      "columns_sha256": "7bb3c7dee38f17adf32ecc18d4fdc6980706953557e5896702a1f63089a170f1",
+      "migration_history": [
+        {
+          "schema_version": 1,
+          "checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
+        },
+        {
+          "schema_version": 2,
+          "checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+        },
+        {
+          "schema_version": 3,
+          "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+        },
+        {
+          "schema_version": 4,
+          "checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
+        }
+      ],
+      "identity": {
+        "network_id": "tron:mainnet",
+        "schema_version": 4,
+        "checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
+      }
+    },
+    {
+      "network": "ethereum",
+      "database": "db05_review_ethereum",
+      "tables": 38,
+      "views": 40,
+      "table_columns": 668,
+      "normalized_ddl_sha256": "4f00cba4c62310bc79764129a92f1b48d5fdb1741c606d278c243c0857cb3b1c",
+      "columns_sha256": "7bb3c7dee38f17adf32ecc18d4fdc6980706953557e5896702a1f63089a170f1",
+      "migration_history": [
+        {
+          "schema_version": 1,
+          "checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
+        },
+        {
+          "schema_version": 2,
+          "checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+        },
+        {
+          "schema_version": 3,
+          "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+        },
+        {
+          "schema_version": 4,
+          "checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
+        }
+      ],
+      "identity": {
+        "network_id": "eip155:1",
+        "schema_version": 4,
+        "checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
+      }
+    },
+    {
+      "network": "bsc",
+      "database": "db05_review_bsc",
+      "tables": 38,
+      "views": 40,
+      "table_columns": 668,
+      "normalized_ddl_sha256": "4f00cba4c62310bc79764129a92f1b48d5fdb1741c606d278c243c0857cb3b1c",
+      "columns_sha256": "7bb3c7dee38f17adf32ecc18d4fdc6980706953557e5896702a1f63089a170f1",
+      "migration_history": [
+        {
+          "schema_version": 1,
+          "checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
+        },
+        {
+          "schema_version": 2,
+          "checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+        },
+        {
+          "schema_version": 3,
+          "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+        },
+        {
+          "schema_version": 4,
+          "checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
+        }
+      ],
+      "identity": {
+        "network_id": "eip155:56",
+        "schema_version": 4,
+        "checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
+      }
+    },
+    {
+      "network": "bitcoin",
+      "database": "db05_review_bitcoin",
+      "tables": 38,
+      "views": 40,
+      "table_columns": 668,
+      "normalized_ddl_sha256": "4f00cba4c62310bc79764129a92f1b48d5fdb1741c606d278c243c0857cb3b1c",
+      "columns_sha256": "7bb3c7dee38f17adf32ecc18d4fdc6980706953557e5896702a1f63089a170f1",
+      "migration_history": [
+        {
+          "schema_version": 1,
+          "checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
+        },
+        {
+          "schema_version": 2,
+          "checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+        },
+        {
+          "schema_version": 3,
+          "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+        },
+        {
+          "schema_version": 4,
+          "checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
+        }
+      ],
+      "identity": {
+        "network_id": "bip122:000000000019d6689c085ae165831e93",
+        "schema_version": 4,
+        "checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
+      }
+    }
+  ]
+}

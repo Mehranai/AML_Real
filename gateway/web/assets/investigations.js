@@ -27,6 +27,8 @@
   const select = bar.querySelector('#snapshot-saved');
   const status = bar.querySelector('#snapshot-status');
   let current = null;
+  let sourceValidity = null;
+  const freshnessNote = () => sourceValidity && sourceValidity.status !== 'current' ? ' | Historical snapshot: source changed or unverified; run a new investigation.' : '';
   let sequence = 0;
   let busy = false;
   let reopenHandler;
@@ -48,11 +50,13 @@
   const ready = refresh().catch(error => { status.textContent = error.message; });
   function show(data) {
     current = data?.investigation || null;
+    sourceValidity = data?.source_validity || null;
     save.disabled = busy || !current || current.state === 'saved';
     save.textContent = current?.state === 'saved' ? 'Saved' : 'Export';
     status.textContent = current
       ? `${current.network_id} | ${current.state === 'saved' ? 'Saved permanently' : 'Temporary until ' + new Date(current.expires_at_unix_ms).toLocaleString()}`
       : 'No central snapshot';
+    status.textContent += freshnessNote();
     const risk = document.getElementById('central-risk-panel');
     if (risk) risk.innerHTML = riskMarkup(data?.risk_engine);
   }
@@ -86,8 +90,11 @@
       });
       if (current?.id === id) {
         current = result.investigation;
+        sourceValidity = result.source_validity || sourceValidity;
+        const risk = document.getElementById('central-risk-panel');
+        if (risk && result.source_validity) risk.innerHTML = riskMarkup(result.risk_engine);
         save.textContent = 'Saved';
-        status.textContent = `${current.network_id} | Saved permanently`;
+        status.textContent = `${current.network_id} | Saved permanently${freshnessNote()}`;
       }
       await refresh();
     } catch (error) { status.textContent = error.message; }

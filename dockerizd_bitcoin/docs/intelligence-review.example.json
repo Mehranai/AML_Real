@@ -1,0 +1,9 @@
+{
+  "network_id": "bip122:000000000019d6689c085ae165831e93",
+  "claim_id": "example-claim",
+  "expected_revision": "REPLACE_WITH_RETURNED_REVISION",
+  "decision": "approved",
+  "reviewed_by": "replace-with-reviewer",
+  "reason": "Replace with the actual review decision and reasoning",
+  "evidence_refs": ["case:replace-with-actual-review-evidence"]
+}

@@ -1094,6 +1094,9 @@ async fn fallback_success_resolves_persisted_failure_with_one_successful_attempt
     assert_eq!(row.attempts, 2);
     assert_eq!(row.error_code, "block_evidence_unavailable");
     assert_eq!(row.block_hash, Some(hash(3)));
+    assert_eq!(row.retryable, Some(0));
+    assert!(row.first_failed_at_unix_ms.is_some());
+    assert!(row.resolved_at_unix_ms >= row.last_failed_at_unix_ms);
 }
 
 #[tokio::test]
@@ -1108,6 +1111,12 @@ async fn interrupted_repair_clock_rollback_and_uncertain_publication_reconcile_d
     let mut row = failures::record(&db, 0, None, failures::Stage::Source, &policy, true)
         .await
         .unwrap();
+    let first_failure = row.first_failed_at_unix_ms;
+    assert!(first_failure.is_some());
+    assert_eq!(row.retryable, Some(1));
+    assert!(row.resolved_at_unix_ms.is_none());
+    let future_failure = row.last_failed_at_unix_ms.unwrap() + 60_000;
+    row.last_failed_at_unix_ms = Some(future_failure);
     assert_eq!(
         failures::gate(&db, 0, &policy, false).await.unwrap(),
         Some("retry_not_due")
@@ -1128,6 +1137,13 @@ async fn interrupted_repair_clock_rollback_and_uncertain_publication_reconcile_d
     assert_eq!(interrupted.attempts, 2);
     assert_eq!(interrupted.status, "dead_letter");
     assert_eq!(interrupted.error_code, "interrupted_repair");
+    assert_eq!(interrupted.retryable, Some(0));
+    assert_eq!(interrupted.first_failed_at_unix_ms, first_failure);
+    assert!(interrupted.last_failed_at_unix_ms >= Some(future_failure));
+    assert_eq!(
+        serde_json::from_str::<Value>(&interrupted.raw_evidence_json).unwrap()["error_code"],
+        "interrupted_repair"
+    );
     assert!(interrupted.revision > reserved.revision);
     let mock = Mock::start(Settings::default()).await;
     assert_eq!(
@@ -1135,6 +1151,19 @@ async fn interrupted_repair_clock_rollback_and_uncertain_publication_reconcile_d
         "complete"
     );
     assert_eq!(db.state().await.unwrap().tip_height, 0); // only the selected block
+    let resolved = failures::current(&db, 0).await.unwrap().unwrap();
+    assert_eq!(resolved.first_failed_at_unix_ms, first_failure);
+    assert!(resolved.resolved_at_unix_ms >= Some(future_failure));
+    let commits:Vec<Value>=db.rows("SELECT expected_counts_json,raw_evidence_json FROM aml_ingested_blocks_canonical WHERE block_number=0",&[]).await.unwrap();
+    let counts: Value =
+        serde_json::from_str(commits[0]["expected_counts_json"].as_str().unwrap()).unwrap();
+    assert_eq!(counts["aml_transactions"], 1);
+    assert_eq!(counts["aml_bitcoin_inputs"], 0);
+    assert!(counts.get("aml_semantic_aml_events").is_none());
+    assert_eq!(
+        serde_json::from_str::<Value>(commits[0]["raw_evidence_json"].as_str().unwrap()).unwrap()["block_height"],
+        0
+    );
     ingestion::run(db.clone(), mock.rpc(), ingest_config(), true)
         .await
         .unwrap();
@@ -1338,6 +1367,7 @@ async fn failure_api_is_protected_filtered_paginated_and_network_scoped() {
             .await
             .unwrap();
         assert_eq!(response.status().as_u16(), status);
+        assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
         if status == 200 {
             let value: Value =
                 serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())

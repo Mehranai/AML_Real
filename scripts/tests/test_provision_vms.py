@@ -79,6 +79,9 @@ class ProvisionTests(unittest.TestCase):
         self.write("deployment/vms.json", json.dumps(self.config))
         self.write("deployment/vm-firewall.sh", "#!/bin/bash\r\ntrue\r\n")
         self.write("scripts/vm.sh", "#!/bin/bash\r\ntrue\r\n")
+        self.write("scripts/warehouse_backup.py", "# backup controller\r\n")
+        self.write("shared/clickhouse/backup_disk.xml", "<clickhouse/>\r\n")
+        self.write("shared/clickhouse/backup.compose.yml", "services: {}\r\n")
         self.write("gateway/auth/disabled.htpasswd", "")
         self.write("dockerizd_tron/app/sql/init_database_tron.sql", "SELECT 1;\r\n")
         for role, directory in vm.DIRECTORIES.items():
@@ -191,7 +194,10 @@ class ProvisionTests(unittest.TestCase):
         values = {"CLICKHOUSE_PASSWORD": "test"}
         vm.runtime_archive(self.root, path, "tron", values)
         with tarfile.open(path) as archive:
-            self.assertEqual(len(archive.getnames()), 4)
+            self.assertEqual(len(archive.getnames()), 7)
+            self.assertIn("scripts/warehouse_backup.py", archive.getnames())
+            self.assertIn("shared/clickhouse/backup_disk.xml", archive.getnames())
+            self.assertIn("shared/clickhouse/backup.compose.yml", archive.getnames())
             self.assertNotIn(b"\r", archive.extractfile("scripts/vm.sh").read())
             self.assertEqual(archive.getmember("dockerizd_tron/app/.env").mode, 0o600)
             self.assertNotIn(".env.private-backup", archive.getnames())

@@ -1,0 +1,156 @@
+{
+  "scope": "Disposable fixtures; no deployed VM, legacy history cutover or AML worker rollout.",
+  "clickhouse_version": "23.8.16.16",
+  "relationship_interpretation": "typed_relationships_v1",
+  "relationship_query_sha256": "7766cd6a9d8ef0d9c336f44810dfc92dbeacd414007523ebb3e76de28d60545d",
+  "contract_version": 5,
+  "contract_checksum": "8fc65f6db710106cf6a476b2ac9469e0bcf1d4769c80e2326436a166fab6dcdf",
+  "databases": [
+    {
+      "network": "tron",
+      "database": "db07_verified_tron",
+      "tables": 39,
+      "views": 53,
+      "table_columns": 682,
+      "normalized_ddl_sha256": "1185fcd03a3e01f9eb1577c8316bab19c9be9bd5ad9f8a2648a8f9d9ce27450d",
+      "columns_sha256": "7e97d03a675e70fc01639cf4b04e1b4822fa0abe2bdcd3ea3003a88c70403e72",
+      "migration_history": [
+        {
+          "schema_version": 1,
+          "checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
+        },
+        {
+          "schema_version": 2,
+          "checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+        },
+        {
+          "schema_version": 3,
+          "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+        },
+        {
+          "schema_version": 4,
+          "checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
+        },
+        {
+          "schema_version": 5,
+          "checksum": "8fc65f6db710106cf6a476b2ac9469e0bcf1d4769c80e2326436a166fab6dcdf"
+        }
+      ],
+      "identity": {
+        "network_id": "tron:mainnet",
+        "schema_version": 5,
+        "checksum": "8fc65f6db710106cf6a476b2ac9469e0bcf1d4769c80e2326436a166fab6dcdf"
+      }
+    },
+    {
+      "network": "ethereum",
+      "database": "db07_verified_ethereum",
+      "tables": 39,
+      "views": 53,
+      "table_columns": 682,
+      "normalized_ddl_sha256": "1185fcd03a3e01f9eb1577c8316bab19c9be9bd5ad9f8a2648a8f9d9ce27450d",
+      "columns_sha256": "7e97d03a675e70fc01639cf4b04e1b4822fa0abe2bdcd3ea3003a88c70403e72",
+      "migration_history": [
+        {
+          "schema_version": 1,
+          "checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
+        },
+        {
+          "schema_version": 2,
+          "checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+        },
+        {
+          "schema_version": 3,
+          "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+        },
+        {
+          "schema_version": 4,
+          "checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
+        },
+        {
+          "schema_version": 5,
+          "checksum": "8fc65f6db710106cf6a476b2ac9469e0bcf1d4769c80e2326436a166fab6dcdf"
+        }
+      ],
+      "identity": {
+        "network_id": "eip155:1",
+        "schema_version": 5,
+        "checksum": "8fc65f6db710106cf6a476b2ac9469e0bcf1d4769c80e2326436a166fab6dcdf"
+      }
+    },
+    {
+      "network": "bsc",
+      "database": "db07_verified_bsc",
+      "tables": 39,
+      "views": 53,
+      "table_columns": 682,
+      "normalized_ddl_sha256": "1185fcd03a3e01f9eb1577c8316bab19c9be9bd5ad9f8a2648a8f9d9ce27450d",
+      "columns_sha256": "7e97d03a675e70fc01639cf4b04e1b4822fa0abe2bdcd3ea3003a88c70403e72",
+      "migration_history": [
+        {
+          "schema_version": 1,
+          "checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
+        },
+        {
+          "schema_version": 2,
+          "checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+        },
+        {
+          "schema_version": 3,
+          "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+        },
+        {
+          "schema_version": 4,
+          "checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
+        },
+        {
+          "schema_version": 5,
+          "checksum": "8fc65f6db710106cf6a476b2ac9469e0bcf1d4769c80e2326436a166fab6dcdf"
+        }
+      ],
+      "identity": {
+        "network_id": "eip155:56",
+        "schema_version": 5,
+        "checksum": "8fc65f6db710106cf6a476b2ac9469e0bcf1d4769c80e2326436a166fab6dcdf"
+      }
+    },
+    {
+      "network": "bitcoin",
+      "database": "db07_verified_bitcoin",
+      "tables": 39,
+      "views": 53,
+      "table_columns": 682,
+      "normalized_ddl_sha256": "1185fcd03a3e01f9eb1577c8316bab19c9be9bd5ad9f8a2648a8f9d9ce27450d",
+      "columns_sha256": "7e97d03a675e70fc01639cf4b04e1b4822fa0abe2bdcd3ea3003a88c70403e72",
+      "migration_history": [
+        {
+          "schema_version": 1,
+          "checksum": "147ccdadef5b7c195af6dff3cc1d576fbc882a9f6912d99862e3d6919c1f6224"
+        },
+        {
+          "schema_version": 2,
+          "checksum": "c76d93f7c782fc09b7a87d5b7a0337203b595ca60fcd3fc6ca85092c2bb9b5f5"
+        },
+        {
+          "schema_version": 3,
+          "checksum": "9548e226c0d1d4259fe488bab1d9a137232e6e68d311054190b0034db7e0800e"
+        },
+        {
+          "schema_version": 4,
+          "checksum": "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
+        },
+        {
+          "schema_version": 5,
+          "checksum": "8fc65f6db710106cf6a476b2ac9469e0bcf1d4769c80e2326436a166fab6dcdf"
+        }
+      ],
+      "identity": {
+        "network_id": "bip122:000000000019d6689c085ae165831e93",
+        "schema_version": 5,
+        "checksum": "8fc65f6db710106cf6a476b2ac9469e0bcf1d4769c80e2326436a166fab6dcdf"
+      }
+    }
+  ],
+  "visibility_contract": "canonical_v1",
+  "visibility_manifest_sha256": "7f947740693617afeac801253ed33b83f324de27c2368bd577408e193a8f28f9"
+}

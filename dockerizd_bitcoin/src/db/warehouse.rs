@@ -97,6 +97,7 @@ pub fn validate_evidence(block: &LegacyBlock, evidence: &Evidence) -> Result<()>
     let mut output_totals = HashMap::<&str, (u32, u64)>::new();
     let mut spent = HashSet::new();
     for input in &evidence.inputs {
+        input.output.validate()?;
         crate::model::hash(&input.prev_txid)?;
         header(
             &input.commit_id,
@@ -125,6 +126,7 @@ pub fn validate_evidence(block: &LegacyBlock, evidence: &Evidence) -> Result<()>
         RawAmount::from_satoshis(input.output.value_sats)?;
     }
     for output in &evidence.outputs {
+        output.output.validate()?;
         header(
             &output.commit_id,
             output.block_height,
@@ -212,27 +214,47 @@ pub fn map_evidence(
     }
     for input in &evidence.inputs {
         let address = (!input.output.address.is_empty()).then_some(&input.output.address);
-        let transaction = format!("tx:{}:{}", block.block_hash, input.txid);
+        let transaction = aml_warehouse::relationships::transaction_subject_id(
+            Network::Bitcoin,
+            &block.block_hash,
+            &input.txid,
+        )?;
         tables.get_mut("aml_bitcoin_inputs").unwrap().push(with_header(json!({"tx_hash":input.txid,"transaction_index":input.tx_index,"input_index":input.input_index,"address":address,"script_hex":input.output.script_hex,"script_type":input.output.script_type,"value_sats":input.output.value_sats,"prev_tx_hash":input.prev_txid,"prev_output_index":input.prev_vout})));
         tables.get_mut("aml_address_relationships").unwrap().push(with_header(json!({
             "relationship_id":format!("{}:{}:in:{}",block.block_hash,input.txid,input.input_index),"tx_hash":input.txid,"transaction_index":input.tx_index,"event_index":input.input_index,
             "from_subject_id":input.output.subject(),"from_subject_type":if address.is_some(){"address"}else{"script"},"to_subject_id":transaction,"to_subject_type":"transaction",
             "from_address":address,"to_address":null,"asset_id":Network::Bitcoin.native_asset(),"amount_raw":input.output.value_sats.to_string(),"decimals":Network::Bitcoin.native_decimals(),
             "transfer_type":"utxo_input","attribution_method":"observed_prevout","confidence":1.0,"prev_tx_hash":input.prev_txid,"prev_output_index":input.prev_vout,"output_index":null,
-            "evidence_refs":[format!("outpoint:{}:{}",input.prev_txid,input.prev_vout)]
+            "evidence_refs":[format!("outpoint:{}:{}",input.prev_txid,input.prev_vout)],
+            "event_sub_index":0,"trace_address":[],"token_id":null,"raw_evidence_json":serde_json::to_string(input)?
         })));
     }
     for output in &evidence.outputs {
         let address = (!output.output.address.is_empty()).then_some(&output.output.address);
-        let transaction = format!("tx:{}:{}", block.block_hash, output.txid);
+        let transaction = aml_warehouse::relationships::transaction_subject_id(
+            Network::Bitcoin,
+            &block.block_hash,
+            &output.txid,
+        )?;
         tables.get_mut("aml_bitcoin_outputs").unwrap().push(with_header(json!({"tx_hash":output.txid,"transaction_index":output.tx_index,"output_index":output.output_index,"coinbase":output.coinbase,"address":address,"script_hex":output.output.script_hex,"script_type":output.output.script_type,"value_sats":output.output.value_sats})));
         tables.get_mut("aml_address_relationships").unwrap().push(with_header(json!({
             "relationship_id":format!("{}:{}:out:{}",block.block_hash,output.txid,output.output_index),"tx_hash":output.txid,"transaction_index":output.tx_index,"event_index":output.output_index,
             "from_subject_id":transaction,"from_subject_type":"transaction","to_subject_id":output.output.subject(),"to_subject_type":if address.is_some(){"address"}else{"script"},
             "from_address":null,"to_address":address,"asset_id":Network::Bitcoin.native_asset(),"amount_raw":output.output.value_sats.to_string(),"decimals":Network::Bitcoin.native_decimals(),
             "transfer_type":"utxo_output","attribution_method":"observed_output","confidence":1.0,"prev_tx_hash":null,"prev_output_index":null,"output_index":output.output_index,
-            "evidence_refs":[format!("outpoint:{}:{}",output.txid,output.output_index)]
+            "evidence_refs":[format!("outpoint:{}:{}",output.txid,output.output_index)],
+            "event_sub_index":0,"trace_address":[],"token_id":null,"raw_evidence_json":serde_json::to_string(output)?
         })));
+    }
+    let contract = aml_warehouse::current_contract()?;
+    for (table, rows) in &tables {
+        for row in rows {
+            if *table == "aml_address_relationships" {
+                aml_warehouse::relationships::validate_with_contract(&contract, row)?;
+            } else {
+                aml_warehouse::semantics::validate_row(&contract, table, row)?;
+            }
+        }
     }
     Ok(tables)
 }

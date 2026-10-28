@@ -1,0 +1,14 @@
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <aml_backups>
+                <type>local</type>
+                <path>/var/lib/clickhouse/backups/</path>
+            </aml_backups>
+        </disks>
+    </storage_configuration>
+    <backups>
+        <allowed_disk>aml_backups</allowed_disk>
+        <allowed_path>/var/lib/clickhouse/backups/</allowed_path>
+    </backups>
+</clickhouse>

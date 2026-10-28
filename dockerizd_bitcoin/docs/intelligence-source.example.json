@@ -1,0 +1,11 @@
+{
+  "network_id": "bip122:000000000019d6689c085ae165831e93",
+  "source_id": "example-source",
+  "source_name": "Example only - replace with your evidence source",
+  "source_type": "analyst_research",
+  "reference_url": "https://example.invalid/replace-with-source",
+  "trust_tier": "unrated",
+  "license": "Replace with actual permitted use",
+  "is_active": true,
+  "created_by": "replace-with-operator"
+}
