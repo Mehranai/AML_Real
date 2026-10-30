@@ -101,6 +101,7 @@ Runtime: tron: installed only; legacy writer/reader cutover remains open; ethere
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
 - [shared/warehouse/src/relationships/query.rs:151](../../../shared/warehouse/src/relationships/query.rs) — literal_reader; `let selected=db.query(&format!("SELECT toJSONString(tuple(toString(block_number),block_hash,commit_id,toString(revision),tx_hash,transaction_index)) FROM {database}.aml_address_relationships_canonical WHERE network_id={} AND {predicate} GROUP BY {} ORDER BY block_number DESC,transaction_index,block_hash,tx_hash LIMIT {}",literal(network.id()),tuple_columns(""),query.max_transactions+1)).await?;`
+- [dockerizd_bitcoin/src/exposure/trace.rs:208](../../../dockerizd_bitcoin/src/exposure/trace.rs) — literal_reader; `let roots:Vec<Value>=db.rows(&format!("SELECT block_hash,tx_hash,block_number,transaction_index FROM aml_address_relationships_canonical WHERE network_id={{network:String}} AND (from_address={{address:String}} OR to_address={{address:String}}) GROUP BY block_hash,tx_hash,block_number,transaction_index ORDER BY block_number DESC,transaction_index DESC LIMIT {}",options.max_transactions+1),&[("network",NETWORK_ID.into()),("address",address.into())]).await?;`
 
 ## aml_asset_metadata
 
@@ -128,7 +129,7 @@ Native and token asset metadata. BTC uses decimals=8; unsupported token standard
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin compiled native BTC protocol metadata bootstrap/read/verification; current/visible registry, explicit source and stable metadata snapshot; no circulating supply estimate or imported intelligence approval
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -163,7 +164,7 @@ Latest record per network and logical identity.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin compiled native BTC protocol metadata bootstrap/read/verification; current/visible registry, explicit source and stable metadata snapshot; no circulating supply estimate or imported intelligence approval
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -242,6 +243,8 @@ Runtime: tron: installed only; legacy writer/reader cutover remains open; ethere
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
+- [dockerizd_bitcoin/src/analytics/engine.rs:111](../../../dockerizd_bitcoin/src/analytics/engine.rs) — literal_reader; `let rows:Vec<Value>=db.rows("SELECT address FROM (SELECT address FROM aml_bitcoin_inputs_canonical WHERE network_id={network:String} AND block_number<={height:UInt64} AND isNotNull(address) UNION ALL SELECT address FROM aml_bitcoin_outputs_canonical WHERE network_id={network:String} AND block_number<={height:UInt64} AND isNotNull(address)) WHERE address>{after:String} GROUP BY address ORDER BY address LIMIT {limit:UInt64} SETTINGS max_threads=2,max_memory_usage=268435456,max_execution_time=15",&[("network",NETWORK_ID.into()),("height",scan.height.to_string()),("after",scan.after_address.clone()),("limit",(count+1).to_string())]).await?;`
+- [dockerizd_bitcoin/src/bitcoin/transactions.rs:308](../../../dockerizd_bitcoin/src/bitcoin/transactions.rs) — literal_reader; `let rows:Vec<Value>=self.db.rows("SELECT block_hash,tx_hash,input_index FROM aml_bitcoin_inputs_canonical WHERE network_id={network:String} AND prev_tx_hash={tx:String} AND prev_output_index={index:UInt32} AND tuple(block_number,transaction_index)>tuple({height:UInt64},{position:UInt32}) ORDER BY block_number,transaction_index LIMIT 1",&params).await?;`
 - [dockerizd_bitcoin/src/db/warehouse.rs:16](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `pub const INPUTS: &str = "SELECT commit_id,block_number AS block_height,block_hash,intDiv(block_timestamp_unix_ms,1000) AS block_time,tx_hash AS txid,transaction_index AS tx_index,input_index,prev_tx_hash AS prev_txid,prev_output_index AS prev_vout,ifNull(address,'') AS address,script_hex,script_type,value_sats FROM aml_bitcoin_inputs_canonical WHERE network_id='bip122:000000000019d6689c085ae165831e93'";`
 
 ## aml_bitcoin_outputs
@@ -314,6 +317,8 @@ Runtime: tron: installed only; legacy writer/reader cutover remains open; ethere
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
+- [dockerizd_bitcoin/src/analytics/engine.rs:111](../../../dockerizd_bitcoin/src/analytics/engine.rs) — literal_reader; `let rows:Vec<Value>=db.rows("SELECT address FROM (SELECT address FROM aml_bitcoin_inputs_canonical WHERE network_id={network:String} AND block_number<={height:UInt64} AND isNotNull(address) UNION ALL SELECT address FROM aml_bitcoin_outputs_canonical WHERE network_id={network:String} AND block_number<={height:UInt64} AND isNotNull(address)) WHERE address>{after:String} GROUP BY address ORDER BY address LIMIT {limit:UInt64} SETTINGS max_threads=2,max_memory_usage=268435456,max_execution_time=15",&[("network",NETWORK_ID.into()),("height",scan.height.to_string()),("after",scan.after_address.clone()),("limit",(count+1).to_string())]).await?;`
+- [dockerizd_bitcoin/src/bitcoin/transactions.rs:272](../../../dockerizd_bitcoin/src/bitcoin/transactions.rs) — literal_reader; `let rows:Vec<Value>=self.db.rows("SELECT block_hash,tx_hash FROM aml_bitcoin_outputs_canonical WHERE network_id={network:String} AND tx_hash={tx:String} AND output_index={index:UInt32} AND tuple(block_number,transaction_index)<tuple({height:UInt64},{position:UInt32}) ORDER BY block_number DESC,transaction_index DESC LIMIT 1",&params).await?;`
 - [dockerizd_bitcoin/src/db/warehouse.rs:17](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `pub const OUTPUTS: &str = "SELECT commit_id,block_number AS block_height,block_hash,intDiv(block_timestamp_unix_ms,1000) AS block_time,tx_hash AS txid,transaction_index AS tx_index,output_index,coinbase,ifNull(address,'') AS address,script_hex,script_type,value_sats FROM aml_bitcoin_outputs_canonical WHERE network_id='bip122:000000000019d6689c085ae165831e93'";`
 
 ## aml_cluster_claims
@@ -476,7 +481,8 @@ Runtime: tron: installed only; legacy writer/reader cutover remains open; ethere
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
-- No direct literal call site found; inspect the checked call chains and JSON reference list.
+- [dockerizd_bitcoin/src/clustering/store.rs:179](../../../dockerizd_bitcoin/src/clustering/store.rs) — literal_reader; `let parent=query(db,"SELECT settings_json FROM aml_cluster_runs_current WHERE network_id={network:String} AND run_id={run:String} LIMIT 2",&[("network",NETWORK_ID.into()),("run",v["run_id"].as_str().context("review run missing")?.into())]).await?;`
+- [dockerizd_bitcoin/src/clustering/store.rs:388](../../../dockerizd_bitcoin/src/clustering/store.rs) — literal_reader; `let run=query(db,"SELECT * FROM aml_cluster_runs_current WHERE network_id={network:String} AND run_id={run:String} LIMIT 2",&params).await?;`
 
 ## aml_evm_logs
 
@@ -576,7 +582,7 @@ Directional, amount-aware exposure with explicit attribution policy and uncertai
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active bounded on-demand Bitcoin exposure CLI/API, exact-outpoint conservative value bounds and current-run verification; background worker remains open
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -609,12 +615,12 @@ Publication marker for complete exposure results; failed/stale/running runs are 
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active bounded on-demand Bitcoin exposure CLI/API, exact-outpoint conservative value bounds and current-run verification; background worker remains open
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
-- No direct literal call site found; inspect the checked call chains and JSON reference list.
+- [dockerizd_bitcoin/src/exposure/mod.rs:204](../../../dockerizd_bitcoin/src/exposure/mod.rs) — insert_call_writer; `let mut rows=output_rows(&id,&snapshot,revision,&scan.paths)?;rows.insert("aml_exposure_runs".into(),vec![run]);`
 
 ## aml_exposure_runs_current
 
@@ -644,12 +650,12 @@ Latest record per network and logical identity.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active bounded on-demand Bitcoin exposure CLI/API, exact-outpoint conservative value bounds and current-run verification; background worker remains open
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
-- No direct literal call site found; inspect the checked call chains and JSON reference list.
+- [dockerizd_bitcoin/src/exposure/mod.rs:253](../../../dockerizd_bitcoin/src/exposure/mod.rs) — literal_reader; `let runs:Vec<Value>=db.rows("SELECT * FROM aml_exposure_runs_current WHERE network_id={network:String} AND run_id={run:String} LIMIT 2",&params).await?;`
 
 ## aml_exposure_seeds
 
@@ -672,7 +678,7 @@ Current reviewed risk seed linked to an approved active intelligence claim.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: captured Bitcoin seed/claim revision snapshots; current eligibility requires the exposure run's attribution check
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -702,7 +708,7 @@ Latest record per network and logical identity.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: captured Bitcoin seed/claim revision snapshots; current eligibility requires the exposure run's attribution check
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -743,7 +749,7 @@ Runtime: tron: installed only; legacy writer/reader cutover remains open; ethere
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
 - [shared/warehouse/src/publication.rs:134](../../../shared/warehouse/src/publication.rs) — literal_reader; `let values = db.query(&format!("SELECT toString(max(revision)) FROM {database}.aml_ingested_blocks WHERE network_id={}", literal(network.id()))).await?;`
-- [dockerizd_bitcoin/src/db/warehouse.rs:272](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `let receipts: Vec<Value> = db.rows("SELECT count() AS n FROM aml_ingested_blocks FINAL WHERE network_id={network:String} AND block_number={height:UInt64} AND block_hash={hash:String} AND source_id={source:String} AND ingestion_status='complete' AND canonical=1 AND revision<={revision:UInt64}",&[("network",crate::NETWORK_ID.into()),("height",legacy.tip_height.to_string()),("hash",legacy.tip_hash.clone()),("source",format!("bitcoin_legacy_backfill_v1:{}",legacy.revision)),("revision",current.revision.to_string())]).await?;`
+- [dockerizd_bitcoin/src/db/warehouse.rs:276](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `let receipts: Vec<Value> = db.rows("SELECT count() AS n FROM aml_ingested_blocks FINAL WHERE network_id={network:String} AND block_number={height:UInt64} AND block_hash={hash:String} AND source_id={source:String} AND ingestion_status='complete' AND canonical=1 AND revision<={revision:UInt64}",&[("network",crate::NETWORK_ID.into()),("height",legacy.tip_height.to_string()),("hash",legacy.tip_hash.clone()),("source",format!("bitcoin_legacy_backfill_v1:{}",legacy.revision)),("revision",current.revision.to_string())]).await?;`
 
 ## aml_ingested_blocks_canonical
 
@@ -783,7 +789,8 @@ Direct access evidence (unproven references and schema declarations are not runt
 - [shared/warehouse/src/publication.rs:335](../../../shared/warehouse/src/publication.rs) — literal_reader; `let rows=db.query(&format!("SELECT toJSONString(tuple({})) FROM {database}.aml_ingested_blocks_canonical WHERE network_id={} AND {filter} ORDER BY block_number LIMIT 10001",crate::core::projection(&table.columns),literal(network.id()))).await?;`
 - [dockerizd_bitcoin/src/bitcoin/failures.rs:454](../../../dockerizd_bitcoin/src/bitcoin/failures.rs) — literal_reader; `let rows:Vec<BlockRow>=db.rows("SELECT block_number,block_hash,parent_hash,transaction_count FROM aml_ingested_blocks_canonical WHERE network_id={network:String} AND block_number={height:UInt64}",&[("network",crate::NETWORK_ID.into()),("height",height.to_string())]).await?;`
 - [dockerizd_bitcoin/src/bitcoin/failures.rs:488](../../../dockerizd_bitcoin/src/bitcoin/failures.rs) — literal_reader; `let blocks:Vec<BlockRow>=db.rows("SELECT block_number,block_hash,parent_hash,transaction_count FROM aml_ingested_blocks_canonical WHERE network_id={network:String} AND block_number BETWEEN {from:UInt64} AND {to:UInt64} ORDER BY block_number",&params).await?;`
-- [dockerizd_bitcoin/src/db/warehouse.rs:310](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `let markers: Vec<Value> = db.rows("SELECT source_id FROM aml_ingested_blocks_canonical WHERE network_id={network:String} AND block_number={height:UInt64}",&[("network",crate::NETWORK_ID.into()),("height",current.tip_height.to_string())]).await?;`
+- [dockerizd_bitcoin/src/db/warehouse.rs:314](../../../dockerizd_bitcoin/src/db/warehouse.rs) — literal_reader; `let markers: Vec<Value> = db.rows("SELECT source_id FROM aml_ingested_blocks_canonical WHERE network_id={network:String} AND block_number={height:UInt64}",&[("network",crate::NETWORK_ID.into()),("height",current.tip_height.to_string())]).await?;`
+- [dockerizd_bitcoin/src/exposure/mod.rs:191](../../../dockerizd_bitcoin/src/exposure/mod.rs) — literal_reader; `let time:Vec<Value>=db.rows("SELECT block_timestamp_unix_ms AS at FROM aml_ingested_blocks_canonical WHERE network_id={network:String} AND block_hash={hash:String} LIMIT 1",&[("network",NETWORK_ID.into()),("hash",snapshot.state().last_block_hash.clone())]).await?;`
 
 ## aml_ingestion_benchmarks
 
@@ -924,7 +931,7 @@ Reviewed address/entity attribution; unreviewed or revoked records remain eviden
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin source/import/review CLI and investigation attribution; central label risk and snapshot invalidation; exposure/clustering remain open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin source/import/review CLI and investigation attribution; central label risk and exposure seed verification with snapshot invalidation; clustering/background workers remain open
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -968,7 +975,7 @@ Latest record per network and logical identity.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin source/import/review CLI and investigation attribution; central label risk and snapshot invalidation; exposure/clustering remain open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin source/import/review CLI and investigation attribution; central label risk and exposure seed verification with snapshot invalidation; clustering/background workers remain open
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -998,7 +1005,7 @@ Append-only review history referenced by the current claim revision.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin source/import/review CLI and investigation attribution; central label risk and snapshot invalidation; exposure/clustering remain open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin source/import/review CLI and investigation attribution; central label risk and exposure seed verification with snapshot invalidation; clustering/background workers remain open
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -1029,7 +1036,7 @@ Auditable identity source registry. An inactive source cannot support an active 
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin source/import/review CLI and investigation attribution; central label risk and snapshot invalidation; exposure/clustering remain open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin source/import/review CLI and investigation attribution; central label risk and exposure seed verification with snapshot invalidation; clustering/background workers remain open
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -1062,7 +1069,7 @@ Latest record per network and logical identity.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin source/import/review CLI and investigation attribution; central label risk and snapshot invalidation; exposure/clustering remain open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin source/import/review CLI and investigation attribution; central label risk and exposure seed verification with snapshot invalidation; clustering/background workers remain open
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -1091,7 +1098,7 @@ Durable discovery and refresh queue for supported metadata capabilities.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: not_applicable to immutable native BTC protocol constants; no fabricated discovery or metadata job
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -1122,7 +1129,7 @@ Latest record per network and logical identity.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: not_applicable to immutable native BTC protocol constants; no fabricated discovery or metadata job
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -1150,7 +1157,7 @@ Versioned evidence policy definitions used by the central Analytical Node.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin shared-policy evaluation and local persistence; sealed assessments/signals require the adapter risk reader's policy/intelligence/exposure verification; central consumer recomputes and checks the assessment snapshot
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -1179,7 +1186,7 @@ Auditable policy rule and maximum evidence contribution.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin shared-policy evaluation and local persistence; sealed assessments/signals require the adapter risk reader's policy/intelligence/exposure verification; central consumer recomputes and checks the assessment snapshot
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -1247,7 +1254,7 @@ Chain-specific semantic evidence using one schema and explicit detector provenan
 | `evidence_json` | `String` | versioned_JSON_text; preserve names, numeric precision, original types and evidence |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin versioned single-transaction pattern writer under block fence; bounded canonical reader and historical fallback; peel chains captured in risk inputs/central snapshots; no pattern-only score or ownership; historical fact backfill/background worker remain open
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -1290,12 +1297,12 @@ Only facts matching the exact published block revision and commit.
 | `evidence_json` | `String` | versioned_JSON_text; preserve names, numeric precision, original types and evidence |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin versioned single-transaction pattern writer under block fence; bounded canonical reader and historical fallback; peel chains captured in risk inputs/central snapshots; no pattern-only score or ownership; historical fact backfill/background worker remain open
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
-- No direct literal call site found; inspect the checked call chains and JSON reference list.
+- [dockerizd_bitcoin/src/semantics.rs:288](../../../dockerizd_bitcoin/src/semantics.rs) — literal_reader; `let stored:Vec<Value>=db.rows("SELECT event_id,evidence_json FROM aml_semantic_aml_events_canonical WHERE network_id={network:String} AND block_hash={block:String} AND tx_hash={tx:String} AND detector_version={version:String} LIMIT 5",&[("network",NETWORK_ID.into()),("block",block.into()),("tx",hash.into()),("version",VERSION.into())]).await?;`
 
 ## aml_sync_state
 
@@ -1505,6 +1512,7 @@ Direct access evidence (unproven references and schema declarations are not runt
 
 - [dockerizd_bitcoin/src/bitcoin/failures.rs:458](../../../dockerizd_bitcoin/src/bitcoin/failures.rs) — literal_reader; `let count:Vec<Value>=db.rows("SELECT count() AS n FROM aml_transactions_canonical WHERE network_id={network:String} AND block_number={height:UInt64} AND block_hash={hash:String}",&[("network",crate::NETWORK_ID.into()),("height",height.to_string()),("hash",row.block_hash.clone())]).await?;`
 - [dockerizd_bitcoin/src/bitcoin/failures.rs:489](../../../dockerizd_bitcoin/src/bitcoin/failures.rs) — literal_reader; `let counts:Vec<Value>=db.rows("SELECT block_number,count() AS n FROM aml_transactions_canonical WHERE network_id={network:String} AND block_number BETWEEN {from:UInt64} AND {to:UInt64} GROUP BY block_number",&params).await?;`
+- [dockerizd_bitcoin/src/bitcoin/transactions.rs:110](../../../dockerizd_bitcoin/src/bitcoin/transactions.rs) — literal_reader; `let rows:Vec<Header>=self.db.rows("SELECT block_number,block_hash,tx_hash,transaction_index,block_timestamp_unix_ms,commit_id,revision,coinbase,input_count,output_count,toString(fee_raw) AS fee_raw FROM aml_transactions_canonical WHERE network_id={network:String} AND block_hash={block:String} AND tx_hash={tx:String} LIMIT 2",&params).await?;`
 
 ## aml_tron_contracts
 
@@ -1597,7 +1605,7 @@ Snapshot of central scoring with nullable score when evidence is insufficient.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin shared-policy evaluation and local persistence; sealed assessments/signals require the adapter risk reader's policy/intelligence/exposure verification; central consumer recomputes and checks the assessment snapshot
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
@@ -1633,12 +1641,12 @@ Latest record per network and logical identity.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin shared-policy evaluation and local persistence; sealed assessments/signals require the adapter risk reader's policy/intelligence/exposure verification; central consumer recomputes and checks the assessment snapshot
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):
 
-- No direct literal call site found; inspect the checked call chains and JSON reference list.
+- [dockerizd_bitcoin/src/risk.rs:295](../../../dockerizd_bitcoin/src/risk.rs) — literal_reader; `let parents:Vec<Value>=db.rows("SELECT * FROM aml_wallet_risk_assessments_current WHERE network_id={network:String} AND assessment_id={id:String} AND subject_id={address:String} LIMIT 2",&params).await?;`
 
 ## aml_wallet_risk_signals
 
@@ -1667,7 +1675,7 @@ Persisted evidence behind a central risk assessment; never a probability claim.
 | `revision` | `UInt64` | revision_order; different legacy domains, not interchangeable |
 | `created_at_unix_ms` | `UInt64` | unix_ms |
 
-Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: installed only; Bitcoin capability/writer/reader still open
+Runtime: tron: installed only; legacy writer/reader cutover remains open; ethereum: installed only; legacy writer/reader cutover remains open; bsc: installed only; legacy writer/reader cutover remains open; bitcoin: active Bitcoin shared-policy evaluation and local persistence; sealed assessments/signals require the adapter risk reader's policy/intelligence/exposure verification; central consumer recomputes and checks the assessment snapshot
 
 
 Direct access evidence (unproven references and schema declarations are not runtime writers):

@@ -71,6 +71,7 @@ class LocalRunnerTests(unittest.TestCase):
                 self.assertEqual(build.return_value.open.call_count, 5)
 
     def test_full_start_includes_all_workers_and_bsc_runtime_profile(self):
+        self.assertIn("bitcoin-analytics", local.WORKERS["bitcoin"])
         with patch.object(local.subprocess, "run", side_effect=self.docker), redirect_stdout(io.StringIO()):
             runner = local.LocalRunner()
             with patch.object(runner, "check"), patch.object(runner, "check_workers") as workers:

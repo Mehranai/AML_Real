@@ -143,14 +143,29 @@ OWNERS = {
         ("core,semantic,metadata", "src/investigation/wallet.rs", 'transactions_canonical', "investigation reader"),
     ],
     "bitcoin": [
-        ("core,utxo", "src/db/warehouse.rs", 'pub fn map_evidence(', "four fact-table mappings; typed UTXO legs"),
-        ("core,utxo", "src/storage/writer.rs", 'publication::facts(', "generic facts writer caller"),
+        ("core,utxo,semantic", "src/db/warehouse.rs", 'pub fn map_evidence(', "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"),
+        ("core,utxo,semantic", "src/storage/writer.rs", 'publication::facts(', "generic facts writer; semantic counts and detector manifest share block publication"),
+        ("semantic", "src/semantics.rs", 'pub fn block_facts(', "single-transaction patterns published with block; no ownership or risk inference"),
+        ("semantic", "src/semantics.rs", 'pub async fn read(', "bounded canonical pattern reader, historical fallback and exact-outpoint peel-chain context; captured in persisted risk inputs"),
         ("core,utxo", "src/db/warehouse.rs", 'pub async fn backfill(', "legacy read-only migration owner"),
         ("core,utxo,holdings", "src/db/warehouse.rs", 'pub fn utxos()', "canonical readers preserve BIP30 occurrence"),
+        ("metadata", "src/assets.rs", 'pub async fn initialize(', "idempotent native BTC protocol-definition writer in the existing asset table; rejects conflicting metadata"),
+        ("metadata", "src/assets.rs", 'pub async fn read(', "visible native metadata and stable definition snapshot; no human intelligence approval or supply estimate"),
+        ("holdings,utxo", "src/holdings.rs", 'pub async fn read(', "exact canonical latest-outpoint states before address filter, coinbase maturity and bound snapshot; aggregate totals independent of output list limit"),
+        ("clustering", "src/clustering/store.rs", 'pub async fn compute(', "bounded canonical common-input/change leads; existing cluster run/claim/membership/version tables and publication seal; no ownership or risk inference"),
+        ("clustering", "src/clustering/store.rs", 'pub async fn review(', "explicit optimistic lead-only review; immutable versions, separate review lock and source/review freshness checks"),
+        ("clustering", "src/clustering/store.rs", 'pub async fn inspect(', "verify the complete stored output set, publication, detector and latest reviewed version; preserve historical candidates"),
         ("core", "src/db/queries.rs", 'publication::state(', "checkpoint/current-state reader"),
+        ("core,utxo,activity", "src/activity.rs", 'pub async fn read(', "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"),
         ("operations", "src/bitcoin/failures.rs", 'aml_ingestion_failures', "failure writer and current-state reader"),
+        ("operations,core,utxo", "src/analytics/engine.rs", 'async fn discover(', "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"),
+        ("activity,semantic,clustering,exposure,risk", "src/analytics/engine.rs", 'async fn analyze(', "worker reuses the canonical investigation pipeline; fingerprint/semantic inputs in existing risk assessment, existing sealed cluster/exposure outputs; never approves claims"),
         ("intelligence", "src/intelligence/mod.rs", 'pub async fn review(', "separate reviewed attribution publication and durable review evidence"),
         ("intelligence", "src/intelligence/mod.rs", 'pub async fn read(', "address-scoped active source/review/validity reader and snapshot"),
+        ("exposure", "src/exposure/mod.rs", 'pub async fn compute(', "bounded canonical UTXO tracing, captured seed snapshots, derived rows and publication seal"),
+        ("exposure", "src/exposure/mod.rs", 'pub async fn inspect(', "run reader verifies chain, publication, row IDs/counts and attribution dependencies"),
+        ("risk", "src/risk.rs", 'pub async fn record(', "shared compiled policy; persist policy/rules, assessment/signals and sealed publication"),
+        ("risk", "src/risk.rs", 'pub async fn inspect(', "read structured assessment and verify rows, policy and attribution/exposure dependencies"),
     ],
 }
 
@@ -748,7 +763,19 @@ def shared_runtime(chain, name):
     if name.startswith(("aml_evm_logs", "aml_tron_contracts")):
         return "not_applicable to Bitcoin; common DDL present, no fabricated rows"
     if name.startswith(("aml_intelligence_sources", "aml_intelligence_claims", "aml_intelligence_reviews")):
-        return "active Bitcoin source/import/review CLI and investigation attribution; central label risk and snapshot invalidation; exposure/clustering remain open"
+        return "active Bitcoin source/import/review CLI and investigation attribution; central label risk and exposure seed verification with snapshot invalidation; clustering/background workers remain open"
+    if name.startswith(("aml_exposure_runs", "aml_exposure_paths", "aml_address_exposures")):
+        return "active bounded on-demand Bitcoin exposure CLI/API, exact-outpoint conservative value bounds and current-run verification; background worker remains open"
+    if name.startswith("aml_exposure_seeds"):
+        return "captured Bitcoin seed/claim revision snapshots; current eligibility requires the exposure run's attribution check"
+    if name.startswith("aml_asset_metadata"):
+        return "active Bitcoin compiled native BTC protocol metadata bootstrap/read/verification; current/visible registry, explicit source and stable metadata snapshot; no circulating supply estimate or imported intelligence approval"
+    if name.startswith("aml_metadata_jobs"):
+        return "not_applicable to immutable native BTC protocol constants; no fabricated discovery or metadata job"
+    if name.startswith("aml_semantic_aml_events"):
+        return "active Bitcoin versioned single-transaction pattern writer under block fence; bounded canonical reader and historical fallback; peel chains captured in risk inputs/central snapshots; no pattern-only score or ownership; historical fact backfill/background worker remain open"
+    if name.startswith(("aml_risk_policies", "aml_risk_policy_rules", "aml_wallet_risk_signals", "aml_wallet_risk_assessments")):
+        return "active Bitcoin shared-policy evaluation and local persistence; sealed assessments/signals require the adapter risk reader's policy/intelligence/exposure verification; central consumer recomputes and checks the assessment snapshot"
     return "installed only; Bitcoin capability/writer/reader still open"
 
 

@@ -6,6 +6,7 @@ default-run = "bitcoin_aml"
 
 [dependencies]
 aml_warehouse = { path = "../shared/warehouse" }
+aml_risk_policy = { path = "../shared/risk_policy" }
 anyhow = "1.0"
 axum = "0.8"
 bitcoin = "0.32"

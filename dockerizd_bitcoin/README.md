@@ -16,7 +16,47 @@ DB-01 (فرهنگ داده و نگاشت) و DB-03 (قواعد ستون‌ها �
 موجود مصرف می‌شوند؛ ادعای فعال به تحقیق، سیاست ریسک مرکزی و پنل می‌رسد. لغو یا
 تغییر منبع، ریسک snapshot قبلی را از مصرف جاری خارج می‌کند. هیچ migration یا
 مدل امتیازدهی تازه‌ای اضافه نشده است. [فرمان‌ها و مرز قابلیت](INTELLIGENCE.md)،
-[گزارش پذیرش](INTELLIGENCE_VALIDATION.md). گام عملی بعد exposure است.
+[گزارش پذیرش](INTELLIGENCE_VALIDATION.md).
+
+**AML-03 تکمیل شد:** exposure ورودی/خروجی مستقیم و چندمرحله‌ای هنگام تحقیق یا
+با CLI، از outpointهای canonical و seed تأییدشده محاسبه می‌شود. بازهٔ محافظه‌کارانهٔ
+مبلغ و شواهد در جدول‌های موجود همان ClickHouse ذخیره و در پنل و سیاست مرکزی
+مصرف می‌شوند؛ نتیجهٔ stale یا ناقص امتیاز جاری نمی‌سازد. [روش و فرمان‌ها](EXPOSURE.md)،
+[نتیجهٔ آزمون](EXPOSURE_VALIDATION.md).
+
+**AML-04 تکمیل شد:** policy، rules، signals و assessment در جدول‌های موجود
+ClickHouse بیت‌کوین ثبت و با CLI/API بازیابی می‌شوند. سیاست Rust میان adapter و
+مرکز مشترک است؛ مرکز نتیجه و snapshot ارزیابی را دوباره کنترل می‌کند. وزن‌ها و
+schema تغییر نکرده‌اند. [فرمان‌ها و محدودیت‌ها](RISK.md)، [آزمون پذیرش](RISK_VALIDATION.md).
+**AML-05 تکمیل شد:** آمار دقیق مبلغ و leg، fee در سطح تراکنش، فعالیت روزانه UTC،
+شکل تراکنش و peerهای مرتبط با فیلتر ارتفاع/زمان/جهت در API و پنل موجودند. فیلتر
+analytics، holdings یا exposure را به‌طور ضمنی محدود نمی‌کند؛ scopeها و پوشش جزئی
+صریح‌اند. [روش و API](ACTIVITY.md)، [نتیجهٔ آزمون](ACTIVITY_VALIDATION.md).
+**AML-06:** شواهد نسخه‌دار consolidation، fan-out، peeling و CoinJoin احتمالی
+به انتشار بلاک، تحقیق و پنل وصل شده‌اند؛ از الگو به‌تنهایی امتیاز ریسک یا مالکیت
+استنباط نمی‌شود. تاریخچهٔ قدیمی از facts canonical خوانده می‌شود؛ بازپردازش تاریخی
+و worker مستقل همچنان بازند. [روش و API](SEMANTICS.md)، [آزمون‌ها](SEMANTICS_VALIDATION.md).
+
+**AML-07:** مشخصات native BTC با منبع و تأیید protocol در جدول مشترک metadata
+ثبت می‌شود. موجودی نامعلوم، بازهٔ ناقص و صفر جدا هستند؛ وضعیت spent/unspent،
+BIP30 و بلوغ coinbase در API و پنل با snapshot قابل بررسی ارائه می‌شوند.
+[روش و راه‌اندازی metadata روی نصب موجود](HOLDINGS.md)، [آزمون‌ها](HOLDINGS_VALIDATION.md).
+
+**AML-02:** کاندیداهای common-input و change با شواهد تراکنش کامل، نسخه و
+review مستقل در چهار جدول موجود clustering ثبت می‌شوند. پنل و snapshot مرکزی
+آن‌ها را حفظ و تازگی منبع و بازبینی را کنترل می‌کنند. حتی سرنخ تأییدشده مالکیت،
+entity، seed یا امتیاز ریسک نمی‌سازد. schema نسخهٔ ۵ و جداسازی VMها ثابت‌اند؛
+worker پیوستهٔ AML-08 هم این مسیر را مصرف می‌کند. [روش و فرمان‌ها](CLUSTERING.md)،
+[پذیرش و محدودیت‌ها](CLUSTERING_VALIDATION.md).
+
+**AML-08:** worker مستقل، آدرس‌های canonical دریافت‌شده را در sweepهای محدود
+صفحه‌بندی می‌کند و مسیر فعلی fingerprint، semantic، clustering، exposure و ریسک
+را اجرا می‌کند. صف محدود، checkpoint پایدار، قفل مستقل، heartbeat، retry و ادامه
+پس از قطع دارد. full startup و pause/resume شامل آن هستند؛ API-only worker را
+روشن نمی‌کند. دادهٔ تحلیل در همان ClickHouse می‌ماند و فقط وضعیت اجرایی در volume
+پایدار همان VM ثبت می‌شود. تأیید خودکار، هشدار/پرونده و SLA تازگی اضافه نشده است.
+نصب موجود به image جدید نیاز دارد؛ schema تغییر نکرده است.
+[روش اجرا و محدودیت‌ها](ANALYTICS.md)، [گزارش پذیرش](ANALYTICS_VALIDATION.md).
 
 ## ساختار کد و SQL فعال
 
@@ -357,11 +397,21 @@ GET /api/bitcoin/ingestion/failures?status=dead_letter&limit=50
 GET /api/bitcoin/wallet/{address}/investigation?limit=40
 GET /api/bitcoin/wallet/{address}/holdings
 GET /api/bitcoin/wallet/{source}/paths/{target}?max_hops=3&max_nodes=200
+GET /api/bitcoin/wallet/{address}/exposure?max_hops=3&max_transactions=100&max_paths=50
+GET /api/bitcoin/wallet/{address}/exposure/{run_id}
+GET /api/bitcoin/wallet/{address}/exposure/{run_id}/snapshot
 ```
 
 `/health` و `/ready` عمومی‌اند. شناسه شبکه `bip122:000000000019d6689c085ae165831e93` است. API تحقیق حداکثر ۱۰۰ تراکنش و ۱۸۰۰۰ ورودی/خروجی برمی‌گرداند؛ گراف محدودشده اعلام می‌شود. پنل مرورگر برای خوانایی حداکثر ۱۰۰ گره و ۵۰۰ یال رسم می‌کند؛ JSON کامل برگشتی در بخش شواهد قابل مشاهده است.
 
-در این نسخه، adapter بیت‌کوین هنوز منبع برچسب تأییدشده یا تحلیل exposure ریسک ندارد. سیاست مرکزی بدون چنین شواهدی `UNKNOWN` و امتیاز `null` برمی‌گرداند، حتی اگر تراکنش زیادی وجود داشته باشد. پوشش AML فعلی شامل تحقیق UTXO، شواهد قابل ممیزی، مسیر و snapshot است؛ امتیاز ریسک معتبر به منبع intelligence نیاز دارد.
+برچسب معتبر و exposure دارای حد پایین مثبت به سیاست ریسک مرکزی می‌رسند. بدون
+شواهد معتبر، خروجی همچنان `UNKNOWN` و امتیاز `null` است، حتی اگر تراکنش زیادی
+وجود داشته باشد. دادهٔ intelligence واقعی باید جداگانه وارد و review شود؛ برچسب
+آماده یا تأیید خودکار وجود ندارد. حد پایین صفر و مرز سرویس فقط context هستند؛
+مسیرها با هم جمع نمی‌شوند و هیچ مالکیت مشترک یا تخصیص دقیق ساتوشی ادعا نمی‌شود.
+خوشه‌بندی فقط کاندیدای قابل بازبینی تولید می‌کند. worker پیوسته، همین تحلیل‌های
+محدود را تازه‌سازی می‌کند؛ replay تاریخی، پذیرش واقعی و بقیهٔ مراحل
+[TODO](../TODO_BITCOIN.md) همچنان بازند. [اجرای worker](ANALYTICS.md).
 
 ## VM، اجرای محلی و image آفلاین
 

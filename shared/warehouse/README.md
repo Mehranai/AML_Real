@@ -75,6 +75,24 @@ intelligence snapshot to the central freshness check. No schema or scoring weigh
 was added for this path. Other Bitcoin analytics workers remain open. See
 [reviewed attribution](../../dockerizd_bitcoin/INTELLIGENCE.md).
 
+Bitcoin also computes bounded on-demand exposure using these existing tables:
+`aml_exposure_seeds`, `aml_exposure_runs`, `aml_exposure_paths` and
+`aml_address_exposures`, followed by the shared analysis publication seal.
+Exact spent outpoints and integer value intervals supply the evidence. Its
+`exposure::inspect` reader additionally verifies captured attribution dependencies;
+generic visible views alone do not establish current intelligence eligibility.
+No schema change or shared database across VMs is required. Continuous workers
+remain open. See [exposure usage and limits](../../dockerizd_bitcoin/EXPOSURE.md).
+
+Bitcoin now writes compiled policy definitions/rules and structured assessments/
+signals to the existing risk tables, followed by the risk publication seal.
+The scoring implementation is shared with the central consumer in
+`shared/risk_policy`; `risk::inspect` additionally verifies policy identity,
+structured rows and intelligence/exposure dependencies. The central consumer
+recomputes the result and verifies its assessment snapshot before current use.
+No schema change or database on the main VM is added. See
+[risk persistence](../../dockerizd_bitcoin/RISK.md).
+
 `relationships` provides the versioned `typed_relationships_v1` interpretation
 and a bounded canonical graph reader for all four networks. Account transfers
 connect two address subjects. Bitcoin records separate prevout-to-transaction
@@ -189,3 +207,10 @@ cargo run --locked --manifest-path shared/warehouse/Cargo.toml --example export_
 The value grammar, upgrade boundaries and remaining cutover work are described
 in [DB-03](../../docs/warehouse/DB03_COLUMN_CONTRACT_FA.md).
 
+
+Bitcoin AML-07 uses the existing `aml_asset_metadata` table for an idempotently
+bootstrapped, verified native BTC protocol definition. It is not an imported
+intelligence approval or circulating supply estimate. Holdings are computed
+from canonical latest-outpoint states and carried unchanged into the central
+investigation snapshot; no additional holdings table or DDL migration is added.
+[Meaning, source and initialization](../../dockerizd_bitcoin/HOLDINGS.md).

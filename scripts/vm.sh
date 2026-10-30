@@ -84,8 +84,8 @@ case "$role" in
     if $api_only; then services=(bsc-api); fi ;;
   bitcoin)
     directory=$root/dockerizd_bitcoin; file=docker-compose.yml; project=aml-bitcoin
-    database=bitcoin_aml; workers=(bitcoin-ingestion)
-    services=(bitcoin-api bitcoin-ingestion); probe_service=bitcoin-api
+    database=bitcoin_aml; workers=(bitcoin-ingestion bitcoin-analytics)
+    services=(bitcoin-api bitcoin-ingestion bitcoin-analytics); probe_service=bitcoin-api
     probe=(bitcoin_aml --healthcheck)
     schema_check=(bitcoin_init_schema --check)
     if $api_only; then services=(bitcoin-api); fi ;;

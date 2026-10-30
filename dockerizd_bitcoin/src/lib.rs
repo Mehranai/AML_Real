@@ -1,9 +1,17 @@
+pub mod activity;
+pub mod analytics;
 pub mod api;
+pub mod assets;
 pub mod bitcoin;
+pub mod clustering;
 pub mod config;
 pub mod db;
 pub mod domain;
+pub mod exposure;
+pub mod holdings;
 pub mod intelligence;
+pub mod risk;
+pub mod semantics;
 pub mod storage;
 // Preserve the existing library API while the implementation follows the
 // domain/db/storage boundaries used by the other chain adapters.

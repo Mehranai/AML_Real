@@ -1,0 +1,9 @@
+[package]
+name = "aml_risk_policy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+num-bigint = "0.4.6"
+serde_json = { version = "1.0.145", features = ["arbitrary_precision"] }
+sha2 = "0.10"

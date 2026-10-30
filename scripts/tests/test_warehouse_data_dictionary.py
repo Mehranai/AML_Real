@@ -143,8 +143,14 @@ class DataDictionaryTests(unittest.TestCase):
             dictionary.owner_evidence("bitcoin")
 
     def test_empty_shared_tables_are_not_reported_as_working_bitcoin_analytics(self):
-        self.assertIn("installed only", dictionary.shared_runtime("bitcoin", "aml_wallet_risk_assessments"))
+        self.assertIn("installed only", dictionary.shared_runtime("bitcoin", "aml_cluster_runs"))
+        self.assertIn("active Bitcoin shared-policy", dictionary.shared_runtime("bitcoin", "aml_wallet_risk_assessments"))
+        self.assertIn("policy/intelligence/exposure verification", dictionary.shared_runtime("bitcoin", "aml_wallet_risk_signals"))
         self.assertIn("not_applicable", dictionary.shared_runtime("bitcoin", "aml_evm_logs"))
+        self.assertIn("compiled native BTC protocol metadata", dictionary.shared_runtime("bitcoin", "aml_asset_metadata_visible"))
+        self.assertIn("not_applicable", dictionary.shared_runtime("bitcoin", "aml_metadata_jobs"))
+        self.assertIn("block fence", dictionary.shared_runtime("bitcoin", "aml_semantic_aml_events"))
+        self.assertIn("historical fact backfill/background worker remain open", dictionary.shared_runtime("bitcoin", "aml_semantic_aml_events_canonical"))
         self.assertIn("cutover remains open", dictionary.shared_runtime("ethereum", "aml_transactions"))
 
     def test_shared_numeric_columns_have_explicit_units_too(self):

@@ -74,6 +74,7 @@ impl Database {
         let snapshot =
             aml_warehouse::visibility::Snapshot::from_state(crate::warehouse::to_state(&s))?;
         let failures = crate::failures::summary(self, &s).await?;
+        let metadata = crate::assets::read(self).await?;
         aml_warehouse::visibility::unchanged(
             &self.warehouse_connection(),
             self.database(),
@@ -86,7 +87,7 @@ impl Database {
             "block_hash":s.tip_hash,"start_block":s.start_height,"history_from_genesis":s.initialized == 1 && s.start_height == 0,
             "observed_rpc_height":s.observed_rpc_height,"revision":s.revision.to_string(),"published_at_unix_ms":s.published_at,
             "coverage_scope":"confirmed_ingested_blocks","mempool_included":false,
-            "source_snapshot":snapshot.value(),"ingestion_failures":failures}),
+            "source_snapshot":snapshot.value(),"ingestion_failures":failures,"native_asset_snapshot":metadata["native_asset_snapshot"],"analytics_worker":crate::analytics::local_status(self.database())}),
         )
     }
 }

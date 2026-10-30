@@ -22,7 +22,7 @@ WORKERS = {
     "tron": ("tron-ingestion", "tron-token-metadata-worker", "tron-analytics"),
     "ethereum": ("ethereum-ingestion", "ethereum-token-metadata", "ethereum-analytics"),
     "bsc": ("bsc-follow", "bsc-token-metadata"),
-    "bitcoin": ("bitcoin-ingestion",),
+    "bitcoin": ("bitcoin-ingestion", "bitcoin-analytics"),
 }
 
 

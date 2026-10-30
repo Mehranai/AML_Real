@@ -1,3 +1,6 @@
+mod bitcoin_clusters;
+#[cfg(test)]
+mod bitcoin_exposure_tests;
 mod risk;
 mod store;
 
@@ -301,6 +304,12 @@ async fn create(
         .await
         .map_err(internal)?;
     if !remote.status().is_success() {
+        if network == "bitcoin" && remote.status() == StatusCode::UNPROCESSABLE_ENTITY {
+            return Err(Failure(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Bitcoin activity scope is too large; narrow the block or UTC time filters",
+            ));
+        }
         let code = if remote.status().is_client_error() {
             StatusCode::BAD_REQUEST
         } else {
@@ -340,8 +349,23 @@ async fn create(
     data["network_id"] = json!(network_id);
     if target.is_none() {
         // The chain supplies evidence. A single centrally versioned policy scores both networks.
-        data["risk_engine"] = risk::assess(&network, &data);
-        if let Some(holdings) = data.get_mut("holdings").and_then(Value::as_object_mut) {
+        let assessed = risk::assess(&network, &data);
+        if network == "bitcoin"
+            && data["risk_snapshot"].is_object()
+            && (!aml_risk_policy::bitcoin_binding_matches(&data["risk_snapshot"], &data)
+                || data["risk_engine"] != assessed)
+        {
+            return Err(Failure(
+                StatusCode::BAD_GATEWAY,
+                "Bitcoin persisted risk differs from the central policy or evidence",
+            ));
+        }
+        data["risk_engine"] = assessed;
+        let immutable_holdings =
+            network == "bitcoin" && data["holdings"]["holdings_snapshot"].is_object();
+        if !immutable_holdings
+            && let Some(holdings) = data.get_mut("holdings").and_then(Value::as_object_mut)
+        {
             // Returned only after Store::create commits the complete payload.
             holdings.insert("persisted".into(), json!(true));
             holdings.insert("storage".into(), json!("central_investigation_snapshot"));
@@ -620,6 +644,123 @@ fn annotate_source_validity(data: &mut Value, current: Option<&Value>) {
             "current"
         };
     }
+    if status == "current" && data["exposure_snapshot"].is_object() {
+        let expected = &data["exposure_snapshot"];
+        let actual = &current.unwrap()["exposure_snapshot"];
+        let scoped = |v: &Value| {
+            v["contract"] == "bitcoin_exposure_v1"
+                && v["network_id"] == data["network_id"]
+                && v["address"] == data["address"]
+                && v["run_id"] == expected["run_id"]
+                && v["snapshot_id"]
+                    .as_str()
+                    .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        };
+        status = if !scoped(expected) || !scoped(actual) {
+            "unverified"
+        } else if actual["current"] != true || actual["snapshot_id"] != expected["snapshot_id"] {
+            "stale"
+        } else {
+            "current"
+        };
+    }
+    if status == "current" && data["semantic_snapshot"].is_object() {
+        let expected = &data["semantic_snapshot"];
+        let actual = &current.unwrap()["semantic_config"];
+        let mut unsigned = expected.clone();
+        unsigned.as_object_mut().unwrap().remove("snapshot_id");
+        let bound = &data["fingerprint"]["semantic_detection"];
+        let valid_hash = |v: &Value| {
+            v.as_str()
+                .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        };
+        status = if expected["contract"] != "bitcoin_semantics_v1"
+            || actual["contract"] != "bitcoin_semantics_config_v1"
+            || expected["network_id"] != data["network_id"]
+            || actual["network_id"] != data["network_id"]
+            || expected["source_snapshot_id"] != source["snapshot_id"]
+            || expected["snapshot_id"] != aml_risk_policy::digest(&unsigned)
+            || expected["events_hash"] != aml_risk_policy::digest(&data["semantic_events"])
+            || expected["coverage_hash"] != aml_risk_policy::digest(&data["semantic_coverage"])
+            || expected["snapshot_id"] != bound["snapshot_id"]
+            || expected["definition_hash"] != bound["definition_hash"]
+            || expected["detector_version"] != bound["detector_version"]
+            || bound["coverage"] != data["semantic_coverage"]
+            || !valid_hash(&expected["definition_hash"])
+            || !valid_hash(&actual["definition_hash"])
+        {
+            "unverified"
+        } else if expected["detector_version"] != actual["detector_version"]
+            || expected["definition_hash"] != actual["definition_hash"]
+        {
+            "stale"
+        } else {
+            "current"
+        };
+    }
+    if status == "current" && data["cluster_snapshot"].is_object() {
+        status = bitcoin_clusters::validity(data, current.unwrap());
+    }
+    if status == "current" && data["holdings"]["holdings_snapshot"].is_object() {
+        let holdings = &data["holdings"];
+        let frame = &holdings["holdings_snapshot"];
+        let mut body = holdings.clone();
+        body.as_object_mut().unwrap().remove("holdings_snapshot");
+        let mut unsigned = frame.clone();
+        unsigned.as_object_mut().unwrap().remove("snapshot_id");
+        let metadata = &holdings["native_asset_snapshot"];
+        let actual = &current.unwrap()["native_asset_snapshot"];
+        let valid = |v: &Value| {
+            v["contract"] == "bitcoin_native_asset_v1"
+                && v["network_id"] == data["network_id"]
+                && v["asset_id"] == "native:BTC"
+                && v["snapshot_id"]
+                    .as_str()
+                    .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        };
+        status = if frame["contract"] != "bitcoin_holdings_v1"
+            || holdings["network_id"] != data["network_id"]
+            || holdings["address"] != data["address"]
+            || holdings["source_snapshot"] != *source
+            || frame["network_id"] != data["network_id"]
+            || frame["address"] != data["address"]
+            || frame["source_snapshot_id"] != source["snapshot_id"]
+            || frame["evidence_hash"] != aml_risk_policy::digest(&body)
+            || frame["snapshot_id"] != aml_risk_policy::digest(&unsigned)
+            || frame["metadata_snapshot_id"] != metadata["snapshot_id"]
+            || !valid(metadata)
+            || !valid(actual)
+        {
+            "unverified"
+        } else if actual["snapshot_id"] != metadata["snapshot_id"] {
+            "stale"
+        } else {
+            "current"
+        };
+    }
+    if status == "current" && data["risk_snapshot"].is_object() {
+        let expected = &data["risk_snapshot"];
+        let actual = &current.unwrap()["risk_snapshot"];
+        let scoped = |v: &Value| {
+            v["contract"] == "bitcoin_risk_v1"
+                && v["network_id"] == data["network_id"]
+                && v["address"] == data["address"]
+                && v["assessment_id"] == expected["assessment_id"]
+                && v["snapshot_id"]
+                    .as_str()
+                    .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        };
+        status = if !scoped(expected)
+            || !scoped(actual)
+            || !aml_risk_policy::bitcoin_binding_matches(expected, data)
+        {
+            "unverified"
+        } else if actual["current"] != true || actual["snapshot_id"] != expected["snapshot_id"] {
+            "stale"
+        } else {
+            "current"
+        };
+    }
     data["source_validity"] = json!({"status":status,"checked_at_unix_ms":now(),"current_risk_usable":status=="current","historical_evidence_preserved":true});
     if status != "current" && data.get("risk_engine").is_some() {
         if data.get("historical_risk_engine").is_none() {
@@ -686,6 +827,113 @@ async fn refresh_source_validity(app: &App, data: &mut Value, network: &str) {
                 "intelligence network mismatch"
             );
             current["intelligence_snapshot"] = attribution["intelligence_snapshot"].clone();
+        }
+        if data["exposure_snapshot"].is_object() {
+            let address = data["address"]
+                .as_str()
+                .filter(|a| valid_address("bitcoin", a))
+                .context("invalid exposure address")?;
+            let run = data["exposure_snapshot"]["run_id"]
+                .as_str()
+                .context("missing exposure run")?;
+            ensure!(
+                run.strip_prefix("btc-exp-")
+                    .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())),
+                "invalid exposure run"
+            );
+            let mut response = app
+                .http
+                .get(format!(
+                    "{upstream}/api/bitcoin/wallet/{address}/exposure/{run}/snapshot"
+                ))
+                .header("x-aml-service-key", &app.key)
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await?;
+            ensure!(
+                response.status().is_success(),
+                "exposure freshness unavailable"
+            );
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
+                ensure!(
+                    bytes.len() + chunk.len() <= 65536,
+                    "exposure snapshot exceeds bound"
+                );
+                bytes.extend_from_slice(&chunk);
+            }
+            let value: Value = serde_json::from_slice(&bytes)?;
+            ensure!(
+                value["network_id"] == data["network_id"],
+                "exposure network mismatch"
+            );
+            current["exposure_snapshot"] = value["exposure_snapshot"].clone();
+        }
+        if data["semantic_snapshot"].is_object() {
+            let mut response = app
+                .http
+                .get(format!("{upstream}/api/bitcoin/semantics/config"))
+                .header("x-aml-service-key", &app.key)
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await?;
+            ensure!(
+                response.status().is_success(),
+                "semantic detector config unavailable"
+            );
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
+                ensure!(
+                    bytes.len() + chunk.len() <= 65536,
+                    "semantic config exceeds bound"
+                );
+                bytes.extend_from_slice(&chunk);
+            }
+            current["semantic_config"] = serde_json::from_slice(&bytes)?;
+        }
+        if data["cluster_snapshot"].is_object() {
+            // Bind saved leads and reviews without changing historical data.
+            let clusters = bitcoin_clusters::fetch(app, &upstream, data).await?;
+            current["cluster_snapshot"] = clusters["cluster_snapshot"].clone();
+            current["cluster_config"] = clusters["cluster_config"].clone();
+        }
+        if data["risk_snapshot"].is_object() {
+            let address = data["address"]
+                .as_str()
+                .filter(|a| valid_address("bitcoin", a))
+                .context("invalid risk address")?;
+            let id = data["risk_snapshot"]["assessment_id"]
+                .as_str()
+                .context("missing assessment identity")?;
+            ensure!(
+                id.strip_prefix("btc-risk-")
+                    .is_some_and(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())),
+                "invalid assessment identity"
+            );
+            let mut response = app
+                .http
+                .get(format!(
+                    "{upstream}/api/bitcoin/wallet/{address}/risk/{id}/snapshot"
+                ))
+                .header("x-aml-service-key", &app.key)
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await?;
+            ensure!(response.status().is_success(), "risk freshness unavailable");
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
+                ensure!(
+                    bytes.len() + chunk.len() <= 65536,
+                    "risk snapshot exceeds bound"
+                );
+                bytes.extend_from_slice(&chunk);
+            }
+            let value: Value = serde_json::from_slice(&bytes)?;
+            ensure!(
+                value["network_id"] == data["network_id"],
+                "risk network mismatch"
+            );
+            current["risk_snapshot"] = value["risk_snapshot"].clone();
         }
         Ok::<Value, anyhow::Error>(current)
     }
@@ -917,13 +1165,17 @@ mod tests {
             approved["intelligence_snapshot"].clone(),
         ));
         let read = live.clone();
-        let chain = serde_json::json!({"network_id":approved["network_id"],"source_snapshot":approved["source_snapshot"]});
+        let chain = serde_json::json!({"network_id":approved["network_id"],"source_snapshot":approved["source_snapshot"],"native_asset_snapshot":approved["holdings"]["native_asset_snapshot"]});
         let network = approved["network_id"].clone();
+        let semantic_config = json!({"contract":"bitcoin_semantics_config_v1","network_id":network,"detector_version":approved["semantic_snapshot"]["detector_version"],"definition_hash":approved["semantic_snapshot"]["definition_hash"]});
+        let cluster_current = json!({"network_id":network,"cluster_snapshot":approved["cluster_snapshot"],"cluster_config":{"contract":"bitcoin_clustering_config_v1","network_id":network,"detector_version":approved["cluster_snapshot"]["detector_version"],"definition_hash":approved["cluster_snapshot"]["definition_hash"]}});
         let path = format!(
             "/api/bitcoin/wallet/{}/intelligence/snapshot",
             approved["address"].as_str().unwrap()
         );
         let router = axum::Router::new().route("/status", axum::routing::get(move || async move { axum::Json(chain) }))
+            .route("/api/bitcoin/wallet/{address}/clusters/{run}/snapshot",axum::routing::get(move || {let value=cluster_current.clone();async move {axum::Json(value)}}))
+            .route("/api/bitcoin/semantics/config",axum::routing::get(move || {let config=semantic_config.clone();async move {axum::Json(config)}}))
             .route(&path, axum::routing::get(move || { let snapshot = read.read().unwrap().clone(); let network=network.clone(); async move { axum::Json(serde_json::json!({"network_id":network,"intelligence_snapshot":snapshot})) } }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());

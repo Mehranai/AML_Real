@@ -14,6 +14,7 @@ x-app: &app
     dockerfile: Dockerfile
     additional_contexts:
       warehouse_source: ../shared/warehouse
+      risk_policy_source: ../shared/risk_policy
   init: true
   read_only: true
   cap_drop: [ALL]
@@ -48,6 +49,15 @@ x-rpc: &rpc
   BITCOIN_POLL_SECONDS: ${BITCOIN_POLL_SECONDS:-10}
   BITCOIN_FAILURE_MAX_ATTEMPTS: ${BITCOIN_FAILURE_MAX_ATTEMPTS:-10}
   BITCOIN_FAILURE_RETRY_SECONDS: ${BITCOIN_FAILURE_RETRY_SECONDS:-1}
+
+x-analytics: &analytics
+  BITCOIN_ANALYTICS_STATE_DIR: /var/lib/bitcoin-analytics
+  BITCOIN_ANALYTICS_PAGE_SIZE: ${BITCOIN_ANALYTICS_PAGE_SIZE:-10}
+  BITCOIN_ANALYTICS_POLL_SECONDS: ${BITCOIN_ANALYTICS_POLL_SECONDS:-5}
+  BITCOIN_ANALYTICS_REFRESH_SECONDS: ${BITCOIN_ANALYTICS_REFRESH_SECONDS:-300}
+  BITCOIN_ANALYTICS_JOB_TIMEOUT_SECONDS: ${BITCOIN_ANALYTICS_JOB_TIMEOUT_SECONDS:-120}
+  BITCOIN_ANALYTICS_RETRY_SECONDS: ${BITCOIN_ANALYTICS_RETRY_SECONDS:-30}
+  BITCOIN_ANALYTICS_MAX_ATTEMPTS: ${BITCOIN_ANALYTICS_MAX_ATTEMPTS:-3}
 
 services:
   clickhouse:
@@ -87,6 +97,8 @@ services:
       <<: *database
       BITCOIN_API_ADDR: 0.0.0.0:6101
       AML_SERVICE_KEY: ${AML_SERVICE_KEY:?Set AML_SERVICE_KEY}
+      BITCOIN_ANALYTICS_STATE_DIR: /var/lib/bitcoin-analytics
+    volumes: ["bitcoin_writer_lock:/var/lock/bitcoin", "bitcoin_analytics_state:/var/lib/bitcoin-analytics:ro"]
     ports: ["${BITCOIN_API_BIND_ADDRESS:-127.0.0.1}:${BITCOIN_API_PORT:-6101}:6101"]
     depends_on:
       bitcoin-schema: {condition: service_completed_successfully}
@@ -110,6 +122,35 @@ services:
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       bitcoin-schema: {condition: service_completed_successfully}
+
+  bitcoin-analytics:
+    <<: *app
+    command: ["bitcoin_aml", "analytics"]
+    restart: unless-stopped
+    mem_limit: ${BITCOIN_ANALYTICS_MEMORY_LIMIT:-512m}
+    cpus: ${BITCOIN_ANALYTICS_CPUS:-1.0}
+    pids_limit: 64
+    stop_grace_period: 30s
+    environment:
+      <<: [*database, *analytics]
+    volumes: ["bitcoin_writer_lock:/var/lock/bitcoin", "bitcoin_analytics_state:/var/lib/bitcoin-analytics"]
+    depends_on:
+      bitcoin-schema: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "bitcoin_aml", "analytics", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  bitcoin-analytics-tools:
+    <<: *app
+    profiles: ["tools"]
+    command: ["bitcoin_aml", "analytics", "--help"]
+    restart: "no"
+    environment:
+      <<: [*database, *analytics]
+    volumes: ["bitcoin_writer_lock:/var/lock/bitcoin", "bitcoin_analytics_state:/var/lib/bitcoin-analytics"]
 
   bitcoin-failures:
     <<: *app
@@ -137,6 +178,13 @@ services:
     environment: *database
     volumes: ["bitcoin_writer_lock:/var/lock/bitcoin"]
 
+  bitcoin-exposure:
+    <<: *app
+    profiles: ["tools"]
+    command: ["bitcoin_aml", "exposure", "--help"]
+    restart: "no"
+    environment: *database
+
   bitcoin-rpc-probe:
     <<: *app
     profiles: ["tools"]
@@ -145,7 +193,16 @@ services:
     environment: *rpc
     extra_hosts: ["host.docker.internal:host-gateway"]
 
+  bitcoin-risk:
+    <<: *app
+    profiles: ["tools"]
+    command: ["bitcoin_aml", "risk", "--help"]
+    restart: "no"
+    environment: *database
+
 volumes:
+  bitcoin_analytics_state:
+    name: aml_bitcoin_analytics_state
   bitcoin_clickhouse_data:
   bitcoin_writer_lock:
     # Stable across Compose project names on the same Bitcoin VM.

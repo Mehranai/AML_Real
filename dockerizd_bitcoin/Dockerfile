@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 FROM rust:1.92-slim-bookworm AS builder
 COPY --from=warehouse_source / /build/shared/warehouse/
+COPY --from=risk_policy_source / /build/shared/risk_policy/
 WORKDIR /build/dockerizd_bitcoin
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
@@ -12,7 +13,7 @@ FROM debian:bookworm-slim
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /build/dockerizd_bitcoin/target/release/bitcoin_aml /usr/local/bin/bitcoin_aml
 COPY --from=builder /build/dockerizd_bitcoin/target/release/bitcoin_init_schema /usr/local/bin/bitcoin_init_schema
-RUN mkdir -p /var/lock/bitcoin && chown 10001:10001 /var/lock/bitcoin
+RUN mkdir -p /var/lock/bitcoin /var/lib/bitcoin-analytics && chown 10001:10001 /var/lock/bitcoin /var/lib/bitcoin-analytics
 USER 10001:10001
 WORKDIR /app
 STOPSIGNAL SIGTERM

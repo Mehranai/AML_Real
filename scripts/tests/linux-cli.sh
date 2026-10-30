@@ -131,13 +131,13 @@ expect_failure bash "$project/scripts/vm.sh" tron up --project
 MOCK_DOCKER_EXIT=23 expect_failure bash "$project/scripts/vm.sh" tron up
 reset_log
 bash "$project/scripts/vm.sh" bitcoin up --api-only >/dev/null
-assert_log '.[0] | index("bitcoin-api") != null and index("bitcoin-ingestion") == null'
+assert_log '.[0] | index("bitcoin-api") != null and index("bitcoin-ingestion") == null and index("bitcoin-analytics") == null'
 reset_log
 bash "$project/scripts/vm.sh" bitcoin check >/dev/null
 assert_log '.[0][-4:] == ["-T","bitcoin-api","bitcoin_aml","--healthcheck"]'
 reset_log
 bash "$project/scripts/aml.sh" up --with-bsc --with-bitcoin --with-ingestion >/dev/null
-assert_log 'length == 5 and (.[3] | index("bitcoin-api") != null and index("bitcoin-ingestion") != null) and (.[4] | index("gateway") != null)'
+assert_log 'length == 5 and (.[3] | index("bitcoin-api") != null and index("bitcoin-ingestion") != null and index("bitcoin-analytics") != null) and (.[4] | index("gateway") != null)'
 reset_log
 for role in tron ethereum bsc bitcoin; do
   reset_log
@@ -188,9 +188,11 @@ for role in tron ethereum bsc bitcoin; do
   reset_log
   bash "$project/scripts/vm.sh" "$role" pause-ingestion >/dev/null
   jq -e --arg role "$role" 'index("stop") != null and index($role + "-api") == null and index("clickhouse") == null' "$MOCK_LOG" >/dev/null
+  if [[ $role == bitcoin ]]; then assert_log '.[0] | index("bitcoin-analytics") != null and index("bitcoin-ingestion") != null'; fi
   reset_log
   bash "$project/scripts/vm.sh" "$role" resume >/dev/null
   assert_log 'length == 2 and (.[0] | index("exec") != null and index("clickhouse") != null) and (.[1] | index("up") != null and index("--no-deps") != null and index("--no-build") != null and index("never") != null and index("clickhouse") == null and index("down") == null)'
+  if [[ $role == bitcoin ]]; then assert_log '.[1] | index("bitcoin-analytics") != null'; fi
 done
 reset_log
 sql="SELECT 'a b; \$HOME' AS value"

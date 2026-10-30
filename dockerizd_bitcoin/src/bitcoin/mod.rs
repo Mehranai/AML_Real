@@ -6,3 +6,4 @@ pub mod probe;
 pub mod repair;
 pub mod resolver;
 pub mod rpc;
+pub(crate) mod transactions;

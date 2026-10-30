@@ -203,6 +203,10 @@ pub fn map_evidence(
         ("aml_bitcoin_inputs", Vec::new()),
         ("aml_bitcoin_outputs", Vec::new()),
         ("aml_address_relationships", Vec::new()),
+        (
+            "aml_semantic_aml_events",
+            crate::semantics::block_facts(block, evidence)?,
+        ),
     ]);
     for tx in &evidence.transactions {
         tables.get_mut("aml_transactions").unwrap().push(with_header(json!({

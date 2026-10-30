@@ -15,7 +15,7 @@ use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 const SOURCES: &str = "aml_intelligence_sources";
 const CLAIMS: &str = "aml_intelligence_claims";
@@ -430,6 +430,77 @@ pub async fn read(db: &Database, address: &str) -> Result<Attribution> {
         sources.len() <= LIMIT && reviews.len() <= LIMIT,
         "attribution dependency limit reached"
     );
+    assemble(address, claims, sources, reviews)
+}
+/// Batch freshness checks include empty addresses, so a newly approved seed or
+/// service boundary invalidates a run that previously observed no such label.
+pub async fn read_many(
+    db: &Database,
+    addresses: &[String],
+) -> Result<BTreeMap<String, Attribution>> {
+    ensure!(
+        !addresses.is_empty() && addresses.len() <= 64,
+        "intelligence dependency limit is 64 addresses"
+    );
+    let mut addresses = addresses
+        .iter()
+        .map(|a| model::address(a))
+        .collect::<Result<Vec<_>>>()?;
+    addresses.sort();
+    addresses.dedup();
+    let list = addresses
+        .iter()
+        .map(|a| aml_warehouse::publication::literal(a))
+        .collect::<Vec<_>>()
+        .join(",");
+    let predicate = format!("network_id={{network:String}} AND address IN ({list})");
+    let params = [("network", NETWORK_ID.into())];
+    let claims: Vec<Value> = db.rows(&format!("SELECT * REPLACE(toString(revision) AS revision) FROM aml_intelligence_claims_current WHERE {predicate} ORDER BY claim_id LIMIT 6401"),&params).await?;
+    let sources: Vec<Value> = db.rows(&format!("SELECT * REPLACE(toString(revision) AS revision) FROM aml_intelligence_sources_current WHERE network_id={{network:String}} AND source_id IN (SELECT source_id FROM aml_intelligence_claims_current WHERE {predicate}) ORDER BY source_id LIMIT 6401"),&params).await?;
+    let reviews: Vec<Value> = db.rows(&format!("SELECT * REPLACE(toString(revision) AS revision,toString(subject_revision) AS subject_revision) FROM aml_intelligence_reviews_current WHERE network_id={{network:String}} AND subject_type='intelligence_claim' AND subject_id IN (SELECT claim_id FROM aml_intelligence_claims_current WHERE {predicate}) ORDER BY toUInt64(revision) DESC LIMIT 1 BY subject_id LIMIT 6401"),&params).await?;
+    ensure!(
+        claims.len() <= 6400 && sources.len() <= 6400 && reviews.len() <= 6400,
+        "intelligence dependency rows exceeded limit"
+    );
+    let mut result = BTreeMap::new();
+    for address in addresses {
+        let claims = claims
+            .iter()
+            .filter(|c| c["address"] == address)
+            .cloned()
+            .collect::<Vec<_>>();
+        ensure!(
+            claims.len() <= LIMIT,
+            "address has more than 100 current claims"
+        );
+        let ids = claims
+            .iter()
+            .filter_map(|c| c["claim_id"].as_str())
+            .collect::<HashSet<_>>();
+        let source_ids = claims
+            .iter()
+            .filter_map(|c| c["source_id"].as_str())
+            .collect::<HashSet<_>>();
+        let s = sources
+            .iter()
+            .filter(|s| source_ids.contains(s["source_id"].as_str().unwrap_or("")))
+            .cloned()
+            .collect();
+        let r = reviews
+            .iter()
+            .filter(|r| ids.contains(r["subject_id"].as_str().unwrap_or("")))
+            .cloned()
+            .collect();
+        result.insert(address.clone(), assemble(address, claims, s, r)?);
+    }
+    Ok(result)
+}
+fn assemble(
+    address: String,
+    claims: Vec<Value>,
+    sources: Vec<Value>,
+    reviews: Vec<Value>,
+) -> Result<Attribution> {
     let by_source: HashMap<_, _> = sources
         .iter()
         .map(|r| (r["source_id"].as_str().unwrap_or(""), r))

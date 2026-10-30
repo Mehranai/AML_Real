@@ -33856,22 +33856,24 @@
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
               "line": 190,
               "anchor": "pub fn map_evidence(",
-              "role": "four fact-table mappings; typed UTXO legs"
+              "role": "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"
             },
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/storage/writer.rs",
               "line": 75,
               "anchor": "publication::facts(",
-              "role": "generic facts writer caller"
+              "role": "generic facts writer; semantic counts and detector manifest share block publication"
             },
             {
               "families": [
@@ -33879,7 +33881,7 @@
                 "utxo"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 280,
+              "line": 284,
               "anchor": "pub async fn backfill(",
               "role": "legacy read-only migration owner"
             },
@@ -33902,6 +33904,28 @@
               "line": 8,
               "anchor": "publication::state(",
               "role": "checkpoint/current-state reader"
+            },
+            {
+              "families": [
+                "core",
+                "utxo",
+                "activity"
+              ],
+              "path": "dockerizd_bitcoin/src/activity.rs",
+              "line": 141,
+              "anchor": "pub async fn read(",
+              "role": "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"
+            },
+            {
+              "families": [
+                "operations",
+                "core",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+              "line": 102,
+              "anchor": "async fn discover(",
+              "role": "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"
             }
           ]
         },
@@ -34017,13 +34041,13 @@
             },
             {
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 300,
+              "line": 304,
               "role": "literal_reader",
               "text": "\"SELECT * FROM bitcoin_blocks_canonical WHERE block_height={height:UInt64}\","
             },
             {
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 334,
+              "line": 338,
               "role": "literal_reader",
               "text": "\"SELECT * FROM bitcoin_blocks_canonical WHERE block_height={height:UInt64}\","
             }
@@ -34034,13 +34058,13 @@
             "literal_readers": [
               {
                 "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-                "line": 300,
+                "line": 304,
                 "role": "literal_reader",
                 "text": "\"SELECT * FROM bitcoin_blocks_canonical WHERE block_height={height:UInt64}\","
               },
               {
                 "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-                "line": 334,
+                "line": 338,
                 "role": "literal_reader",
                 "text": "\"SELECT * FROM bitcoin_blocks_canonical WHERE block_height={height:UInt64}\","
               }
@@ -34106,22 +34130,24 @@
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
               "line": 190,
               "anchor": "pub fn map_evidence(",
-              "role": "four fact-table mappings; typed UTXO legs"
+              "role": "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"
             },
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/storage/writer.rs",
               "line": 75,
               "anchor": "publication::facts(",
-              "role": "generic facts writer caller"
+              "role": "generic facts writer; semantic counts and detector manifest share block publication"
             },
             {
               "families": [
@@ -34129,7 +34155,7 @@
                 "utxo"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 280,
+              "line": 284,
               "anchor": "pub async fn backfill(",
               "role": "legacy read-only migration owner"
             },
@@ -34152,6 +34178,28 @@
               "line": 8,
               "anchor": "publication::state(",
               "role": "checkpoint/current-state reader"
+            },
+            {
+              "families": [
+                "core",
+                "utxo",
+                "activity"
+              ],
+              "path": "dockerizd_bitcoin/src/activity.rs",
+              "line": 141,
+              "anchor": "pub async fn read(",
+              "role": "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"
+            },
+            {
+              "families": [
+                "operations",
+                "core",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+              "line": 102,
+              "anchor": "async fn discover(",
+              "role": "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"
             }
           ]
         },
@@ -34363,9 +34411,15 @@
             },
             {
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 343,
+              "line": 347,
               "role": "literal_reader",
               "text": "inputs:db.rows::<Input>(\"SELECT * FROM bitcoin_inputs FINAL WHERE commit_id={commit:String} ORDER BY tx_index,input_index\",&params).await?,"
+            },
+            {
+              "path": "dockerizd_bitcoin/src/risk.rs",
+              "line": 209,
+              "role": "unproven_reference",
+              "text": "let inputs = policy::bitcoin_inputs(data);"
             }
           ],
           "access_summary": {
@@ -34374,7 +34428,7 @@
             "literal_readers": [
               {
                 "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-                "line": 343,
+                "line": 347,
                 "role": "literal_reader",
                 "text": "inputs:db.rows::<Input>(\"SELECT * FROM bitcoin_inputs FINAL WHERE commit_id={commit:String} ORDER BY tx_index,input_index\",&params).await?,"
               }
@@ -34408,22 +34462,24 @@
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
               "line": 190,
               "anchor": "pub fn map_evidence(",
-              "role": "four fact-table mappings; typed UTXO legs"
+              "role": "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"
             },
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/storage/writer.rs",
               "line": 75,
               "anchor": "publication::facts(",
-              "role": "generic facts writer caller"
+              "role": "generic facts writer; semantic counts and detector manifest share block publication"
             },
             {
               "families": [
@@ -34431,7 +34487,7 @@
                 "utxo"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 280,
+              "line": 284,
               "anchor": "pub async fn backfill(",
               "role": "legacy read-only migration owner"
             },
@@ -34445,6 +34501,38 @@
               "line": 19,
               "anchor": "pub fn utxos()",
               "role": "canonical readers preserve BIP30 occurrence"
+            },
+            {
+              "families": [
+                "holdings",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/holdings.rs",
+              "line": 68,
+              "anchor": "pub async fn read(",
+              "role": "exact canonical latest-outpoint states before address filter, coinbase maturity and bound snapshot; aggregate totals independent of output list limit"
+            },
+            {
+              "families": [
+                "core",
+                "utxo",
+                "activity"
+              ],
+              "path": "dockerizd_bitcoin/src/activity.rs",
+              "line": 141,
+              "anchor": "pub async fn read(",
+              "role": "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"
+            },
+            {
+              "families": [
+                "operations",
+                "core",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+              "line": 102,
+              "anchor": "async fn discover(",
+              "role": "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"
             }
           ]
         },
@@ -34683,22 +34771,24 @@
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
               "line": 190,
               "anchor": "pub fn map_evidence(",
-              "role": "four fact-table mappings; typed UTXO legs"
+              "role": "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"
             },
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/storage/writer.rs",
               "line": 75,
               "anchor": "publication::facts(",
-              "role": "generic facts writer caller"
+              "role": "generic facts writer; semantic counts and detector manifest share block publication"
             },
             {
               "families": [
@@ -34706,7 +34796,7 @@
                 "utxo"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 280,
+              "line": 284,
               "anchor": "pub async fn backfill(",
               "role": "legacy read-only migration owner"
             },
@@ -34720,6 +34810,38 @@
               "line": 19,
               "anchor": "pub fn utxos()",
               "role": "canonical readers preserve BIP30 occurrence"
+            },
+            {
+              "families": [
+                "holdings",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/holdings.rs",
+              "line": 68,
+              "anchor": "pub async fn read(",
+              "role": "exact canonical latest-outpoint states before address filter, coinbase maturity and bound snapshot; aggregate totals independent of output list limit"
+            },
+            {
+              "families": [
+                "core",
+                "utxo",
+                "activity"
+              ],
+              "path": "dockerizd_bitcoin/src/activity.rs",
+              "line": 141,
+              "anchor": "pub async fn read(",
+              "role": "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"
+            },
+            {
+              "families": [
+                "operations",
+                "core",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+              "line": 102,
+              "anchor": "async fn discover(",
+              "role": "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"
             }
           ]
         },
@@ -34918,7 +35040,7 @@
             },
             {
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 344,
+              "line": 348,
               "role": "literal_reader",
               "text": "outputs:db.rows::<Output>(\"SELECT * FROM bitcoin_outputs FINAL WHERE commit_id={commit:String} ORDER BY tx_index,output_index\",&params).await?,"
             }
@@ -34929,7 +35051,7 @@
             "literal_readers": [
               {
                 "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-                "line": 344,
+                "line": 348,
                 "role": "literal_reader",
                 "text": "outputs:db.rows::<Output>(\"SELECT * FROM bitcoin_outputs FINAL WHERE commit_id={commit:String} ORDER BY tx_index,output_index\",&params).await?,"
               }
@@ -34963,22 +35085,24 @@
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
               "line": 190,
               "anchor": "pub fn map_evidence(",
-              "role": "four fact-table mappings; typed UTXO legs"
+              "role": "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"
             },
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/storage/writer.rs",
               "line": 75,
               "anchor": "publication::facts(",
-              "role": "generic facts writer caller"
+              "role": "generic facts writer; semantic counts and detector manifest share block publication"
             },
             {
               "families": [
@@ -34986,7 +35110,7 @@
                 "utxo"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 280,
+              "line": 284,
               "anchor": "pub async fn backfill(",
               "role": "legacy read-only migration owner"
             },
@@ -35000,6 +35124,38 @@
               "line": 19,
               "anchor": "pub fn utxos()",
               "role": "canonical readers preserve BIP30 occurrence"
+            },
+            {
+              "families": [
+                "holdings",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/holdings.rs",
+              "line": 68,
+              "anchor": "pub async fn read(",
+              "role": "exact canonical latest-outpoint states before address filter, coinbase maturity and bound snapshot; aggregate totals independent of output list limit"
+            },
+            {
+              "families": [
+                "core",
+                "utxo",
+                "activity"
+              ],
+              "path": "dockerizd_bitcoin/src/activity.rs",
+              "line": 141,
+              "anchor": "pub async fn read(",
+              "role": "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"
+            },
+            {
+              "families": [
+                "operations",
+                "core",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+              "line": 102,
+              "anchor": "async fn discover(",
+              "role": "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"
             }
           ]
         },
@@ -35225,22 +35381,24 @@
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
               "line": 190,
               "anchor": "pub fn map_evidence(",
-              "role": "four fact-table mappings; typed UTXO legs"
+              "role": "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"
             },
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/storage/writer.rs",
               "line": 75,
               "anchor": "publication::facts(",
-              "role": "generic facts writer caller"
+              "role": "generic facts writer; semantic counts and detector manifest share block publication"
             },
             {
               "families": [
@@ -35248,7 +35406,7 @@
                 "utxo"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 280,
+              "line": 284,
               "anchor": "pub async fn backfill(",
               "role": "legacy read-only migration owner"
             },
@@ -35262,6 +35420,38 @@
               "line": 19,
               "anchor": "pub fn utxos()",
               "role": "canonical readers preserve BIP30 occurrence"
+            },
+            {
+              "families": [
+                "holdings",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/holdings.rs",
+              "line": 68,
+              "anchor": "pub async fn read(",
+              "role": "exact canonical latest-outpoint states before address filter, coinbase maturity and bound snapshot; aggregate totals independent of output list limit"
+            },
+            {
+              "families": [
+                "core",
+                "utxo",
+                "activity"
+              ],
+              "path": "dockerizd_bitcoin/src/activity.rs",
+              "line": 141,
+              "anchor": "pub async fn read(",
+              "role": "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"
+            },
+            {
+              "families": [
+                "operations",
+                "core",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+              "line": 102,
+              "anchor": "async fn discover(",
+              "role": "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"
             }
           ]
         },
@@ -35436,22 +35626,24 @@
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
               "line": 190,
               "anchor": "pub fn map_evidence(",
-              "role": "four fact-table mappings; typed UTXO legs"
+              "role": "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"
             },
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/storage/writer.rs",
               "line": 75,
               "anchor": "publication::facts(",
-              "role": "generic facts writer caller"
+              "role": "generic facts writer; semantic counts and detector manifest share block publication"
             },
             {
               "families": [
@@ -35459,7 +35651,7 @@
                 "utxo"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 280,
+              "line": 284,
               "anchor": "pub async fn backfill(",
               "role": "legacy read-only migration owner"
             },
@@ -35482,6 +35674,28 @@
               "line": 8,
               "anchor": "publication::state(",
               "role": "checkpoint/current-state reader"
+            },
+            {
+              "families": [
+                "core",
+                "utxo",
+                "activity"
+              ],
+              "path": "dockerizd_bitcoin/src/activity.rs",
+              "line": 141,
+              "anchor": "pub async fn read(",
+              "role": "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"
+            },
+            {
+              "families": [
+                "operations",
+                "core",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+              "line": 102,
+              "anchor": "async fn discover(",
+              "role": "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"
             }
           ]
         },
@@ -35647,22 +35861,24 @@
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
               "line": 190,
               "anchor": "pub fn map_evidence(",
-              "role": "four fact-table mappings; typed UTXO legs"
+              "role": "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"
             },
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/storage/writer.rs",
               "line": 75,
               "anchor": "publication::facts(",
-              "role": "generic facts writer caller"
+              "role": "generic facts writer; semantic counts and detector manifest share block publication"
             },
             {
               "families": [
@@ -35670,7 +35886,7 @@
                 "utxo"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 280,
+              "line": 284,
               "anchor": "pub async fn backfill(",
               "role": "legacy read-only migration owner"
             },
@@ -35693,6 +35909,28 @@
               "line": 8,
               "anchor": "publication::state(",
               "role": "checkpoint/current-state reader"
+            },
+            {
+              "families": [
+                "core",
+                "utxo",
+                "activity"
+              ],
+              "path": "dockerizd_bitcoin/src/activity.rs",
+              "line": 141,
+              "anchor": "pub async fn read(",
+              "role": "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"
+            },
+            {
+              "families": [
+                "operations",
+                "core",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+              "line": 102,
+              "anchor": "async fn discover(",
+              "role": "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"
             }
           ]
         },
@@ -35876,7 +36114,7 @@
             },
             {
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 342,
+              "line": 346,
               "role": "literal_reader",
               "text": "transactions:db.rows::<Transaction>(\"SELECT * FROM bitcoin_transactions FINAL WHERE commit_id={commit:String} ORDER BY tx_index\",&params).await?,"
             }
@@ -35887,7 +36125,7 @@
             "literal_readers": [
               {
                 "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-                "line": 342,
+                "line": 346,
                 "role": "literal_reader",
                 "text": "transactions:db.rows::<Transaction>(\"SELECT * FROM bitcoin_transactions FINAL WHERE commit_id={commit:String} ORDER BY tx_index\",&params).await?,"
               }
@@ -35951,22 +36189,24 @@
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
               "line": 190,
               "anchor": "pub fn map_evidence(",
-              "role": "four fact-table mappings; typed UTXO legs"
+              "role": "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"
             },
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/storage/writer.rs",
               "line": 75,
               "anchor": "publication::facts(",
-              "role": "generic facts writer caller"
+              "role": "generic facts writer; semantic counts and detector manifest share block publication"
             },
             {
               "families": [
@@ -35974,7 +36214,7 @@
                 "utxo"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 280,
+              "line": 284,
               "anchor": "pub async fn backfill(",
               "role": "legacy read-only migration owner"
             },
@@ -35997,6 +36237,28 @@
               "line": 8,
               "anchor": "publication::state(",
               "role": "checkpoint/current-state reader"
+            },
+            {
+              "families": [
+                "core",
+                "utxo",
+                "activity"
+              ],
+              "path": "dockerizd_bitcoin/src/activity.rs",
+              "line": 141,
+              "anchor": "pub async fn read(",
+              "role": "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"
+            },
+            {
+              "families": [
+                "operations",
+                "core",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+              "line": 102,
+              "anchor": "async fn discover(",
+              "role": "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"
             }
           ]
         },
@@ -36237,22 +36499,24 @@
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
               "line": 190,
               "anchor": "pub fn map_evidence(",
-              "role": "four fact-table mappings; typed UTXO legs"
+              "role": "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"
             },
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/storage/writer.rs",
               "line": 75,
               "anchor": "publication::facts(",
-              "role": "generic facts writer caller"
+              "role": "generic facts writer; semantic counts and detector manifest share block publication"
             },
             {
               "families": [
@@ -36260,7 +36524,7 @@
                 "utxo"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 280,
+              "line": 284,
               "anchor": "pub async fn backfill(",
               "role": "legacy read-only migration owner"
             },
@@ -36283,6 +36547,28 @@
               "line": 8,
               "anchor": "publication::state(",
               "role": "checkpoint/current-state reader"
+            },
+            {
+              "families": [
+                "core",
+                "utxo",
+                "activity"
+              ],
+              "path": "dockerizd_bitcoin/src/activity.rs",
+              "line": 141,
+              "anchor": "pub async fn read(",
+              "role": "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"
+            },
+            {
+              "families": [
+                "operations",
+                "core",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+              "line": 102,
+              "anchor": "async fn discover(",
+              "role": "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"
             }
           ]
         },
@@ -36478,22 +36764,24 @@
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
               "line": 190,
               "anchor": "pub fn map_evidence(",
-              "role": "four fact-table mappings; typed UTXO legs"
+              "role": "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"
             },
             {
               "families": [
                 "core",
-                "utxo"
+                "utxo",
+                "semantic"
               ],
               "path": "dockerizd_bitcoin/src/storage/writer.rs",
               "line": 75,
               "anchor": "publication::facts(",
-              "role": "generic facts writer caller"
+              "role": "generic facts writer; semantic counts and detector manifest share block publication"
             },
             {
               "families": [
@@ -36501,7 +36789,7 @@
                 "utxo"
               ],
               "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-              "line": 280,
+              "line": 284,
               "anchor": "pub async fn backfill(",
               "role": "legacy read-only migration owner"
             },
@@ -36515,6 +36803,38 @@
               "line": 19,
               "anchor": "pub fn utxos()",
               "role": "canonical readers preserve BIP30 occurrence"
+            },
+            {
+              "families": [
+                "holdings",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/holdings.rs",
+              "line": 68,
+              "anchor": "pub async fn read(",
+              "role": "exact canonical latest-outpoint states before address filter, coinbase maturity and bound snapshot; aggregate totals independent of output list limit"
+            },
+            {
+              "families": [
+                "core",
+                "utxo",
+                "activity"
+              ],
+              "path": "dockerizd_bitcoin/src/activity.rs",
+              "line": 141,
+              "anchor": "pub async fn read(",
+              "role": "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"
+            },
+            {
+              "families": [
+                "operations",
+                "core",
+                "utxo"
+              ],
+              "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+              "line": 102,
+              "anchor": "async fn discover(",
+              "role": "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"
             }
           ]
         }
@@ -36523,22 +36843,42 @@
         {
           "families": [
             "core",
-            "utxo"
+            "utxo",
+            "semantic"
           ],
           "path": "dockerizd_bitcoin/src/db/warehouse.rs",
           "line": 190,
           "anchor": "pub fn map_evidence(",
-          "role": "four fact-table mappings; typed UTXO legs"
+          "role": "five fact-table mappings; typed UTXO legs and versioned single-transaction semantic events"
         },
         {
           "families": [
             "core",
-            "utxo"
+            "utxo",
+            "semantic"
           ],
           "path": "dockerizd_bitcoin/src/storage/writer.rs",
           "line": 75,
           "anchor": "publication::facts(",
-          "role": "generic facts writer caller"
+          "role": "generic facts writer; semantic counts and detector manifest share block publication"
+        },
+        {
+          "families": [
+            "semantic"
+          ],
+          "path": "dockerizd_bitcoin/src/semantics.rs",
+          "line": 169,
+          "anchor": "pub fn block_facts(",
+          "role": "single-transaction patterns published with block; no ownership or risk inference"
+        },
+        {
+          "families": [
+            "semantic"
+          ],
+          "path": "dockerizd_bitcoin/src/semantics.rs",
+          "line": 258,
+          "anchor": "pub async fn read(",
+          "role": "bounded canonical pattern reader, historical fallback and exact-outpoint peel-chain context; captured in persisted risk inputs"
         },
         {
           "families": [
@@ -36546,7 +36886,7 @@
             "utxo"
           ],
           "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-          "line": 280,
+          "line": 284,
           "anchor": "pub async fn backfill(",
           "role": "legacy read-only migration owner"
         },
@@ -36563,6 +36903,61 @@
         },
         {
           "families": [
+            "metadata"
+          ],
+          "path": "dockerizd_bitcoin/src/assets.rs",
+          "line": 71,
+          "anchor": "pub async fn initialize(",
+          "role": "idempotent native BTC protocol-definition writer in the existing asset table; rejects conflicting metadata"
+        },
+        {
+          "families": [
+            "metadata"
+          ],
+          "path": "dockerizd_bitcoin/src/assets.rs",
+          "line": 88,
+          "anchor": "pub async fn read(",
+          "role": "visible native metadata and stable definition snapshot; no human intelligence approval or supply estimate"
+        },
+        {
+          "families": [
+            "holdings",
+            "utxo"
+          ],
+          "path": "dockerizd_bitcoin/src/holdings.rs",
+          "line": 68,
+          "anchor": "pub async fn read(",
+          "role": "exact canonical latest-outpoint states before address filter, coinbase maturity and bound snapshot; aggregate totals independent of output list limit"
+        },
+        {
+          "families": [
+            "clustering"
+          ],
+          "path": "dockerizd_bitcoin/src/clustering/store.rs",
+          "line": 300,
+          "anchor": "pub async fn compute(",
+          "role": "bounded canonical common-input/change leads; existing cluster run/claim/membership/version tables and publication seal; no ownership or risk inference"
+        },
+        {
+          "families": [
+            "clustering"
+          ],
+          "path": "dockerizd_bitcoin/src/clustering/store.rs",
+          "line": 436,
+          "anchor": "pub async fn review(",
+          "role": "explicit optimistic lead-only review; immutable versions, separate review lock and source/review freshness checks"
+        },
+        {
+          "families": [
+            "clustering"
+          ],
+          "path": "dockerizd_bitcoin/src/clustering/store.rs",
+          "line": 384,
+          "anchor": "pub async fn inspect(",
+          "role": "verify the complete stored output set, publication, detector and latest reviewed version; preserve historical candidates"
+        },
+        {
+          "families": [
             "core"
           ],
           "path": "dockerizd_bitcoin/src/db/queries.rs",
@@ -36572,12 +36967,47 @@
         },
         {
           "families": [
+            "core",
+            "utxo",
+            "activity"
+          ],
+          "path": "dockerizd_bitcoin/src/activity.rs",
+          "line": 141,
+          "anchor": "pub async fn read(",
+          "role": "scoped canonical wallet aggregates, UTC activity, exact occurrence fees and contextual peers; no feature-table writer"
+        },
+        {
+          "families": [
             "operations"
           ],
           "path": "dockerizd_bitcoin/src/bitcoin/failures.rs",
           "line": 143,
           "anchor": "aml_ingestion_failures",
           "role": "failure writer and current-state reader"
+        },
+        {
+          "families": [
+            "operations",
+            "core",
+            "utxo"
+          ],
+          "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+          "line": 102,
+          "anchor": "async fn discover(",
+          "role": "continuous bounded canonical address sweeps with a durable local operational cursor; no new warehouse table"
+        },
+        {
+          "families": [
+            "activity",
+            "semantic",
+            "clustering",
+            "exposure",
+            "risk"
+          ],
+          "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+          "line": 252,
+          "anchor": "async fn analyze(",
+          "role": "worker reuses the canonical investigation pipeline; fingerprint/semantic inputs in existing risk assessment, existing sealed cluster/exposure outputs; never approves claims"
         },
         {
           "families": [
@@ -36596,6 +37026,42 @@
           "line": 418,
           "anchor": "pub async fn read(",
           "role": "address-scoped active source/review/validity reader and snapshot"
+        },
+        {
+          "families": [
+            "exposure"
+          ],
+          "path": "dockerizd_bitcoin/src/exposure/mod.rs",
+          "line": 162,
+          "anchor": "pub async fn compute(",
+          "role": "bounded canonical UTXO tracing, captured seed snapshots, derived rows and publication seal"
+        },
+        {
+          "families": [
+            "exposure"
+          ],
+          "path": "dockerizd_bitcoin/src/exposure/mod.rs",
+          "line": 249,
+          "anchor": "pub async fn inspect(",
+          "role": "run reader verifies chain, publication, row IDs/counts and attribution dependencies"
+        },
+        {
+          "families": [
+            "risk"
+          ],
+          "path": "dockerizd_bitcoin/src/risk.rs",
+          "line": 206,
+          "anchor": "pub async fn record(",
+          "role": "shared compiled policy; persist policy/rules, assessment/signals and sealed publication"
+        },
+        {
+          "families": [
+            "risk"
+          ],
+          "path": "dockerizd_bitcoin/src/risk.rs",
+          "line": 287,
+          "anchor": "pub async fn inspect(",
+          "role": "read structured assessment and verify rows, policy and attribution/exposure dependencies"
         }
       ]
     }
@@ -36959,19 +37425,19 @@
         },
         {
           "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-          "line": 223,
+          "line": 227,
           "role": "schema_or_adapter_reference",
           "text": "tables.get_mut(\"aml_address_relationships\").unwrap().push(with_header(json!({"
         },
         {
           "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-          "line": 240,
+          "line": 244,
           "role": "schema_or_adapter_reference",
           "text": "tables.get_mut(\"aml_address_relationships\").unwrap().push(with_header(json!({"
         },
         {
           "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-          "line": 252,
+          "line": 256,
           "role": "schema_or_adapter_reference",
           "text": "if *table == \"aml_address_relationships\" {"
         }
@@ -37306,9 +37772,15 @@
         },
         {
           "path": "dockerizd_bitcoin/src/db/migrations.rs",
-          "line": 39,
+          "line": 40,
           "role": "schema_or_adapter_reference",
           "text": "let rows: Vec<Value> = self.rows(\"SELECT count() AS n FROM system.tables WHERE database = currentDatabase() AND name IN ('aml_sync_state_current','aml_ingested_blocks_canonical','aml_transactions_canonical','aml_bitcoin_outputs_canonical','aml_bitcoin_inputs_canonical','aml_address_relationships_canonical')\", &[]).await?;"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/exposure/trace.rs",
+          "line": 208,
+          "role": "literal_reader",
+          "text": "let roots:Vec<Value>=db.rows(&format!(\"SELECT block_hash,tx_hash,block_number,transaction_index FROM aml_address_relationships_canonical WHERE network_id={{network:String}} AND (from_address={{address:String}} OR to_address={{address:String}}) GROUP BY block_hash,tx_hash,block_number,transaction_index ORDER BY block_number DESC,transaction_index DESC LIMIT {}\",options.max_transactions+1),&[(\"network\",NETWORK_ID.into()),(\"address\",address.into())]).await?;"
         }
       ],
       "runtime": {
@@ -37481,13 +37953,31 @@
           "line": 47,
           "role": "unproven_reference",
           "text": "|| [\"aml_asset_metadata\", \"aml_metadata_jobs\"].contains(&table))"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/assets.rs",
+          "line": 37,
+          "role": "unproven_reference",
+          "text": ".find(|t| t.name == \"aml_asset_metadata\")"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/assets.rs",
+          "line": 49,
+          "role": "unproven_reference",
+          "text": "aml_warehouse::semantics::validate_row(&contract, \"aml_asset_metadata\", &value)?;"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/assets.rs",
+          "line": 80,
+          "role": "unproven_reference",
+          "text": "\"aml_asset_metadata\","
         }
       ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "active Bitcoin compiled native BTC protocol metadata bootstrap/read/verification; current/visible registry, explicit source and stable metadata snapshot; no circulating supply estimate or imported intelligence approval"
       }
     },
     {
@@ -37649,12 +38139,19 @@
           "unit": "unix_ms"
         }
       ],
-      "access_evidence": [],
+      "access_evidence": [
+        {
+          "path": "dockerizd_bitcoin/src/assets.rs",
+          "line": 56,
+          "role": "unproven_reference",
+          "text": "\"aml_asset_metadata_current\""
+        }
+      ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "active Bitcoin compiled native BTC protocol metadata bootstrap/read/verification; current/visible registry, explicit source and stable metadata snapshot; no circulating supply estimate or imported intelligence approval"
       }
     },
     {
@@ -37862,7 +38359,7 @@
         },
         {
           "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-          "line": 222,
+          "line": 226,
           "role": "schema_or_adapter_reference",
           "text": "tables.get_mut(\"aml_bitcoin_inputs\").unwrap().push(with_header(json!({\"tx_hash\":input.txid,\"transaction_index\":input.tx_index,\"input_index\":input.input_index,\"address\":address,\"script_hex\":input.output.script_hex,\"script_type\":input.output.script_type,\"value_sats\":input.output.value_sats,\"prev_tx_hash\":input.prev_txid,\"prev_output_index\":input.prev_vout})));"
         }
@@ -38069,8 +38566,26 @@
       ],
       "access_evidence": [
         {
+          "path": "dockerizd_bitcoin/src/activity.rs",
+          "line": 240,
+          "role": "unproven_reference",
+          "text": "peer_branch(\"aml_bitcoin_inputs_canonical\",\"input_in_receipt_tx\",\"s.received_output_count>0\"),peer_branch(\"aml_bitcoin_outputs_canonical\",\"output_in_spend_tx\",\"s.spent_input_count>0\"),query.counterparty_limit+1);"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+          "line": 111,
+          "role": "literal_reader",
+          "text": "let rows:Vec<Value>=db.rows(\"SELECT address FROM (SELECT address FROM aml_bitcoin_inputs_canonical WHERE network_id={network:String} AND block_number<={height:UInt64} AND isNotNull(address) UNION ALL SELECT address FROM aml_bitcoin_outputs_canonical WHERE network_id={network:String} AND block_number<={height:UInt64} AND isNotNull(address)) WHERE address>{after:String} GROUP BY address ORDER BY address LIMIT {limit:UInt64} SETTINGS max_threads=2,max_memory_usage=268435456,max_execution_time=15\",&[(\"network\",NETWORK_ID.into()),(\"height\",scan.height.to_string()),(\"after\",scan.after_address.clone()),(\"limit\",(count+1).to_string())]).await?;"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/bitcoin/transactions.rs",
+          "line": 308,
+          "role": "literal_reader",
+          "text": "let rows:Vec<Value>=self.db.rows(\"SELECT block_hash,tx_hash,input_index FROM aml_bitcoin_inputs_canonical WHERE network_id={network:String} AND prev_tx_hash={tx:String} AND prev_output_index={index:UInt32} AND tuple(block_number,transaction_index)>tuple({height:UInt64},{position:UInt32}) ORDER BY block_number,transaction_index LIMIT 1\",&params).await?;"
+        },
+        {
           "path": "dockerizd_bitcoin/src/db/migrations.rs",
-          "line": 39,
+          "line": 40,
           "role": "schema_or_adapter_reference",
           "text": "let rows: Vec<Value> = self.rows(\"SELECT count() AS n FROM system.tables WHERE database = currentDatabase() AND name IN ('aml_sync_state_current','aml_ingested_blocks_canonical','aml_transactions_canonical','aml_bitcoin_outputs_canonical','aml_bitcoin_inputs_canonical','aml_address_relationships_canonical')\", &[]).await?;"
         },
@@ -38282,7 +38797,7 @@
         },
         {
           "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-          "line": 239,
+          "line": 243,
           "role": "schema_or_adapter_reference",
           "text": "tables.get_mut(\"aml_bitcoin_outputs\").unwrap().push(with_header(json!({\"tx_hash\":output.txid,\"transaction_index\":output.tx_index,\"output_index\":output.output_index,\"coinbase\":output.coinbase,\"address\":address,\"script_hex\":output.output.script_hex,\"script_type\":output.output.script_type,\"value_sats\":output.output.value_sats})));"
         }
@@ -38478,8 +38993,26 @@
       ],
       "access_evidence": [
         {
+          "path": "dockerizd_bitcoin/src/activity.rs",
+          "line": 240,
+          "role": "unproven_reference",
+          "text": "peer_branch(\"aml_bitcoin_inputs_canonical\",\"input_in_receipt_tx\",\"s.received_output_count>0\"),peer_branch(\"aml_bitcoin_outputs_canonical\",\"output_in_spend_tx\",\"s.spent_input_count>0\"),query.counterparty_limit+1);"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+          "line": 111,
+          "role": "literal_reader",
+          "text": "let rows:Vec<Value>=db.rows(\"SELECT address FROM (SELECT address FROM aml_bitcoin_inputs_canonical WHERE network_id={network:String} AND block_number<={height:UInt64} AND isNotNull(address) UNION ALL SELECT address FROM aml_bitcoin_outputs_canonical WHERE network_id={network:String} AND block_number<={height:UInt64} AND isNotNull(address)) WHERE address>{after:String} GROUP BY address ORDER BY address LIMIT {limit:UInt64} SETTINGS max_threads=2,max_memory_usage=268435456,max_execution_time=15\",&[(\"network\",NETWORK_ID.into()),(\"height\",scan.height.to_string()),(\"after\",scan.after_address.clone()),(\"limit\",(count+1).to_string())]).await?;"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/bitcoin/transactions.rs",
+          "line": 272,
+          "role": "literal_reader",
+          "text": "let rows:Vec<Value>=self.db.rows(\"SELECT block_hash,tx_hash FROM aml_bitcoin_outputs_canonical WHERE network_id={network:String} AND tx_hash={tx:String} AND output_index={index:UInt32} AND tuple(block_number,transaction_index)<tuple({height:UInt64},{position:UInt32}) ORDER BY block_number DESC,transaction_index DESC LIMIT 1\",&params).await?;"
+        },
+        {
           "path": "dockerizd_bitcoin/src/db/migrations.rs",
-          "line": 39,
+          "line": 40,
           "role": "schema_or_adapter_reference",
           "text": "let rows: Vec<Value> = self.rows(\"SELECT count() AS n FROM system.tables WHERE database = currentDatabase() AND name IN ('aml_sync_state_current','aml_ingested_blocks_canonical','aml_transactions_canonical','aml_bitcoin_outputs_canonical','aml_bitcoin_inputs_canonical','aml_address_relationships_canonical')\", &[]).await?;"
         },
@@ -38660,6 +39193,18 @@
           "line": 77,
           "role": "unproven_reference",
           "text": "\"aml_cluster_claims\","
+        },
+        {
+          "path": "dockerizd_bitcoin/src/clustering/store.rs",
+          "line": 151,
+          "role": "unproven_reference",
+          "text": "out.get_mut(\"aml_cluster_claims\").unwrap().push(row(\"aml_cluster_claims\",json!({\"network_id\":NETWORK_ID,\"claim_id\":claim,\"cluster_id\":c[\"cluster_id\"],\"subject_id\":member,"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/clustering/store.rs",
+          "line": 151,
+          "role": "unproven_reference",
+          "text": "out.get_mut(\"aml_cluster_claims\").unwrap().push(row(\"aml_cluster_claims\",json!({\"network_id\":NETWORK_ID,\"claim_id\":claim,\"cluster_id\":c[\"cluster_id\"],\"subject_id\":member,"
         }
       ],
       "runtime": {
@@ -38944,6 +39489,18 @@
           "line": 78,
           "role": "unproven_reference",
           "text": "\"aml_cluster_memberships\","
+        },
+        {
+          "path": "dockerizd_bitcoin/src/clustering/store.rs",
+          "line": 156,
+          "role": "unproven_reference",
+          "text": "out.get_mut(\"aml_cluster_memberships\").unwrap().push(row(\"aml_cluster_memberships\",json!({\"network_id\":NETWORK_ID,\"cluster_id\":c[\"cluster_id\"],\"cluster_version\":id,\"subject_id\":member,\"claim_id\":claim,"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/clustering/store.rs",
+          "line": 156,
+          "role": "unproven_reference",
+          "text": "out.get_mut(\"aml_cluster_memberships\").unwrap().push(row(\"aml_cluster_memberships\",json!({\"network_id\":NETWORK_ID,\"cluster_id\":c[\"cluster_id\"],\"cluster_version\":id,\"subject_id\":member,\"claim_id\":claim,"
         }
       ],
       "runtime": {
@@ -39105,6 +39662,18 @@
           "line": 76,
           "role": "unproven_reference",
           "text": "\"aml_cluster_runs\","
+        },
+        {
+          "path": "dockerizd_bitcoin/src/clustering/store.rs",
+          "line": 135,
+          "role": "unproven_reference",
+          "text": "out.get_mut(\"aml_cluster_runs\").unwrap().push(row(\"aml_cluster_runs\",json!({\"network_id\":NETWORK_ID,\"run_id\":id,\"status\":if partial{\"truncated\"}else{\"complete\"},\"as_of_block\":source[\"as_of_block\"],"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/clustering/store.rs",
+          "line": 135,
+          "role": "unproven_reference",
+          "text": "out.get_mut(\"aml_cluster_runs\").unwrap().push(row(\"aml_cluster_runs\",json!({\"network_id\":NETWORK_ID,\"run_id\":id,\"status\":if partial{\"truncated\"}else{\"complete\"},\"as_of_block\":source[\"as_of_block\"],"
         }
       ],
       "runtime": {
@@ -39262,7 +39831,20 @@
           "unit": "unix_ms"
         }
       ],
-      "access_evidence": [],
+      "access_evidence": [
+        {
+          "path": "dockerizd_bitcoin/src/clustering/store.rs",
+          "line": 179,
+          "role": "literal_reader",
+          "text": "let parent=query(db,\"SELECT settings_json FROM aml_cluster_runs_current WHERE network_id={network:String} AND run_id={run:String} LIMIT 2\",&[(\"network\",NETWORK_ID.into()),(\"run\",v[\"run_id\"].as_str().context(\"review run missing\")?.into())]).await?;"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/clustering/store.rs",
+          "line": 388,
+          "role": "literal_reader",
+          "text": "let run=query(db,\"SELECT * FROM aml_cluster_runs_current WHERE network_id={network:String} AND run_id={run:String} LIMIT 2\",&params).await?;"
+        }
+      ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
@@ -39825,13 +40407,25 @@
           "line": 173,
           "role": "unproven_reference",
           "text": "parent[\"path_count\"].as_u64() == Some(counts[\"aml_exposure_paths\"]),"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/exposure/mod.rs",
+          "line": 128,
+          "role": "unproven_reference",
+          "text": "stored.push(row(\"aml_exposure_paths\",json!({\"network_id\":NETWORK_ID,\"path_id\":p[\"path_id\"],\"run_id\":id,\"subject_id\":p[\"subject_id\"],\"seed_id\":p[\"seed_id\"],\"direction\":p[\"direction\"],\"hop_count\":p[\"hop_count\"],\"asset_id\":\"native:BTC\","
+        },
+        {
+          "path": "dockerizd_bitcoin/src/exposure/mod.rs",
+          "line": 155,
+          "role": "unproven_reference",
+          "text": "(\"aml_exposure_paths\".into(), stored),"
         }
       ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "active bounded on-demand Bitcoin exposure CLI/API, exact-outpoint conservative value bounds and current-run verification; background worker remains open"
       }
     },
     {
@@ -39997,13 +40591,31 @@
           "line": 82,
           "role": "unproven_reference",
           "text": "\"aml_exposure_runs\","
+        },
+        {
+          "path": "dockerizd_bitcoin/src/exposure/mod.rs",
+          "line": 112,
+          "role": "unproven_reference",
+          "text": "\"aml_exposure_runs\","
+        },
+        {
+          "path": "dockerizd_bitcoin/src/exposure/mod.rs",
+          "line": 204,
+          "role": "insert_call_writer",
+          "text": "let mut rows=output_rows(&id,&snapshot,revision,&scan.paths)?;rows.insert(\"aml_exposure_runs\".into(),vec![run]);"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/exposure/mod.rs",
+          "line": 235,
+          "role": "unproven_reference",
+          "text": "let _ = put(db, \"aml_exposure_runs\", &[failed]).await;"
         }
       ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "active bounded on-demand Bitcoin exposure CLI/API, exact-outpoint conservative value bounds and current-run verification; background worker remains open"
       }
     },
     {
@@ -40165,12 +40777,19 @@
           "unit": "unix_ms"
         }
       ],
-      "access_evidence": [],
+      "access_evidence": [
+        {
+          "path": "dockerizd_bitcoin/src/exposure/mod.rs",
+          "line": 253,
+          "role": "literal_reader",
+          "text": "let runs:Vec<Value>=db.rows(\"SELECT * FROM aml_exposure_runs_current WHERE network_id={network:String} AND run_id={run:String} LIMIT 2\",&params).await?;"
+        }
+      ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "active bounded on-demand Bitcoin exposure CLI/API, exact-outpoint conservative value bounds and current-run verification; background worker remains open"
       }
     },
     {
@@ -40275,12 +40894,25 @@
           "unit": "unix_ms"
         }
       ],
-      "access_evidence": [],
+      "access_evidence": [
+        {
+          "path": "dockerizd_bitcoin/src/exposure/mod.rs",
+          "line": 208,
+          "role": "unproven_reference",
+          "text": "seeds.insert(p[\"seed_id\"].as_str().unwrap().to_owned(),row(\"aml_exposure_seeds\",json!({\"network_id\":NETWORK_ID,\"seed_id\":p[\"seed_id\"],\"address\":p[\"seed_address\"],\"claim_id\":c[\"claim_id\"],\"category\":c[\"seed_category\"],\"is_active\":1,\"revision\":revision,\"created_at_unix_ms\":revision,"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/exposure/mod.rs",
+          "line": 211,
+          "role": "unproven_reference",
+          "text": "put(db,\"aml_exposure_seeds\",&seeds.into_values().collect::<Vec<_>>()).await?;"
+        }
+      ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "captured Bitcoin seed/claim revision snapshots; current eligibility requires the exposure run's attribution check"
       }
     },
     {
@@ -40392,7 +41024,7 @@
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "captured Bitcoin seed/claim revision snapshots; current eligibility requires the exposure run's attribution check"
       }
     },
     {
@@ -40661,7 +41293,7 @@
         },
         {
           "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-          "line": 272,
+          "line": 276,
           "role": "literal_reader",
           "text": "let receipts: Vec<Value> = db.rows(\"SELECT count() AS n FROM aml_ingested_blocks FINAL WHERE network_id={network:String} AND block_number={height:UInt64} AND block_hash={hash:String} AND source_id={source:String} AND ingestion_status='complete' AND canonical=1 AND revision<={revision:UInt64}\",&[(\"network\",crate::NETWORK_ID.into()),(\"height\",legacy.tip_height.to_string()),(\"hash\",legacy.tip_hash.clone()),(\"source\",format!(\"bitcoin_legacy_backfill_v1:{}\",legacy.revision)),(\"revision\",current.revision.to_string())]).await?;"
         }
@@ -40894,15 +41526,21 @@
         },
         {
           "path": "dockerizd_bitcoin/src/db/migrations.rs",
-          "line": 39,
+          "line": 40,
           "role": "schema_or_adapter_reference",
           "text": "let rows: Vec<Value> = self.rows(\"SELECT count() AS n FROM system.tables WHERE database = currentDatabase() AND name IN ('aml_sync_state_current','aml_ingested_blocks_canonical','aml_transactions_canonical','aml_bitcoin_outputs_canonical','aml_bitcoin_inputs_canonical','aml_address_relationships_canonical')\", &[]).await?;"
         },
         {
           "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-          "line": 310,
+          "line": 314,
           "role": "literal_reader",
           "text": "let markers: Vec<Value> = db.rows(\"SELECT source_id FROM aml_ingested_blocks_canonical WHERE network_id={network:String} AND block_number={height:UInt64}\",&[(\"network\",crate::NETWORK_ID.into()),(\"height\",current.tip_height.to_string())]).await?;"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/exposure/mod.rs",
+          "line": 191,
+          "role": "literal_reader",
+          "text": "let time:Vec<Value>=db.rows(\"SELECT block_timestamp_unix_ms AS at FROM aml_ingested_blocks_canonical WHERE network_id={network:String} AND block_hash={hash:String} LIMIT 1\",&[(\"network\",NETWORK_ID.into()),(\"hash\",snapshot.state().last_block_hash.clone())]).await?;"
         }
       ],
       "runtime": {
@@ -41715,7 +42353,7 @@
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "active Bitcoin source/import/review CLI and investigation attribution; central label risk and snapshot invalidation; exposure/clustering remain open"
+        "bitcoin": "active Bitcoin source/import/review CLI and investigation attribution; central label risk and exposure seed verification with snapshot invalidation; clustering/background workers remain open"
       }
     },
     {
@@ -41981,7 +42619,7 @@
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "active Bitcoin source/import/review CLI and investigation attribution; central label risk and snapshot invalidation; exposure/clustering remain open"
+        "bitcoin": "active Bitcoin source/import/review CLI and investigation attribution; central label risk and exposure seed verification with snapshot invalidation; clustering/background workers remain open"
       }
     },
     {
@@ -42113,7 +42751,7 @@
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "active Bitcoin source/import/review CLI and investigation attribution; central label risk and snapshot invalidation; exposure/clustering remain open"
+        "bitcoin": "active Bitcoin source/import/review CLI and investigation attribution; central label risk and exposure seed verification with snapshot invalidation; clustering/background workers remain open"
       }
     },
     {
@@ -42256,7 +42894,7 @@
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "active Bitcoin source/import/review CLI and investigation attribution; central label risk and snapshot invalidation; exposure/clustering remain open"
+        "bitcoin": "active Bitcoin source/import/review CLI and investigation attribution; central label risk and exposure seed verification with snapshot invalidation; clustering/background workers remain open"
       }
     },
     {
@@ -42401,7 +43039,7 @@
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "active Bitcoin source/import/review CLI and investigation attribution; central label risk and snapshot invalidation; exposure/clustering remain open"
+        "bitcoin": "active Bitcoin source/import/review CLI and investigation attribution; central label risk and exposure seed verification with snapshot invalidation; clustering/background workers remain open"
       }
     },
     {
@@ -42529,7 +43167,7 @@
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "not_applicable to immutable native BTC protocol constants; no fabricated discovery or metadata job"
       }
     },
     {
@@ -42652,7 +43290,7 @@
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "not_applicable to immutable native BTC protocol constants; no fabricated discovery or metadata job"
       }
     },
     {
@@ -42757,12 +43395,25 @@
           "unit": "unix_ms"
         }
       ],
-      "access_evidence": [],
+      "access_evidence": [
+        {
+          "path": "dockerizd_bitcoin/src/risk.rs",
+          "line": 55,
+          "role": "unproven_reference",
+          "text": "\"aml_risk_policies\","
+        },
+        {
+          "path": "dockerizd_bitcoin/src/risk.rs",
+          "line": 119,
+          "role": "unproven_reference",
+          "text": "\"aml_risk_policies\","
+        }
+      ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "active Bitcoin shared-policy evaluation and local persistence; sealed assessments/signals require the adapter risk reader's policy/intelligence/exposure verification; central consumer recomputes and checks the assessment snapshot"
       }
     },
     {
@@ -42878,12 +43529,25 @@
           "unit": "unix_ms"
         }
       ],
-      "access_evidence": [],
+      "access_evidence": [
+        {
+          "path": "dockerizd_bitcoin/src/risk.rs",
+          "line": 58,
+          "role": "unproven_reference",
+          "text": "let rules=spec[\"rules\"].as_array().unwrap().iter().map(|r|row(\"aml_risk_policy_rules\",json!({\"network_id\":NETWORK_ID,\"policy_version\":policy::POLICY,\"rule_id\":r[\"rule_id\"],\"signal_type\":r[\"signal_type\"],\"max_contribution\":r[\"max_contribution\"],\"description\":r[\"description\"],\"enabled\":1,\"revision\":at,\"created_at_unix_ms\":at,\"settings_json\":r[\"settings\"].to_string(),\"raw_evidence_json\":r.to_string()}))).collect::<Result<Vec<_>>>()?;"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/risk.rs",
+          "line": 112,
+          "role": "unproven_reference",
+          "text": "\"aml_risk_policy_rules\","
+        }
+      ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "active Bitcoin shared-policy evaluation and local persistence; sealed assessments/signals require the adapter risk reader's policy/intelligence/exposure verification; central consumer recomputes and checks the assessment snapshot"
       }
     },
     {
@@ -43252,13 +43916,19 @@
           "line": 54,
           "role": "unproven_reference",
           "text": "Self::Events => \"aml_semantic_aml_events\","
+        },
+        {
+          "path": "dockerizd_bitcoin/src/db/warehouse.rs",
+          "line": 207,
+          "role": "schema_or_adapter_reference",
+          "text": "\"aml_semantic_aml_events\","
         }
       ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "active Bitcoin versioned single-transaction pattern writer under block fence; bounded canonical reader and historical fallback; peel chains captured in risk inputs/central snapshots; no pattern-only score or ownership; historical fact backfill/background worker remain open"
       }
     },
     {
@@ -43509,12 +44179,19 @@
           "unit": "unix_ms"
         }
       ],
-      "access_evidence": [],
+      "access_evidence": [
+        {
+          "path": "dockerizd_bitcoin/src/semantics.rs",
+          "line": 288,
+          "role": "literal_reader",
+          "text": "let stored:Vec<Value>=db.rows(\"SELECT event_id,evidence_json FROM aml_semantic_aml_events_canonical WHERE network_id={network:String} AND block_hash={block:String} AND tx_hash={tx:String} AND detector_version={version:String} LIMIT 5\",&[(\"network\",NETWORK_ID.into()),(\"block\",block.into()),(\"tx\",hash.into()),(\"version\",VERSION.into())]).await?;"
+        }
+      ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "active Bitcoin versioned single-transaction pattern writer under block fence; bounded canonical reader and historical fallback; peel chains captured in risk inputs/central snapshots; no pattern-only score or ownership; historical fact backfill/background worker remain open"
       }
     },
     {
@@ -43765,7 +44442,7 @@
         },
         {
           "path": "dockerizd_bitcoin/src/db/migrations.rs",
-          "line": 39,
+          "line": 40,
           "role": "schema_or_adapter_reference",
           "text": "let rows: Vec<Value> = self.rows(\"SELECT count() AS n FROM system.tables WHERE database = currentDatabase() AND name IN ('aml_sync_state_current','aml_ingested_blocks_canonical','aml_transactions_canonical','aml_bitcoin_outputs_canonical','aml_bitcoin_inputs_canonical','aml_address_relationships_canonical')\", &[]).await?;"
         }
@@ -44400,7 +45077,7 @@
         },
         {
           "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-          "line": 208,
+          "line": 212,
           "role": "schema_or_adapter_reference",
           "text": "tables.get_mut(\"aml_transactions\").unwrap().push(with_header(json!({"
         }
@@ -44663,8 +45340,14 @@
           "text": "let counts:Vec<Value>=db.rows(\"SELECT block_number,count() AS n FROM aml_transactions_canonical WHERE network_id={network:String} AND block_number BETWEEN {from:UInt64} AND {to:UInt64} GROUP BY block_number\",&params).await?;"
         },
         {
+          "path": "dockerizd_bitcoin/src/bitcoin/transactions.rs",
+          "line": 110,
+          "role": "literal_reader",
+          "text": "let rows:Vec<Header>=self.db.rows(\"SELECT block_number,block_hash,tx_hash,transaction_index,block_timestamp_unix_ms,commit_id,revision,coinbase,input_count,output_count,toString(fee_raw) AS fee_raw FROM aml_transactions_canonical WHERE network_id={network:String} AND block_hash={block:String} AND tx_hash={tx:String} LIMIT 2\",&params).await?;"
+        },
+        {
           "path": "dockerizd_bitcoin/src/db/migrations.rs",
-          "line": 39,
+          "line": 40,
           "role": "schema_or_adapter_reference",
           "text": "let rows: Vec<Value> = self.rows(\"SELECT count() AS n FROM system.tables WHERE database = currentDatabase() AND name IN ('aml_sync_state_current','aml_ingested_blocks_canonical','aml_transactions_canonical','aml_bitcoin_outputs_canonical','aml_bitcoin_inputs_canonical','aml_address_relationships_canonical')\", &[]).await?;"
         }
@@ -45148,13 +45831,25 @@
           "line": 86,
           "role": "unproven_reference",
           "text": "\"risk\" => &[\"aml_wallet_risk_assessments\", \"aml_wallet_risk_signals\"],"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/risk.rs",
+          "line": 253,
+          "role": "unproven_reference",
+          "text": "\"aml_wallet_risk_assessments\","
+        },
+        {
+          "path": "dockerizd_bitcoin/src/risk.rs",
+          "line": 257,
+          "role": "unproven_reference",
+          "text": "(\"aml_wallet_risk_assessments\".into(), vec![parent]),"
         }
       ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "active Bitcoin shared-policy evaluation and local persistence; sealed assessments/signals require the adapter risk reader's policy/intelligence/exposure verification; central consumer recomputes and checks the assessment snapshot"
       }
     },
     {
@@ -45327,12 +46022,19 @@
           "unit": "unix_ms"
         }
       ],
-      "access_evidence": [],
+      "access_evidence": [
+        {
+          "path": "dockerizd_bitcoin/src/risk.rs",
+          "line": 295,
+          "role": "literal_reader",
+          "text": "let parents:Vec<Value>=db.rows(\"SELECT * FROM aml_wallet_risk_assessments_current WHERE network_id={network:String} AND assessment_id={id:String} AND subject_id={address:String} LIMIT 2\",&params).await?;"
+        }
+      ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "active Bitcoin shared-policy evaluation and local persistence; sealed assessments/signals require the adapter risk reader's policy/intelligence/exposure verification; central consumer recomputes and checks the assessment snapshot"
       }
     },
     {
@@ -45517,13 +46219,25 @@
           "line": 167,
           "role": "unproven_reference",
           "text": "parent[\"signal_count\"].as_u64() == Some(counts[\"aml_wallet_risk_signals\"]),"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/risk.rs",
+          "line": 187,
+          "role": "unproven_reference",
+          "text": "row(\"aml_wallet_risk_signals\",json!({\"network_id\":NETWORK_ID,\"signal_id\":policy::digest(&json!([id,index,s])),\"assessment_id\":id,\"subject_id\":address,\"policy_version\":policy::POLICY,\"signal_type\":s[\"signal_type\"],\"contribution\":s[\"contribution\"],\"summary\":s[\"summary\"],\"evidence_refs\":evidence_refs,\"evidence_json\":s[\"evidence\"].to_string(),\"as_of_block\":snapshot.state().last_block_number,\"source_revision\":snapshot.state().revision,\"revision\":revision,\"created_at_unix_ms\":revision,\"raw_evidence_json\":s.to_string()}))"
+        },
+        {
+          "path": "dockerizd_bitcoin/src/risk.rs",
+          "line": 258,
+          "role": "unproven_reference",
+          "text": "(\"aml_wallet_risk_signals\".into(), signals),"
         }
       ],
       "runtime": {
         "tron": "installed only; legacy writer/reader cutover remains open",
         "ethereum": "installed only; legacy writer/reader cutover remains open",
         "bsc": "installed only; legacy writer/reader cutover remains open",
-        "bitcoin": "installed only; Bitcoin capability/writer/reader still open"
+        "bitcoin": "active Bitcoin shared-policy evaluation and local persistence; sealed assessments/signals require the adapter risk reader's policy/intelligence/exposure verification; central consumer recomputes and checks the assessment snapshot"
       }
     },
     {
@@ -51656,11 +52370,11 @@
       },
       {
         "path": "dockerizd_bitcoin/src/api.rs",
-        "normalized_sha256": "6391771ae68b0b049dff76ab60a11c4fe0ee8b09207a00aa2f635d53289ce037"
+        "normalized_sha256": "4e0df75283c66d8dd47130179950fee9280004cca8561c8a418d5eab4b3c7ad2"
       },
       {
         "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-        "normalized_sha256": "b6ff1831d862d6562b9741dde4e9836c13db806bad43138bdbceee8f10a540cf"
+        "normalized_sha256": "522b5c8e36c60c1217293d0062be51f03b542f40fb71da558a5deede6d65319b"
       },
       {
         "path": "dockerizd_bitcoin/src/domain/model.rs",
@@ -51668,11 +52382,11 @@
       },
       {
         "path": "analytical_node/src/main.rs",
-        "normalized_sha256": "b49ac3a41808373ea0cb5e58dced553be5bc4d4bf0b1e4a93bf7df91f8420fda"
+        "normalized_sha256": "ef2015006d215700a22dd401027519e168e8b4e270fe5c865c2e1510c959033e"
       },
       {
         "path": "dockerizd_bitcoin/web/bitcoin.js",
-        "normalized_sha256": "20643e8cccde9ee139754c7180e7d66679173426cd44790eab3b71b2a71a4b2e"
+        "normalized_sha256": "b83cfb38920049083ec31e94d43406ac1cbd0e0f13026584a711f72d9bd23254"
       }
     ],
     "bitcoin": "active writer validation and shared canonical graph reader; observed UTXO legs, no input/output allocation",
@@ -52434,8 +53148,36 @@
       "normalized_sha256": "ca6eaf28a0d9c77d11b0941909638fd1b7cea654d0396c5b4b1fbcaa8a502843"
     },
     {
+      "path": "dockerizd_bitcoin/src/activity.rs",
+      "normalized_sha256": "dd6d6aff83f0e5ff6e487eec3cfafb0ad953cb2394702fe7c782d6d082929565"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/analytics/checkpoint.rs",
+      "normalized_sha256": "8ff99d54143d42762ad8d18a3486400d3569f593af7780cec0368e05f27065c8"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/analytics/cli.rs",
+      "normalized_sha256": "72f1e23133e4295c22afce8429379ca1cb6060a1b949aa7f2ab45ea5ccbde95f"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/analytics/engine.rs",
+      "normalized_sha256": "e8168013f8f1e3e8324010d2ffb3233a25ab121492bd171bf11097e0f14183d7"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/analytics/mod.rs",
+      "normalized_sha256": "1823f43a0f2c4296ab2133bc317d3e956de73f3e75ff78f8482c90628c4dd47e"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/analytics/tests.rs",
+      "normalized_sha256": "5eb632bbbfcd9ee90281adb87b49bacdfe52b38602436a8d4350516fdc440290"
+    },
+    {
       "path": "dockerizd_bitcoin/src/api.rs",
-      "normalized_sha256": "6391771ae68b0b049dff76ab60a11c4fe0ee8b09207a00aa2f635d53289ce037"
+      "normalized_sha256": "4e0df75283c66d8dd47130179950fee9280004cca8561c8a418d5eab4b3c7ad2"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/assets.rs",
+      "normalized_sha256": "d4ab539298ffd8c22326c5014cd6c5cf5b3934b3d68556e4889292437790e2d7"
     },
     {
       "path": "dockerizd_bitcoin/src/bin/bitcoin_init_schema.rs",
@@ -52455,7 +53197,7 @@
     },
     {
       "path": "dockerizd_bitcoin/src/bitcoin/mod.rs",
-      "normalized_sha256": "fd8627d7d78c66529fb16eb80f439b461e5867ad51d3af69bbb21007f8d2e651"
+      "normalized_sha256": "8662f9750957edc46d6b2c35ff23f7e04d447bd1530546b9533d0be493271873"
     },
     {
       "path": "dockerizd_bitcoin/src/bitcoin/probe.rs",
@@ -52474,6 +53216,30 @@
       "normalized_sha256": "192549575d76fc67ae7cc3632571da5d4937d4dc0c30dd72bb7771891729dd90"
     },
     {
+      "path": "dockerizd_bitcoin/src/bitcoin/transactions.rs",
+      "normalized_sha256": "56d7d10bf8364f0983b1f584c7fe81c73f189ff42b0754e5f61ade452f8645da"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/clustering/cli.rs",
+      "normalized_sha256": "aec6cb7a522f77db4905e0ec605e4f4a8111fee108080a6cfea52fb7062d2ea7"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/clustering/detect.rs",
+      "normalized_sha256": "a36617cfce5f2be6ad4a48ce072421a4f3bec7a71367938a95b3b2f070f61efa"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/clustering/mod.rs",
+      "normalized_sha256": "7e6e6f88f2447997dd957115b88148057259b0aa2bf8f720fa9f01cdce7f4850"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/clustering/store.rs",
+      "normalized_sha256": "ecf2a480f643fea6ce18636058a5234e6df2712e8adfb6958ad18193deb0ebcc"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/clustering/tests.rs",
+      "normalized_sha256": "28706b6ee16253003dbbf732800f709994243f2508965af0d08e41cdbc76c6ed"
+    },
+    {
       "path": "dockerizd_bitcoin/src/config.rs",
       "normalized_sha256": "65ac69c69afbba827cd7faa77c25e710f9bb961dbda6d552d909aa9f61ec61da"
     },
@@ -52483,7 +53249,7 @@
     },
     {
       "path": "dockerizd_bitcoin/src/db/migrations.rs",
-      "normalized_sha256": "fb7aa425f75f2b846275f887e46703191cb7fd2e681949bf98aa7df1c7f89ef7"
+      "normalized_sha256": "1f7bf1198375426549fe0945d34198dfa81d69585ac8700cde2f56c464dd1d3e"
     },
     {
       "path": "dockerizd_bitcoin/src/db/mod.rs",
@@ -52491,7 +53257,7 @@
     },
     {
       "path": "dockerizd_bitcoin/src/db/queries.rs",
-      "normalized_sha256": "ad0abda0719743414ecade4389b3739ed2b7b11788ab0f90b4eb6760b797a6e2"
+      "normalized_sha256": "59b61499cde36948f13819eaa463503f2c43f988843def1293ade040ea3493ac"
     },
     {
       "path": "dockerizd_bitcoin/src/db/sql.rs",
@@ -52499,7 +53265,7 @@
     },
     {
       "path": "dockerizd_bitcoin/src/db/warehouse.rs",
-      "normalized_sha256": "b6ff1831d862d6562b9741dde4e9836c13db806bad43138bdbceee8f10a540cf"
+      "normalized_sha256": "522b5c8e36c60c1217293d0062be51f03b542f40fb71da558a5deede6d65319b"
     },
     {
       "path": "dockerizd_bitcoin/src/domain/mod.rs",
@@ -52510,12 +53276,28 @@
       "normalized_sha256": "30982481c93b1b3b5650c40a70159748b5bdfffadd67b3cd1eb7e192fcbef2af"
     },
     {
+      "path": "dockerizd_bitcoin/src/exposure/bounds.rs",
+      "normalized_sha256": "2e7e405699e01569e712907c23ac7bdd5cb37894c008e2fcf9e6845ca9b47b32"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/exposure/mod.rs",
+      "normalized_sha256": "e8182700dc24b149c8d7f4e3400a16922040b47af3bcbef3045e4dfcb1476ce4"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/exposure/trace.rs",
+      "normalized_sha256": "3bcd9fd8de7bd86afad839a13f3b7f0cc9ab769d23b6c7bd09cda93212992521"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/holdings.rs",
+      "normalized_sha256": "946fb33c03984d616876e5554859b8e7cbadc3a75d10865e7e594760c6dbc733"
+    },
+    {
       "path": "dockerizd_bitcoin/src/intelligence/cli.rs",
       "normalized_sha256": "938d23e26d6dc7b722ed449f6059cb98535891143723adb91648bf3bb4a41467"
     },
     {
       "path": "dockerizd_bitcoin/src/intelligence/mod.rs",
-      "normalized_sha256": "bedebf8d661c6fcfa502b44dd8d044c123d74d4e47b7ab796eb47f2ed0d7cd95"
+      "normalized_sha256": "ba4d9c83f20800ec6810a62278a58e7e1763fad2db4630b77a01f7c6d0ec78ed"
     },
     {
       "path": "dockerizd_bitcoin/src/intelligence/tests.rs",
@@ -52523,11 +53305,23 @@
     },
     {
       "path": "dockerizd_bitcoin/src/lib.rs",
-      "normalized_sha256": "641e266fefb8bab968b7f7fe5209c98903d9d23ad47e122977ccb4cffee3b751"
+      "normalized_sha256": "df267d4cbfda5cb63697ddf3eb6b7b29a70492222e2babce4e22a2a38b47551c"
     },
     {
       "path": "dockerizd_bitcoin/src/main.rs",
-      "normalized_sha256": "3f12ee0bc16d3ee30d0f9776926b69441246453ad7bcee53ec7a3855fcd01c19"
+      "normalized_sha256": "acf5d60188ffc0cb49f7ab59eb0326ef7a88de57c2acbbda5b42279403112910"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/risk.rs",
+      "normalized_sha256": "fa515a27c0a7b9ca77f8de36fc9af209e61a5bd7c02a4825adcbac6aa2c546c9"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/semantics/tests.rs",
+      "normalized_sha256": "203a5c7e95dcf51a06a542774dbe9ffbf891558b20dd7e774a0439fa39310efc"
+    },
+    {
+      "path": "dockerizd_bitcoin/src/semantics.rs",
+      "normalized_sha256": "142145955c365d6f464c5982d673e4a1203ddd4010deb67f48fe806de40ca1e1"
     },
     {
       "path": "dockerizd_bitcoin/src/storage/mod.rs",
@@ -52535,7 +53329,7 @@
     },
     {
       "path": "dockerizd_bitcoin/src/storage/writer.rs",
-      "normalized_sha256": "a0a3b765eee444cfeb6493e497c88e94e186d7d2f8f0b9e49cba40c808cb1b6f"
+      "normalized_sha256": "d4032d4e41d0f4171d3af18b3f540fb603d2682d468dd3c3724801923dfadd7c"
     },
     {
       "path": "dockerizd_bitcoin/src/storage/writer_lock.rs",

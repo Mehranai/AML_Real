@@ -7,7 +7,17 @@
 
 [راهنمای Neo4j مرکزی، Export و ریسک بدون ML](docs/CENTRAL_INVESTIGATIONS_FA.md)
 
+[توضیح جامع بک‌اند، معماری پنج VM و ساختار دیتابیس‌ها](docs/BACKEND_ARCHITECTURE_FA.md)
+
 [راهنمای بیت‌کوین: VM مستقل، UTXO، تنظیم RPC و ClickHouse](dockerizd_bitcoin/README.md)
+
+[شواهد الگوهای بیت‌کوین و محدودیت استنتاج آن‌ها](dockerizd_bitcoin/SEMANTICS.md)
+
+[کاندیداهای خوشه‌بندی بیت‌کوین، شواهد و بازبینی نسخه‌دار](dockerizd_bitcoin/CLUSTERING.md)؛
+[worker پیوستهٔ تحلیل بیت‌کوین، cursor، retry و وضعیت اجرا](dockerizd_bitcoin/ANALYTICS.md).
+مهاجرت نهایی، برابری APIها و پذیرش واقعی در [TODO](TODO_BITCOIN.md) باقی‌اند.
+
+[مشخصات native BTC، موجودی، maturity و وضعیت خروجی‌ها](dockerizd_bitcoin/HOLDINGS.md)
 
 [قرارداد مشترک ClickHouse، نگاشت schema قدیمی و وضعیت مهاجرت چهار شبکه](docs/warehouse/README_FA.md)
 

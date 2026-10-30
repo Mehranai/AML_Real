@@ -33,6 +33,7 @@ impl Database {
             [&sql, &columns, &core, &analytics, &visibility],
         )
         .await?;
+        crate::assets::initialize(self).await?;
         Ok(())
     }
     pub async fn ready(&self) -> Result<()> {
@@ -47,6 +48,7 @@ impl Database {
             aml_warehouse::Network::Bitcoin,
         )
         .await?;
+        crate::assets::read(self).await?;
         Ok(())
     }
     pub async fn check_schema(&self) -> Result<aml_warehouse::SchemaSummary> {

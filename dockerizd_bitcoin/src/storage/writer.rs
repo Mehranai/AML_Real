@@ -81,12 +81,14 @@ pub async fn write_block(
         .iter()
         .map(|(table, rows)| (table.to_string(), rows.len() as u64))
         .collect();
+    let mut source_evidence = serde_json::to_value(source)?;
+    source_evidence["semantic_detection"] = crate::semantics::block_manifest(evidence);
     aml_warehouse::core::complete(
         &connection,
         db.database(),
         &block,
         &counts,
-        &serde_json::to_string(source)?,
+        &source_evidence.to_string(),
     )
     .await?;
     if let Some(expected) = legacy_fence {
@@ -124,7 +126,7 @@ pub async fn verify_rows(
             row.as_object_mut()
                 .context("expected evidence object")?
                 .remove("network_id");
-            for key in ["amount_raw", "fee_raw"] {
+            for key in ["amount_raw", "fee_raw", "amount_in", "amount_out"] {
                 if let Some(value) = row.get_mut(key)
                     && !value.is_null()
                 {
