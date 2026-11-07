@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use crate::db::Client;
 use chrono::Utc;
-use clickhouse::Client;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
@@ -24,26 +24,27 @@ pub struct WalletAssetHolding {
     pub asset_id: String,
     pub asset_symbol: String,
     pub asset_name: String,
-    pub decimals: u8,
+    pub decimals: Option<u8>,
     pub balance_raw: String,
-    pub balance_decimal: f64,
+    pub balance_decimal: Option<f64>,
     pub balance_incomplete: bool,
     pub metadata_available: bool,
     pub metadata_verified: bool,
+    pub decimals_known: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, clickhouse::Row)]
-struct WalletAssetHoldingRow {
-    asset_type: String,
+#[derive(Debug, Deserialize, clickhouse::Row)]
+struct LedgerLeg {
     asset_id: String,
-    asset_symbol: String,
-    asset_name: String,
-    decimals: u8,
-    balance_raw: String,
-    balance_decimal: f64,
-    balance_incomplete: u8,
-    metadata_available: u8,
-    metadata_verified: u8,
+    incoming: u8,
+    amount: String,
+}
+#[derive(Debug, Deserialize, clickhouse::Row)]
+struct Metadata {
+    symbol: String,
+    name: String,
+    decimals: Option<u8>,
+    is_verified: u8,
 }
 
 pub async fn build_wallet_holdings(
@@ -51,94 +52,114 @@ pub async fn build_wallet_holdings(
     address: &str,
     limit: Option<u64>,
 ) -> anyhow::Result<WalletHoldings> {
+    let read_fence = crate::db::client::ReadFence::capture(&clickhouse).await?;
+    use aml_warehouse::{Network, visibility};
+    use num_bigint::BigInt;
+    use std::collections::BTreeMap;
     let limit = limit.unwrap_or(50).clamp(1, 250);
-    let generated_at_unix_ms = Utc::now().timestamp_millis().max(0) as u64;
-
-    let total_asset_count = clickhouse
-        .query(
-            r#"
-            SELECT count()
-            FROM wallet_asset_balances
-            WHERE address = ?
-            "#,
-        )
-        .bind(address)
-        .fetch_one::<u64>()
-        .await?;
-
-    let rows = clickhouse
-        .query(
-            r#"
-            SELECT
-                asset_type,
-                asset_id,
-                asset_symbol,
-                asset_name,
-                decimals,
-                toString(balance_raw) AS balance_raw,
-                balance_decimal,
-                balance_incomplete,
-                metadata_verified,
-                if(
-                    asset_type = 'native'
-                    OR asset_name != ''
-                    OR asset_symbol != asset_id,
-                    1,
-                    0
-                ) AS metadata_available
-            FROM wallet_asset_balances
-            WHERE address = ?
-            ORDER BY
-                if(asset_type = 'native', 0, 1),
-                balance_decimal DESC,
-                asset_symbol ASC
-            LIMIT ?
-            "#,
-        )
-        .bind(address)
-        .bind(limit)
-        .fetch_all::<WalletAssetHoldingRow>()
-        .await?;
-
-    let assets = rows
-        .into_iter()
-        .map(|row| WalletAssetHolding {
-            asset_type: row.asset_type,
-            asset_id: row.asset_id,
-            asset_symbol: row.asset_symbol,
-            asset_name: row.asset_name,
-            decimals: row.decimals,
-            balance_raw: row.balance_raw,
-            balance_decimal: row.balance_decimal,
-            balance_incomplete: row.balance_incomplete == 1,
-            metadata_available: row.metadata_available == 1,
-            metadata_verified: row.metadata_verified == 1,
-        })
-        .collect::<Vec<_>>();
-
-    let native_balance = assets
-        .iter()
-        .find(|asset| asset.asset_type == "native")
-        .cloned();
-    let metadata_gap_count = assets
-        .iter()
-        .filter(|asset| asset.asset_type != "native" && !asset.metadata_available)
-        .count();
-    let incomplete_balance_count = assets
-        .iter()
-        .filter(|asset| asset.balance_incomplete)
-        .count();
-
+    let snapshot = visibility::capture(&*clickhouse, clickhouse.database(), Network::Tron).await?;
+    let rows=clickhouse.query("SELECT asset_id,toUInt8(ifNull(to_address=?,0)) AS incoming,toString(amount_raw) AS amount FROM aml_address_relationships_canonical WHERE network_id='tron:mainnet' AND (from_address=? OR to_address=?) AND from_address!=to_address LIMIT 100001").bind(address).bind(address).bind(address).fetch_all::<LedgerLeg>().await?;
+    anyhow::ensure!(
+        rows.len() <= 100000,
+        "indexed netflow exceeds bounded source scope"
+    );
+    let mut balances = BTreeMap::<String, BigInt>::new();
+    for leg in rows {
+        let amount = leg.amount.parse::<BigInt>()?;
+        let current = balances.entry(leg.asset_id).or_default();
+        if leg.incoming == 1 {
+            *current += amount;
+        } else {
+            *current -= amount;
+        }
+    }
+    let total_asset_count = balances.len() as u64;
+    let mut assets = Vec::new();
+    for (asset_id, amount) in balances {
+        let native = asset_id == "native:TRX";
+        let (kind, symbol, name, decimals, verified, known) = if native {
+            (
+                "native".to_owned(),
+                "TRX".to_owned(),
+                "TRON".to_owned(),
+                6,
+                true,
+                true,
+            )
+        } else if let Some(contract) = asset_id.strip_prefix("trc20:") {
+            let contract = aml_warehouse::values::tron_wallet(contract)?;
+            let metadata=clickhouse.query("SELECT symbol,name,decimals,is_verified FROM token_metadata FINAL WHERE token_address=? LIMIT 1").bind(&contract).fetch_optional::<Metadata>().await?;
+            if let Some(m) = metadata {
+                (
+                    "trc20".into(),
+                    m.symbol,
+                    m.name,
+                    m.decimals.unwrap_or(0),
+                    m.is_verified == 1,
+                    m.decimals.is_some(),
+                )
+            } else {
+                ("trc20".into(), contract, String::new(), 0, false, false)
+            }
+        } else if asset_id.starts_with("trc721:") {
+            (
+                "trc721".into(),
+                asset_id.clone(),
+                String::new(),
+                0,
+                false,
+                true,
+            )
+        } else {
+            (
+                "trc10".into(),
+                asset_id.clone(),
+                String::new(),
+                0,
+                false,
+                false,
+            )
+        };
+        let raw = amount.to_string();
+        let approximate = if known {
+            Some(raw.parse::<f64>()? / 10f64.powi(decimals as i32))
+        } else {
+            None
+        };
+        let metadata_available = native || !name.is_empty() || (kind == "trc20" && known);
+        assets.push(WalletAssetHolding {
+            asset_type: kind,
+            asset_id,
+            asset_symbol: symbol,
+            asset_name: name,
+            decimals: known.then_some(decimals),
+            balance_raw: raw,
+            balance_decimal: approximate,
+            balance_incomplete: true,
+            metadata_available,
+            metadata_verified: verified,
+            decimals_known: known,
+        });
+    }
+    assets.sort_by(|a, b| {
+        (a.asset_type != "native", &a.asset_id).cmp(&(b.asset_type != "native", &b.asset_id))
+    });
+    assets.truncate(limit as usize);
+    visibility::unchanged(&*clickhouse, clickhouse.database(), &snapshot).await?;
+    read_fence.unchanged(&clickhouse).await?;
     Ok(WalletHoldings {
-        address: address.to_string(),
+        address: address.into(),
         limit,
         total_asset_count,
         returned_asset_count: assets.len(),
-        native_balance,
+        native_balance: assets.iter().find(|a| a.asset_type == "native").cloned(),
+        metadata_gap_count: assets
+            .iter()
+            .filter(|a| a.asset_type != "native" && !a.metadata_available)
+            .count(),
+        incomplete_balance_count: assets.len(),
         assets,
-        metadata_gap_count,
-        incomplete_balance_count,
-        source: "wallet_asset_balances".to_string(),
-        generated_at_unix_ms,
+        source: "canonical_indexed_netflow_not_rpc_balance".into(),
+        generated_at_unix_ms: Utc::now().timestamp_millis().max(0) as u64,
     })
 }

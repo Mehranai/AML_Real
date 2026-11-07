@@ -12,7 +12,10 @@ pub async fn resolve_start_block_tron(
     match sync_mode {
         SyncMode::Backfill => Ok(config_start_block),
         SyncMode::Live => {
-            let latest = tron_client.get_block_number().await?;
+            if let Some(last) = last_synced {
+                return Ok(last.saturating_add(1));
+            }
+            let latest = tron_client.get_solid_block_number().await?;
             Ok(latest.saturating_sub(20))
         }
         SyncMode::Auto => Ok(last_synced

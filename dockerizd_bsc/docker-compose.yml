@@ -9,13 +9,14 @@ x-bsc-schema-environment: &bsc-schema-environment
   BSC_CLICKHOUSE_USER: ${BSC_CLICKHOUSE_USER:-bsc_admin}
   BSC_CLICKHOUSE_PASSWORD: ${BSC_CLICKHOUSE_PASSWORD:?Set BSC_CLICKHOUSE_PASSWORD in .env}
   BSC_CLICKHOUSE_DATABASE: bsc_aml
+  BSC_WRITER_LOCK_DIR: /var/lock/bsc
   RUST_LOG: ${RUST_LOG:-info}
   RUST_BACKTRACE: ${RUST_BACKTRACE:-1}
   TZ: ${TZ:-UTC}
 
 services:
   clickhouse:
-    image: ${BSC_CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:23.8.16.16@sha256:512bb8a214831bfb66e0fd51368c10c13ed319a50fa0d3864f88c01c0e8295fe}
+    image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:23.8.16.16}
     restart: unless-stopped
     ports:
       - "${DOCKER_BIND_ADDRESS:-127.0.0.1}:${BSC_CLICKHOUSE_HTTP_PORT:-38123}:8123"
@@ -63,6 +64,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    volumes: ["bsc_writer_lock:/var/lock/bsc"]
     environment: *bsc-schema-environment
     depends_on:
       clickhouse:
@@ -89,6 +91,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    volumes: ["bsc_writer_lock:/var/lock/bsc"]
     environment: &bsc-runtime-environment
       <<: *bsc-schema-environment
       BSC_MODE: ${BSC_MODE:-development}
@@ -138,6 +141,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    volumes: ["bsc_writer_lock:/var/lock/bsc"]
     environment: *bsc-runtime-environment
     depends_on:
       clickhouse:
@@ -156,6 +160,7 @@ services:
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    volumes: ["bsc_writer_lock:/var/lock/bsc"]
     environment: *bsc-runtime-environment
     depends_on:
       bsc-schema:
@@ -171,6 +176,7 @@ services:
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    volumes: ["bsc_writer_lock:/var/lock/bsc"]
     environment: *bsc-runtime-environment
     depends_on:
       bsc-schema:
@@ -186,6 +192,7 @@ services:
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    volumes: ["bsc_writer_lock:/var/lock/bsc"]
     environment: *bsc-runtime-environment
     depends_on:
       bsc-schema:
@@ -201,6 +208,7 @@ services:
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    volumes: ["bsc_writer_lock:/var/lock/bsc"]
     environment: *bsc-schema-environment
     depends_on:
       bsc-schema:
@@ -221,6 +229,7 @@ services:
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    volumes: ["bsc_writer_lock:/var/lock/bsc"]
     mem_limit: 1g
     cpus: 2
     pids_limit: 128
@@ -255,6 +264,7 @@ services:
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    volumes: ["bsc_writer_lock:/var/lock/bsc"]
     mem_limit: 256m
     pids_limit: 64
     environment: *bsc-runtime-environment
@@ -271,6 +281,7 @@ services:
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    volumes: ["bsc_writer_lock:/var/lock/bsc"]
     environment: *bsc-schema-environment
     depends_on:
       bsc-schema: {condition: service_completed_successfully}
@@ -278,6 +289,8 @@ services:
     logging: *json-logging
 
 volumes:
+  bsc_writer_lock:
+    name: aml_bsc_writer_lock
   bsc_clickhouse_data:
 
 networks:

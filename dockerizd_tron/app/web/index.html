@@ -977,15 +977,16 @@
 
           <section class="panel inspector-panel active" data-inspector-panel="holdings" role="tabpanel">
             <div class="panel-head">
-              <strong>Holdings</strong>
+              <strong>Indexed netflows</strong>
               <span class="badge" id="holdingsBadge">No assets</span>
             </div>
             <div class="panel-body">
               <div class="kv">
-                <div class="kv-row"><span>TRX</span><strong id="nativeBalance">-</strong></div>
+                <div class="kv-row"><span>Indexed TRX netflow</span><strong id="nativeBalance">-</strong></div>
                 <div class="kv-row"><span>Assets</span><strong id="assetCount">-</strong></div>
                 <div class="kv-row"><span>Metadata</span><strong id="assetMetadata">-</strong></div>
               </div>
+              <p class="muted">Observed transfers in indexed history; this is not the current RPC balance. Fees and missing history can change the actual balance.</p>
               <div class="list" id="holdingsList"></div>
             </div>
           </section>
@@ -1648,7 +1649,7 @@
       badge.className = `badge ${total ? 'ok' : ''}`;
       document.getElementById('nativeBalance').textContent = native
         ? `${formatDecimal(native.balance_decimal)} TRX`
-        : '0 TRX';
+        : 'Unknown';
       document.getElementById('assetCount').textContent = `${assets.length}/${total} shown`;
       document.getElementById('assetMetadata').textContent = gaps ? `${gaps} gap${gaps === 1 ? '' : 's'}` : 'Complete';
 
@@ -2044,6 +2045,7 @@
     }
 
     function formatDecimal(value) {
+      if (value === null || value === undefined || value === '') return '-';
       const number = Number(value);
 
       if (!Number.isFinite(number)) {

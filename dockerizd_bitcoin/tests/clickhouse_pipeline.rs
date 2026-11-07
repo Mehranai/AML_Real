@@ -133,72 +133,6 @@ async fn pipeline_visibility_restart_utxos_paths_and_reorg() -> Result<()> {
     let c = "3333333333333333333333333333333333333333";
     let genesis = fixture(0, bitcoin_aml::GENESIS, "", a);
     let one = fixture(1, &"a".repeat(64), bitcoin_aml::GENESIS, b);
-    // Seed the previous release's full schema and history, including an
-    // unpublished commit that must never enter the migrated canonical history.
-    let sql = include_str!("../sql/legacy/001_core.sql")
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("--"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    for statement in sql.split(';').filter(|s| !s.trim().is_empty()) {
-        db.execute(statement).await?;
-    }
-    let mut resolved = HashMap::new();
-    let genesis_output = model::ScriptOutput::from_rpc(&genesis["tx"][0]["vout"][0])?;
-    resolved.insert(model::outpoint(&format!("{:064x}", 1), 0), genesis_output);
-    for (index, block) in [genesis.clone(), one.clone()].iter().enumerate() {
-        let commit = format!("legacy-{index}");
-        let facts = model::extract(block, &commit, &resolved)?;
-        db.insert("bitcoin_transactions", &facts.transactions)
-            .await?;
-        db.insert("bitcoin_outputs", &facts.outputs).await?;
-        db.insert("bitcoin_inputs", &facts.inputs).await?;
-        db.insert("bitcoin_block_commits",&[json!({"block_height":index,"block_hash":block["hash"],"parent_hash":block["previousblockhash"],"block_time":block["time"],"commit_id":commit,"revision":index+10,"transaction_count":facts.transactions.len()})]).await?;
-    }
-    let orphan = fixture(2, &"f".repeat(64), &"a".repeat(64), c);
-    let orphan_facts = model::extract(&orphan, "legacy-unpublished", &HashMap::new())?;
-    db.insert("bitcoin_transactions", &orphan_facts.transactions)
-        .await?;
-    db.insert("bitcoin_outputs", &orphan_facts.outputs).await?;
-    db.insert("bitcoin_block_commits",&[json!({"block_height":2,"block_hash":orphan["hash"],"parent_hash":orphan["previousblockhash"],"block_time":orphan["time"],"commit_id":"legacy-unpublished","revision":100,"transaction_count":1})]).await?;
-    db.insert(
-        "bitcoin_sync_state",
-        &[SyncState {
-            id: 0,
-            revision: 11,
-            initialized: 1,
-            start_height: 0,
-            tip_height: 1,
-            tip_hash: "a".repeat(64),
-            observed_rpc_height: 1,
-            published_at: 1,
-        }],
-    )
-    .await?;
-    assert!(warehouse::migration_ready(&db).await.is_err());
-    let legacy_before: Vec<Value> = db.rows("SELECT count() AS n,toString(sum(value_sats)) AS amount FROM bitcoin_outputs_canonical",&[]).await?;
-    let partial = warehouse::backfill(&db, 1).await?;
-    assert_eq!(partial["complete"], false);
-    assert_eq!(
-        readiness(&db).await?,
-        axum::http::StatusCode::SERVICE_UNAVAILABLE
-    );
-    assert_eq!(db.state().await?.tip_height, 0);
-    assert!(warehouse::migration_ready(&db).await.is_err());
-    // Simulate an interrupted migration: the next invocation resumes its prefix.
-    let migrated = warehouse::backfill(&db, 1).await?;
-    assert_eq!(migrated["complete"], true);
-    assert_eq!(migrated["migrated_blocks"], 1);
-    warehouse::migration_ready(&db).await?;
-    assert_eq!(readiness(&db).await?, axum::http::StatusCode::OK);
-    assert_eq!(warehouse::backfill(&db, 10).await?["migrated_blocks"], 0);
-    let shared_after: Vec<Value> = db.rows("SELECT count() AS n,toString(sum(value_sats)) AS amount FROM aml_bitcoin_outputs_canonical WHERE network_id={network:String}",&[("network",bitcoin_aml::NETWORK_ID.into())]).await?;
-    assert_eq!(legacy_before, shared_after);
-    assert!(db.block_hash(2).await?.is_none());
-    let legs: Vec<Value> = db.rows("SELECT count() AS n,countIf(from_subject_type='address' AND to_subject_type='address') AS fabricated,countIf(amount_raw=4999999999) AS exact FROM aml_address_relationships_canonical",&[]).await?;
-    assert_eq!(legs[0]["n"], 4);
-    assert_eq!(legs[0]["fabricated"], 0);
-    assert_eq!(legs[0]["exact"], 1);
     let blocks: Mock = Arc::new(RwLock::new(vec![genesis.clone(), one.clone()]));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let rpc_url = format!("http://{}", listener.local_addr()?);
@@ -221,6 +155,11 @@ async fn pipeline_visibility_restart_utxos_paths_and_reorg() -> Result<()> {
         verbosity: 3,
     };
     ingestion::run(db.clone(), rpc.clone(), config.clone(), true).await?;
+    assert_eq!(readiness(&db).await?, axum::http::StatusCode::OK);
+    let legs: Vec<Value> = db.rows("SELECT count() AS n,countIf(from_subject_type='address' AND to_subject_type='address') AS fabricated,countIf(amount_raw=4999999999) AS exact FROM aml_address_relationships_canonical",&[]).await?;
+    assert_eq!(legs[0]["n"], 4);
+    assert_eq!(legs[0]["fabricated"], 0);
+    assert_eq!(legs[0]["exact"], 1);
     let initial = db.state().await?;
     assert_eq!(initial.tip_height, 1);
     // Resuming at the head must not duplicate facts or change the checkpoint.
@@ -314,7 +253,6 @@ async fn pipeline_visibility_restart_utxos_paths_and_reorg() -> Result<()> {
         db.status().await?["source_snapshot"]["snapshot_id"],
         investigation["source_snapshot"]["snapshot_id"]
     );
-    warehouse::migration_ready(&db).await?; // completion survives subsequent reorgs.
     assert_eq!(
         api::wallet_holdings(&db, &recipient).await?["balance_sats"],
         "0"
@@ -341,9 +279,6 @@ async fn pipeline_visibility_restart_utxos_paths_and_reorg() -> Result<()> {
             .is_err()
     );
     assert_eq!(db.state().await?.revision, before.revision);
-    // Production writers no longer append facts to legacy tables.
-    let legacy_after: Vec<Value> = db.rows("SELECT count() AS n,toString(sum(value_sats)) AS amount FROM bitcoin_outputs_canonical",&[]).await?;
-    assert_eq!(legacy_before, legacy_after);
     // Publication is confined to the configured network and matching headers.
     let mut foreign = tables["aml_bitcoin_outputs"].clone();
     foreign[0]["network_id"] = json!("eip155:1");
@@ -370,92 +305,5 @@ async fn pipeline_visibility_restart_utxos_paths_and_reorg() -> Result<()> {
             .is_err()
     );
     mock.abort();
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore = "requires a disposable ClickHouse 23.8 instance"]
-async fn incomplete_legacy_block_stops_migration_and_can_be_repaired() -> Result<()> {
-    let db = Database::new(DatabaseConfig {
-        url: std::env::var("BITCOIN_TEST_CLICKHOUSE_URL")?.parse()?,
-        user: "bitcoin_test".into(),
-        password: "bitcoin-test-only".into(),
-        database: "bitcoin_migration_incomplete".into(),
-    })?;
-    db.initialize().await?;
-    assert_eq!(
-        db.state().await?.revision,
-        0,
-        "fixture database must be empty"
-    );
-    let sql = include_str!("../sql/legacy/001_core.sql")
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("--"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    for statement in sql.split(';').filter(|s| !s.trim().is_empty()) {
-        db.execute(statement).await?;
-    }
-    let block = fixture(
-        0,
-        bitcoin_aml::GENESIS,
-        "",
-        "1111111111111111111111111111111111111111",
-    );
-    db.insert("bitcoin_block_commits",&[json!({"block_height":0,"block_hash":block["hash"],"parent_hash":"","block_time":block["time"],"commit_id":"repairable","revision":1,"transaction_count":1})]).await?;
-    db.insert(
-        "bitcoin_sync_state",
-        &[SyncState {
-            id: 0,
-            revision: 1,
-            initialized: 1,
-            start_height: 0,
-            tip_height: 0,
-            tip_hash: bitcoin_aml::GENESIS.into(),
-            observed_rpc_height: 0,
-            published_at: 1,
-        }],
-    )
-    .await?;
-    assert!(warehouse::backfill(&db, 0).await.is_err());
-    assert!(warehouse::backfill(&db, 100001).await.is_err());
-    assert!(warehouse::backfill(&db, 1).await.is_err());
-    assert_eq!(db.state().await?.revision, 0);
-    assert!(db.block_hash(0).await?.is_none());
-    assert!(warehouse::migration_ready(&db).await.is_err());
-    let evidence = model::extract(&block, "repairable", &HashMap::new())?;
-    db.insert("bitcoin_transactions", &evidence.transactions)
-        .await?;
-    db.insert("bitcoin_outputs", &evidence.outputs).await?;
-    assert_eq!(warehouse::backfill(&db, 1).await?["complete"], true);
-    warehouse::migration_ready(&db).await?;
-    assert_eq!(
-        db.block_hash(0).await?.as_deref(),
-        Some(bitcoin_aml::GENESIS)
-    );
-    // A stale publisher cannot replace the checkpoint established by migration.
-    let mut stale = db.state().await?;
-    stale.revision += 10;
-    assert!(
-        db.publish_after(&SyncState::default(), &stale)
-            .await
-            .is_err()
-    );
-    // Even if the hash is unchanged, an unexpected old writer creates a new
-    // source snapshot. An old completion receipt must not bless its new facts.
-    let changed = SyncState {
-        revision: 2,
-        ..db.legacy_state().await?
-    };
-    db.insert("bitcoin_sync_state", &[changed]).await?;
-    let before = db.state().await?;
-    assert!(warehouse::migration_ready(&db).await.is_err());
-    assert!(warehouse::backfill(&db, 1).await.is_err());
-    assert_eq!(db.state().await?, before);
-    // A missing legacy view must never be mistaken for an empty new install.
-    db.execute("DROP VIEW bitcoin_sync_current").await?;
-    assert!(db.legacy_state().await.is_err());
-    assert!(warehouse::backfill(&db, 1).await.is_err());
-    assert_eq!(db.state().await?, before);
     Ok(())
 }

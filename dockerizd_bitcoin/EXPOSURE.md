@@ -132,5 +132,5 @@ exposure نمی‌سازد. قبل از دریافت اولین بلاک، وض�
 نبود مسیر، مدرک نبود exposure نیست؛ کل زنجیره جست‌وجو نمی‌شود و پوشش window
 دریافت‌شده و محدودیت‌ها همیشه باید خوانده شوند. ظرفیت production هنوز benchmark نشده است.
 
-[اعتبارسنجی](EXPOSURE_VALIDATION.md)، [برچسب و review](INTELLIGENCE.md)،
-[مراحل باقی‌مانده](../TODO_BITCOIN.md).
+[اعتبارسنجی](../docs/TESTING.md)، [برچسب و review](INTELLIGENCE.md)،
+[مراحل باقی‌مانده](../TODO_LIST.md).

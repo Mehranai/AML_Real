@@ -1,7 +1,7 @@
 mod client;
 mod extractor;
-mod ingestion;
 pub mod holdings;
+mod ingestion;
 mod semantic;
 mod token_metadata;
 

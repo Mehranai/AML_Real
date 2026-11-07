@@ -125,4 +125,4 @@ The Bitcoin panel shows verified metadata/source, mature and immature amounts,
 spent/unspent output states and coverage. Export and reopening restore the same
 holdings data. The shared risk policy and its weights are unchanged.
 
-[Validation](HOLDINGS_VALIDATION.md) · [Remaining work](../TODO_BITCOIN.md)
+[Validation](../docs/TESTING.md) · [Remaining work](../TODO_LIST.md)

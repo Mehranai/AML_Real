@@ -1,14 +1,15 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use anyhow::{Context, ensure};
-use clickhouse::{Client, Row};
-use serde::{Deserialize, Serialize};
+//! Snapshot-fenced cluster production using only the shared schema.
+use crate::{
+    config::AppConfig,
+    db::{Client, database_client, now_ms, row},
+};
+use aml_warehouse::{Network, visibility};
+use anyhow::{Context, Result};
+use serde::Serialize;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-
-use crate::{config::AppConfig, db::database_client};
-
+use std::collections::{BTreeMap, HashMap};
 const DETECTOR_VERSION: &str = "ethereum_address_clustering_v1";
-
 #[derive(Debug, Clone, Serialize)]
 pub struct ClusterDiscoveryReport {
     pub run_id: String,
@@ -16,285 +17,128 @@ pub struct ClusterDiscoveryReport {
     pub reviewed_entity_claims: u64,
     pub control_claims: u64,
 }
-
-#[derive(Debug, Deserialize, Row)]
-struct CountRow {
-    count: u64,
+pub(crate) fn stable_id(namespace: &str, values: &[&str]) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(format!("{namespace}|{}", values.join("|")))
+    )
 }
 
-pub async fn discover_address_clusters(
-    config: &AppConfig,
-) -> anyhow::Result<ClusterDiscoveryReport> {
+pub async fn discover_address_clusters(config: &AppConfig) -> Result<ClusterDiscoveryReport> {
     let client = database_client(config);
-    let started_at = unix_time_millis()?;
-    let run_id = stable_id(
-        "eth_cluster_run",
-        &[&config.eth_network_id, &started_at.to_string()],
-    );
-
-    write_run(&client, config, &run_id, "RUNNING", 0, 0, started_at, 0, "").await?;
-
-    let result = discover(&client, config, &run_id, started_at).await;
-    match result {
-        Ok(report) => {
-            write_run(
-                &client,
-                config,
-                &run_id,
-                "COMPLETE",
-                report.entity_memberships,
-                report.control_claims,
-                started_at,
-                unix_time_millis()?,
-                "",
-            )
-            .await?;
-            Ok(report)
-        }
-        Err(error) => {
-            write_run(
-                &client,
-                config,
-                &run_id,
-                "FAILED",
-                0,
-                0,
-                started_at,
-                unix_time_millis()?,
-                &error.to_string(),
-            )
-            .await?;
-            Err(error)
+    let snapshot = visibility::capture(&client, client.database(), Network::Ethereum).await?;
+    if snapshot.state().initialized == 0 {
+        return Ok(ClusterDiscoveryReport {
+            run_id: "waiting_for_data".into(),
+            entity_memberships: 0,
+            reviewed_entity_claims: 0,
+            control_claims: 0,
+        });
+    }
+    client.invalidate_active("cluster").await?;
+    let revision = client.revision("aml_cluster_runs").await?;
+    let run_id = format!("ethereum_cluster_{revision}");
+    let now = now_ms();
+    let result = produce(&client, &snapshot, &run_id, revision, now).await;
+    if let Err(error) = &result {
+        let failed = row(
+            "aml_cluster_runs",
+            json!({"run_id":run_id,"status":"failed","as_of_block":snapshot.state().last_block_number,"source_revision":snapshot.state().revision,"detector_version":DETECTOR_VERSION,"cursor_json":"{}","started_at_unix_ms":now,"completed_at_unix_ms":now_ms(),"truncated":0,"error_message":error.to_string()}),
+            client.revision("aml_cluster_runs").await?,
+            now,
+        )?;
+        client.insert_rows("aml_cluster_runs", &[failed]).await?;
+    }
+    result
+}
+async fn produce(
+    client: &Client,
+    snapshot: &visibility::Snapshot,
+    run: &str,
+    rev: u64,
+    now: u64,
+) -> Result<ClusterDiscoveryReport> {
+    let memberships = client
+        .rows_from("aml_entity_addresses", "active", "1")
+        .await?;
+    let claims = client
+        .rows_from("aml_intelligence_claims", "active", "claim_kind='label'")
+        .await?;
+    let by_id = claims
+        .iter()
+        .filter_map(|c| c["claim_id"].as_str().map(|id| (id, c)))
+        .collect::<HashMap<_, _>>();
+    let mut grouped = BTreeMap::<String, Vec<&Value>>::new();
+    for m in &memberships {
+        if let Some(c) = m["claim_id"].as_str().and_then(|id| by_id.get(id)) {
+            grouped
+                .entry(
+                    c["entity_id"]
+                        .as_str()
+                        .context("entity identity missing")?
+                        .into(),
+                )
+                .or_default()
+                .push(c);
         }
     }
-}
-
-async fn discover(
-    client: &Client,
-    config: &AppConfig,
-    run_id: &str,
-    created_at: u64,
-) -> anyhow::Result<ClusterDiscoveryReport> {
-    client
-        .query(
-            r#"
-            INSERT INTO address_cluster_claims
-            (
-                claim_id, run_id, network_id, left_address, right_address, cluster_id,
-                claim_type, same_entity, confidence, review_status, source_id,
-                evidence_tx_hash, evidence_refs, detector, detector_version,
-                evidence_json, created_at_unix_ms
-            )
-            SELECT
-                hex(SHA256(concat('reviewed_entity|', network_id, '|', entity_id, '|', address))),
-                ?, network_id, anchor_address, address,
-                hex(SHA256(concat('entity_cluster|', network_id, '|', entity_id))),
-                'REVIEWED_ENTITY', 1, confidence, 'APPROVED', source_label_id,
-                '', [source_label_id], 'entity_intelligence', ?,
-                concat('{"entity_id":"', entity_id, '","source_label_id":"', source_label_id, '"}'),
-                ?
-            FROM
-            (
-                SELECT
-                    *,
-                    min(address) OVER (PARTITION BY network_id, entity_id) AS anchor_address
-                FROM address_entities_active
-                WHERE network_id = ?
-            )
-            WHERE address != anchor_address
-            "#,
-        )
-        .bind(run_id)
-        .bind(DETECTOR_VERSION)
-        .bind(created_at)
-        .bind(&config.eth_network_id)
-        .execute()
-        .await
-        .context("failed to create reviewed-entity cluster claims")?;
-
-    client
-        .query(
-            r#"
-            INSERT INTO address_cluster_memberships
-            (
-                membership_id, run_id, network_id, address, cluster_id, entity_id,
-                membership_type, confidence, source_claim_id, is_active,
-                created_at_unix_ms
-            )
-            SELECT
-                hex(SHA256(concat('entity_membership|', network_id, '|', entity_id, '|', address))),
-                ?, network_id, address,
-                hex(SHA256(concat('entity_cluster|', network_id, '|', entity_id))),
-                entity_id, 'REVIEWED_ENTITY', confidence,
-                hex(SHA256(concat('reviewed_entity|', network_id, '|', entity_id, '|', address))),
-                1, ?
-            FROM address_entities_active
-            WHERE network_id = ?
-            "#,
-        )
-        .bind(run_id)
-        .bind(created_at)
-        .bind(&config.eth_network_id)
-        .execute()
-        .await
-        .context("failed to create reviewed-entity cluster memberships")?;
-
-    // A deployment proves a control relationship at that transaction, not common ownership.
-    // It is retained as reviewable evidence and deliberately excluded from memberships.
-    client
-        .query(
-            r#"
-            INSERT INTO address_cluster_claims
-            (
-                claim_id, run_id, network_id, left_address, right_address, cluster_id,
-                claim_type, same_entity, confidence, review_status, source_id,
-                evidence_tx_hash, evidence_refs, detector, detector_version,
-                evidence_json, created_at_unix_ms
-            )
-            SELECT
-                hex(SHA256(concat('contract_deployment|', network_id, '|', tx_hash))),
-                ?, network_id, from_address, contract_address, '',
-                'CONTRACT_DEPLOYMENT_CONTROL', 0, toFloat32(1), 'AUTO_EVIDENCE',
-                'ethereum_canonical_ingestion', tx_hash, [tx_hash],
-                'contract_creation_receipt', ?,
-                concat('{"block_number":', toString(block_number), ',"tx_hash":"', tx_hash, '"}'),
-                ?
-            FROM transactions_canonical
-            WHERE network_id = ?
-              AND contract_address != ''
-              AND status_known = 1
-              AND status = 1
-            "#,
-        )
-        .bind(run_id)
-        .bind(DETECTOR_VERSION)
-        .bind(created_at)
-        .bind(&config.eth_network_id)
-        .execute()
-        .await
-        .context("failed to create contract-deployment control claims")?;
-
-    let entity_memberships = count_run_rows(
+    let mut out = BTreeMap::<String, Vec<Value>>::new();
+    for name in visibility::family_tables("cluster")? {
+        out.insert((*name).into(), vec![]);
+    }
+    let mut count = 0;
+    for (entity, members) in grouped {
+        let cluster = stable_id("eth_entity_cluster", &[&entity]);
+        let version = format!("{run}:{cluster}");
+        let anchor = members
+            .iter()
+            .filter_map(|m| m["address"].as_str())
+            .min()
+            .context("empty entity")?;
+        for c in &members {
+            let address = c["address"].as_str().context("address missing")?;
+            let claim = stable_id("eth_cluster_claim", &[run, &cluster, address]);
+            out.get_mut("aml_cluster_claims").unwrap().push(row("aml_cluster_claims",json!({"claim_id":claim,"cluster_id":cluster,"subject_id":address,"heuristic":"reviewed_entity","detector_version":DETECTOR_VERSION,"confidence":c["confidence"],"review_status":"approved","source_id":c["source_id"],"evidence_refs":c["evidence_refs"],"evidence_json":json!({"intelligence_claim":c["claim_id"],"claim_revision":c["revision"]}).to_string(),"left_subject_id":anchor,"right_subject_id":address,"same_entity":1,"run_id":run,"source_record_id":c["claim_id"],"created_by":"ethereum_analytics_worker","reviewed_by":c["reviewed_by"],"cluster_type":c["entity_type"],"address_role":c["address_role"]}),rev,now)?);
+            out.get_mut("aml_cluster_memberships").unwrap().push(row("aml_cluster_memberships",json!({"cluster_id":cluster,"cluster_version":version,"subject_id":address,"claim_id":claim,"status":"active","membership_id":stable_id("eth_membership",&[run,address,&cluster]),"run_id":run,"entity_id":entity,"membership_type":"REVIEWED_ENTITY","confidence":c["confidence"],"cluster_type":c["entity_type"],"address_role":c["address_role"]}),rev,now)?);
+            count += 1;
+        }
+        out.get_mut("aml_cluster_versions").unwrap().push(row("aml_cluster_versions",json!({"cluster_id":cluster,"cluster_version":version,"cluster_type":"reviewed_entity","display_name":members[0]["entity_name"],"change_type":"refresh","change_reason":"Projection of active reviewed entity claims","source_claim_ids":members.iter().map(|c|c["claim_id"].clone()).collect::<Vec<_>>(),"active_member_count":members.len(),"created_by":"ethereum_analytics_worker","evidence_refs":members.iter().map(|c|format!("claim:{}",c["claim_id"].as_str().unwrap())).collect::<Vec<_>>(),"raw_evidence_json":"{}","run_id":run}),rev,now)?);
+    }
+    #[derive(serde::Deserialize, clickhouse::Row)]
+    struct Deployment {
+        tx_hash: String,
+        from_address: String,
+        contract_address: String,
+    }
+    let deployments=client.query("SELECT tx_hash,from_address,contract_address FROM eth_transactions WHERE status_known=1 AND status=1 AND contract_address!='' LIMIT 100001").fetch_all::<Deployment>().await?;
+    anyhow::ensure!(
+        deployments.len() <= 100000,
+        "deployment analysis exceeds bounded scope"
+    );
+    for tx in &deployments {
+        out.get_mut("aml_cluster_claims").unwrap().push(row("aml_cluster_claims",json!({"claim_id":stable_id("eth_deployment_control",&[run,&tx.tx_hash]),"cluster_id":format!("control:{}",tx.tx_hash),"subject_id":tx.contract_address,"heuristic":"contract_deployment_control","detector_version":DETECTOR_VERSION,"confidence":1.0,"review_status":"pending","source_id":"ethereum_canonical_ingestion","evidence_refs":[format!("tx:{}",tx.tx_hash)],"evidence_json":json!({"tx_hash":tx.tx_hash}).to_string(),"left_subject_id":tx.from_address,"right_subject_id":tx.contract_address,"same_entity":0,"run_id":run}),rev,now)?);
+    }
+    let parent = row(
+        "aml_cluster_runs",
+        json!({"run_id":run,"status":"complete","as_of_block":snapshot.state().last_block_number,"source_revision":snapshot.state().revision,"detector_version":DETECTOR_VERSION,"cursor_json":"{}","started_at_unix_ms":now,"completed_at_unix_ms":now_ms(),"truncated":0,"entity_memberships":count,"control_claims":deployments.len()}),
+        rev,
+        now,
+    )?;
+    out.get_mut("aml_cluster_runs").unwrap().push(parent);
+    visibility::publish_analysis(
         client,
-        "address_cluster_memberships",
-        run_id,
-        &config.eth_network_id,
+        client.database(),
+        snapshot,
+        "cluster",
+        run,
+        rev,
+        &out,
     )
     .await?;
-    let reviewed_entity_claims =
-        count_claim_type(client, run_id, &config.eth_network_id, "REVIEWED_ENTITY").await?;
-    let control_claims = count_claim_type(
-        client,
-        run_id,
-        &config.eth_network_id,
-        "CONTRACT_DEPLOYMENT_CONTROL",
-    )
-    .await?;
-
     Ok(ClusterDiscoveryReport {
-        run_id: run_id.to_string(),
-        entity_memberships,
-        reviewed_entity_claims,
-        control_claims,
+        run_id: run.into(),
+        entity_memberships: count,
+        reviewed_entity_claims: count,
+        control_claims: deployments.len() as u64,
     })
-}
-
-async fn count_run_rows(
-    client: &Client,
-    table: &str,
-    run_id: &str,
-    network_id: &str,
-) -> anyhow::Result<u64> {
-    ensure!(
-        matches!(
-            table,
-            "address_cluster_memberships" | "address_cluster_claims"
-        ),
-        "unsupported count table"
-    );
-    let sql = format!("SELECT count() AS count FROM {table} WHERE network_id = ? AND run_id = ?");
-    Ok(client
-        .query(&sql)
-        .bind(network_id)
-        .bind(run_id)
-        .fetch_one::<CountRow>()
-        .await?
-        .count)
-}
-
-async fn count_claim_type(
-    client: &Client,
-    run_id: &str,
-    network_id: &str,
-    claim_type: &str,
-) -> anyhow::Result<u64> {
-    Ok(client
-        .query(
-            r#"
-            SELECT count() AS count
-            FROM address_cluster_claims
-            WHERE network_id = ? AND run_id = ? AND claim_type = ?
-            "#,
-        )
-        .bind(network_id)
-        .bind(run_id)
-        .bind(claim_type)
-        .fetch_one::<CountRow>()
-        .await?
-        .count)
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn write_run(
-    client: &Client,
-    config: &AppConfig,
-    run_id: &str,
-    status: &str,
-    entity_memberships: u64,
-    control_claims: u64,
-    started_at: u64,
-    completed_at: u64,
-    error_message: &str,
-) -> anyhow::Result<()> {
-    client
-        .query(
-            r#"
-            INSERT INTO cluster_runs
-            (
-                run_id, network_id, detector_version, status, entity_memberships,
-                control_claims, started_at_unix_ms, completed_at_unix_ms, error_message
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(run_id)
-        .bind(&config.eth_network_id)
-        .bind(DETECTOR_VERSION)
-        .bind(status)
-        .bind(entity_memberships)
-        .bind(control_claims)
-        .bind(started_at)
-        .bind(completed_at)
-        .bind(error_message)
-        .execute()
-        .await
-        .context("failed to persist Ethereum cluster run")
-}
-
-fn stable_id(namespace: &str, fields: &[&str]) -> String {
-    let mut input = namespace.to_string();
-    for field in fields {
-        input.push('|');
-        input.push_str(field);
-    }
-    format!("{:x}", Sha256::digest(input.as_bytes()))
-}
-
-fn unix_time_millis() -> anyhow::Result<u64> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context("system clock is before Unix epoch")?
-        .as_millis()
-        .try_into()
-        .context("Unix timestamp does not fit UInt64")?)
 }

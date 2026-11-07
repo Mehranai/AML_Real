@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DB-08A: checkpoint-fenced native backup and verified isolated restore.
+"""Per-network checkpoint-fenced native backup and verified isolated restore.
 
 This tool never cuts over a runtime, rewrites a legacy row, drops a database or
 restores over an existing database. Supply credentials through environment
@@ -506,7 +506,7 @@ def compare_receipts(backup_path, restore_path):
             "physical_tables": sum("data" in t for t in source["source"]["objects"]),
             "rows": sum(t.get("data", {}).get("rows", 0) for t in source["source"]["objects"]),
             "restore_verified": True, "cutover_allowed": False,
-            "remaining": ["lossless source-to-target mapping", "backfill reconciliation", "active writer/reader and worker parity"]}
+            "remaining": ["runtime readiness before a restore cutover", "backup scheduling and retention policy"]}
 
 
 def main():

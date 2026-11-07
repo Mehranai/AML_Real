@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use arz_axum_for_services::config::AppConfig;
+use arz_axum_for_services::db::Client;
 use arz_axum_for_services::services::tron::neo4j::{
     client::Neo4jClient, flow_graph::build_wallet_flow_graph,
 };
 use arz_axum_for_services::utils::tron_address::normalize_tron_address;
-use clickhouse::Client;
 
 #[tokio::main]
 async fn main() -> Result<()> {

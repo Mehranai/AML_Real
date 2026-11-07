@@ -24,7 +24,6 @@ RUN mkdir -p src/bin \
     && rm -rf src
 
 COPY src ./src
-COPY sql ./sql
 COPY web ./web
 RUN cargo build --locked --offline --release --bins \
     && install -D -m 0755 target/release/bsc_ingest /out/bsc_ingest \

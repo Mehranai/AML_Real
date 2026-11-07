@@ -4,7 +4,6 @@ use crate::{
     failures::{self, Policy, Stage},
     ingestion::{self, RunOptions},
     rpc::RpcPool,
-    warehouse,
     writer_lock::WriterLock,
 };
 use anyhow::{Context, Result, ensure};
@@ -14,7 +13,6 @@ use std::collections::BTreeSet;
 pub async fn scan(db: &Database, from: u64, to: u64, max_blocks: u64) -> Result<Value> {
     let _owner = WriterLock::for_database(db.database())?;
     db.ready().await?;
-    warehouse::migration_ready(db).await?;
     failures::scan_gaps(db, from, to, max_blocks).await
 }
 
@@ -46,7 +44,6 @@ pub async fn run(
     tuning.validate()?;
     let owner = WriterLock::for_database(db.database())?;
     db.ready().await?;
-    warehouse::migration_ready(&db).await?;
     failures::recover_interrupted(&db, &options.policy).await?;
     let before = db.state().await?;
     ensure!(

@@ -2,7 +2,7 @@ use crate::{
     Network,
     contract::{
         Contract, analytics_contract, baseline_contract, column_contract, core_contract,
-        current_contract, identifier,
+        current_contract, identifier, visibility_contract,
     },
 };
 use anyhow::{Context, Result, ensure};
@@ -100,7 +100,15 @@ async fn check_ledger(
     let columns = column_contract()?;
     let core = core_contract()?;
     let analytics = analytics_contract()?;
-    let known = [&baseline, &columns, &core, &analytics, contract];
+    let visibility = visibility_contract()?;
+    let known = [
+        &baseline,
+        &columns,
+        &core,
+        &analytics,
+        &visibility,
+        contract,
+    ];
     let mut ledger = Ledger::default();
     if stored.contains_key("aml_schema_migrations") {
         let rows=json_rows(db,&format!("SELECT toJSONString(map('network_id',network_id,'migration_id',migration_id,'version',toString(schema_version),'checksum',checksum)) AS row FROM {database}.aml_schema_migrations FINAL")).await?;
@@ -167,6 +175,45 @@ async fn check_ledger(
     Ok(ledger)
 }
 
+/// Ordered review artifacts for the same immutable phases used by every adapter.
+/// Files exported from here are never an independent source of schema definitions.
+pub fn sql_templates() -> Result<Vec<(String, String)>> {
+    let phases = vec![
+        (
+            baseline_contract()?.migration_id,
+            baseline_contract()?.sql_template()?,
+        ),
+        (
+            crate::semantics::migration()?.migration_id.clone(),
+            crate::semantics::upgrade_template()?,
+        ),
+        (
+            crate::core_schema::migration()?.migration_id.clone(),
+            crate::core_schema::sql_template()?,
+        ),
+        (
+            crate::analytics_schema::migration()?.migration_id.clone(),
+            crate::analytics_schema::sql_template()?,
+        ),
+        (
+            crate::visibility_schema::migration()?.migration_id.clone(),
+            crate::visibility_schema::sql_template()?,
+        ),
+        (
+            crate::tron_schema::migration()?.migration_id.clone(),
+            crate::tron_schema::sql_template()?,
+        ),
+    ];
+    ensure!(
+        phases.len() == current_contract()?.version as usize,
+        "SQL bundle does not cover the current contract"
+    );
+    Ok(phases
+        .into_iter()
+        .map(|(id, sql)| (format!("{id}.sql"), sql))
+        .collect())
+}
+
 pub async fn initialize(
     db: &impl Connection,
     database: &str,
@@ -184,7 +231,14 @@ pub async fn initialize(
         db,
         database,
         network,
-        vec![statements, upgrade, core, analytics, visibility],
+        vec![
+            statements,
+            upgrade,
+            core,
+            analytics,
+            visibility,
+            crate::tron_schema::statements(database, &crate::tron_schema::sql_template()?)?,
+        ],
     )
     .await
 }
@@ -278,16 +332,18 @@ pub async fn initialize_from_chain(
         analytics_sql,
         visibility_sql,
     ] = sql;
-    let statements = baseline_contract()?.statements_from_template(database, baseline_sql)?;
-    let upgrade = crate::semantics::upgrade_statements(database, column_sql)?;
-    let core = crate::core_schema::statements(database, core_sql)?;
-    let analytics = crate::analytics_schema::statements(database, analytics_sql)?;
-    let visibility = crate::visibility_schema::statements(database, visibility_sql)?;
     initialize_statements(
         db,
         database,
         network,
-        vec![statements, upgrade, core, analytics, visibility],
+        vec![
+            baseline_contract()?.statements_from_template(database, baseline_sql)?,
+            crate::semantics::upgrade_statements(database, column_sql)?,
+            crate::core_schema::statements(database, core_sql)?,
+            crate::analytics_schema::statements(database, analytics_sql)?,
+            crate::visibility_schema::statements(database, visibility_sql)?,
+            crate::tron_schema::statements(database, &crate::tron_schema::sql_template()?)?,
+        ],
     )
     .await
 }
@@ -309,6 +365,7 @@ async fn initialize_statements(
         column_contract()?,
         core_contract()?,
         analytics_contract()?,
+        visibility_contract()?,
         contract.clone(),
     ];
     let mut applied = ledger.versions.iter().copied().max().unwrap_or(0);

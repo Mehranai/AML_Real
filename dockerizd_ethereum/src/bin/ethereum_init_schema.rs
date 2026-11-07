@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
         initialize_ethereum_schema(&config).await?;
     }
     println!(
-        "Ethereum legacy and shared warehouse schema verified for {}.",
+        "Ethereum shared ClickHouse schema verified for {}.",
         config.clickhouse_database
     );
 

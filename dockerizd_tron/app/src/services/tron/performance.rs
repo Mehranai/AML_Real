@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::db::Client;
 use anyhow::{Context, Result};
 use chrono::Utc;
-use clickhouse::Client;
 use nanoid::nanoid;
 use serde::{Deserialize, Serialize};
 
@@ -241,13 +241,13 @@ pub async fn load_storage_snapshot(clickhouse: &Client, database: &str) -> Resul
             WHERE database = ?
               AND active
               AND table IN (
-                  'transactions',
-                  'address_relationships',
-                  'transaction_features',
-                  'semantic_aml_events',
-                  'wallet_asset_balance_deltas_v3',
-                  'ingested_blocks',
-                  'ingestion_failures'
+                  'aml_transactions',
+                  'aml_address_relationships',
+                  'aml_transaction_features',
+                  'aml_semantic_aml_events',
+                  'aml_tron_contracts','aml_tron_logs','aml_tron_internals','aml_tron_resources',
+                  'aml_ingested_blocks',
+                  'aml_ingestion_failures'
               )
             GROUP BY table
             ORDER BY table
@@ -371,12 +371,19 @@ async fn load_busiest_wallet(
 }
 
 async fn persist_benchmark(clickhouse: &Client, row: &IngestionBenchmarkRow) -> Result<()> {
-    let mut insert = clickhouse
-        .insert::<IngestionBenchmarkRow>("ingestion_benchmarks")
-        .await?;
-    insert.write(row).await?;
-    insert.end().await?;
-    Ok(())
+    let now = crate::db::now_ms();
+    let data = serde_json::json!({"benchmark_id":row.run_id,"start_block":row.start_block,"end_block":row.end_block,"blocks":row.completed_blocks,"transactions":row.transaction_count,"rows_written":row.rows_after.saturating_sub(row.rows_before),"elapsed_ms":row.elapsed_ms,"bytes_written":row.compressed_bytes_after.saturating_sub(row.compressed_bytes_before),"settings_json":"{}","source_kind":row.source_kind,"status":match row.status.as_str(){"RUNNING"=>"running","COMPLETE"|"NOOP"=>"complete",_=>"failed"},"started_at_unix_ms":row.started_at_unix_ms,"completed_at_unix_ms":if row.completed_at_unix_ms==0{None}else{Some(row.completed_at_unix_ms)},"metrics_json":row.metrics_json,"error_message":row.error_message,"raw_evidence_json":serde_json::to_string(row)?,"blocks_per_second":row.blocks_per_second,"transactions_per_second":row.transactions_per_second,"rows_per_second":if row.elapsed_ms==0{0.0}else{row.rows_after.saturating_sub(row.rows_before) as f64*1000.0/row.elapsed_ms as f64}});
+    clickhouse
+        .insert_rows(
+            "aml_ingestion_benchmarks",
+            &[crate::db::row(
+                "aml_ingestion_benchmarks",
+                data,
+                clickhouse.revision("aml_ingestion_benchmarks").await?,
+                now,
+            )?],
+        )
+        .await
 }
 
 fn source_kind(rpc_url: &str) -> String {

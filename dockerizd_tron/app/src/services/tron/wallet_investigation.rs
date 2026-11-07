@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use clickhouse::Client;
+use crate::db::Client;
 use serde::Serialize;
 
 use crate::services::tron::{
@@ -48,6 +48,8 @@ pub struct WalletInvestigation {
     pub api_version: &'static str,
     pub network_id: &'static str,
     pub address: String,
+    pub source_snapshot: serde_json::Value,
+    pub operational_snapshot: serde_json::Value,
     pub graph: WalletFlowGraph,
     pub holdings: WalletHoldings,
     pub fingerprint: WalletFingerprint,
@@ -78,6 +80,13 @@ pub async fn build_wallet_investigation(
     address: &str,
     options: WalletInvestigationOptions,
 ) -> anyhow::Result<WalletInvestigation> {
+    let operational = clickhouse.operational_version().await?;
+    let snapshot = aml_warehouse::visibility::capture(
+        &*clickhouse,
+        clickhouse.database(),
+        aml_warehouse::Network::Tron,
+    )
+    .await?;
     let (graph, holdings, fingerprint, activity, intelligence, exposure) = tokio::try_join!(
         build_wallet_flow_graph(
             clickhouse.clone(),
@@ -109,8 +118,15 @@ pub async fn build_wallet_investigation(
         options.graph_edge_limit,
     );
 
+    aml_warehouse::visibility::unchanged(&*clickhouse, clickhouse.database(), &snapshot).await?;
+    anyhow::ensure!(
+        clickhouse.operational_version().await? == operational,
+        "operational source changed; retry investigation"
+    );
     Ok(WalletInvestigation {
         api_version: "1.0",
+        source_snapshot: snapshot.value(),
+        operational_snapshot: crate::db::records::operational_snapshot(&operational),
         network_id: "tron:mainnet",
         address: address.to_string(),
         graph,

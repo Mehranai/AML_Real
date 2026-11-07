@@ -27,7 +27,7 @@ impl WriterLock {
             .truncate(false)
             .open(directory.join(format!("{database}.lock")))
             .context("cannot open Bitcoin writer lock")?;
-        file.try_lock().map_err(|_| anyhow::anyhow!("Bitcoin writer ownership unavailable; another ingest/once/backfill/schema command may own this database, or the shared lock filesystem is unavailable"))?;
+        file.try_lock().map_err(|_| anyhow::anyhow!("Bitcoin writer ownership unavailable; another ingest/once/schema command may own this database, or the shared lock filesystem is unavailable"))?;
         Ok(Self { _file: file })
     }
 }

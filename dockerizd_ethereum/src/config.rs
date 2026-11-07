@@ -143,8 +143,8 @@ impl AppConfig {
 
     fn validate(&self) -> anyhow::Result<()> {
         ensure!(
-            self.eth_expected_chain_id > 0,
-            "ETH_EXPECTED_CHAIN_ID must be positive"
+            self.eth_expected_chain_id == 1 && self.eth_network_id == "eip155:1",
+            "Ethereum adapter requires mainnet chain ID 1; BSC runs in its own adapter"
         );
         ensure!(
             self.eth_network_id == format!("eip155:{}", self.eth_expected_chain_id),

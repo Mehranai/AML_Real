@@ -1,267 +1,60 @@
-# BSC AML Platform
+# BSC AML
 
-سرویس مستقل BNB Smart Chain برای پروژه `AML_Whole`.
+Rust adapter برای BNB Smart Chain mainnet با chain ID=56 و
+`network_id=eip155:56`. API روی 6001 است؛ ClickHouse/database/volume مستقل
+روی VM شبکه و Neo4j تحقیق فقط روی Main قرار می‌گیرد. RPC آماده را کاربر
+تأمین می‌کند؛ VM شبکه نود کامل اجرا نمی‌کند.
 
-این شبکه خروجی تحقیق کیف پول را در Gateway مشترک ارائه می‌کند:
+## مسیر دادهٔ فعال
 
-- نمودار جریان وجوه یک کیف پول از داده ذخیره‌شده در ClickHouse
-- fingerprint رفتاری، holdings، counterparties و semantic events
-- جست‌وجوی source-to-target تا سقف 10 hop با اعلام محدودیت و truncation
-- projection قابل بازسازی در Neo4j
-- entity labels، clustering و exposure paths با منبع و evidence قابل ممیزی
-- bridge evidence استانداردشده برای ادامه مسیر در شبکه‌های دیگر
+init/check، ingest/range/follow، replay/repair، metadata، protocol/intelligence
+و API تحقیق/موجودی/مسیر از قرارداد مشترک `aml_*` استفاده می‌کنند. DDL native
+قبلی نصب نمی‌شود. schema همچنان v5 با ۳۹ جدول، ۵۳ view و ۶۸۲ ستون است؛
+projectionهای `bsc_*` فقط CTE هستند و داده یا view فیزیکی جدا نمی‌سازند.
 
-## وضعیت فعلی
+- block/transaction/receipt/trace اصلی RPC، از جمله فیلدهای اضافی پاسخ،
+  حفظ می‌شوند. مبلغ خام و شناسهٔ NFT دقیق‌اند؛ log index، sub-index دستهٔ
+  ERC1155 و مسیر callTracer نگه داشته می‌شوند. تراکنش failed انتقال موفق
+  ایجاد نمی‌کند. پروفایل‌های Bitcoin و TRON خالی می‌مانند.
+- writer مشترک کل batch را بررسی و همهٔ ستون‌های ذخیره‌شده را تطبیق می‌دهد؛
+  سپس complete و checkpoint منتشر می‌شوند. lock مشترک نقش‌های Compose در
+  `/var/lock/bsc` از دو ingestor هم‌زمان جلوگیری می‌کند؛ فایل lock حذف نشود.
+- replay همان شاخه می‌تواند پوشش trace/تحلیل را تازه کند و tip را نگه دارد.
+  reorg با rollback مشترک و tombstone بالای مرز انتشار انجام می‌شود؛
+  retry و restart نیز همان cursor را مصرف می‌کنند. replay اجباری registry
+  فعلی را دوباره می‌خواند تا تغییر review/source در تفسیر بازه اعمال شود. در تعویض کل بازه، شروع
+  بازهٔ قبلی حفظ می‌شود. repair حداکثر ۱۰هزار بلاک و reorg عمق تنظیم‌شده دارد.
+- صف metadata از discovery canonical مصرف می‌شود. RPC state به بلاک کشف
+  متصل و هش قبل/بعد و هنگام ذخیره بررسی می‌شود. state تاریخی باید در RPC
+  موجود باشد؛ decimals ناشناخته NULL است. metadata دستی به نام بازبین واقعی
+  وابسته است و شمارهٔ بلاک ساختگی نمی‌گیرد.
+- source/claim/review پروتکل و intelligence در جدول‌های مشترک ذخیره می‌شوند؛
+  تصمیم برچسب به بازبین و دلیل نیاز دارد و revoke آن را از active خارج
+  می‌کند. import به‌خودی‌خود منبع را VERIFIED یا منبع غیرفعال را فعال نمی‌کند.
+- تحلیل entity/cluster candidate و exposure همچنان هنگام درخواست انجام و
+  در snapshot مرکزی ذخیره می‌شود. BSC worker یا امتیاز ریسک محلی تازه ندارد؛
+  `risk_engine` نیاز به ارزیابی مرکزی را اعلام می‌کند. مرز سرویس و ترتیب
+  تراکنش همان دارایی حفظ می‌شوند؛ مسیر، اثبات مالکیت یا تداوم عین پول نیست.
+- پاسخ تحقیق، snapshot مشترک بلاک و نسخهٔ intelligence را کنترل می‌کند.
+  holdings از RPC finalized خوانده می‌شود؛ خطا/شبکهٔ غلط موجودی صفر نیست و
+  endpoint مستقیم holdings برای unavailable پاسخ 503 می‌دهد.
 
-مسیر investigation، fingerprint، holdings، metadata، هویت‌های بازبینی‌شده، exposure و گراف مرکزی
-اضافه شده است. [راهنمای تحویل BSC و VM](docs/VM_READINESS_FA.md) و
-[چک‌لیست این تحویل](docs/completion-checklist.md) وضعیت دقیق و محدودیت‌ها را مشخص می‌کنند.
-`bsc_ingest` حالت‌های range،
-auto-resume و follow دارد؛ fetch بلاک‌ها concurrent و bounded است، اما continuity validation، commit و cursor
-به ترتیب block انجام می‌شوند. reorg با common ancestor و tombstone append-only ترمیم می‌شود و ابزارهای مستقل
-replay، gap/dead-letter repair و benchmark وجود دارند. semantic eventها از registry بررسی‌شده، event topic،
-method mapping و fund-flow evidence تولید می‌شوند. API روی پورت 6001، فقط با service key، داده ClickHouse
-را می‌خواند. Neo4j فقط روی VM اصلی است؛ ذخیره موقت و Export برای BSC هم در همان‌جا انجام می‌شود.
-Holdings از finalized RPC برای BNB و دارایی‌های کشف‌شده خوانده می‌شود، نه از تفاضل انتقال‌ها.
+## اجرا
 
-تست ظرفیت با ۲۰ بلاک واقعی روی RPC عمومی در بهترین اجرا `1.65 block/s`، حدود `1453 row/s` و compression
-حدود `7.93x` ثبت کرد. این از ingest ترتیبی سریع‌تر است، ولی gate حداقل `2x` نرخ زنجیره را پاس نکرد؛ برای
-بستن release gate باید همین benchmark روی BSC node یا RPC production بدون throttling اجرا شود.
-
-وضعیت مرحله‌ها و معیار پذیرش آن‌ها در [Production Roadmap](docs/production-roadmap.md) قرار دارد.
-معماری و قرارداد داده در [Architecture](docs/architecture.md) توضیح داده شده است.
-مالک، writer، reader و retention هر جدول و ستون در [Data Dictionary](docs/data-dictionary.md) ثبت شده است.
-
-## قرارداد ثابت شبکه
-
-| مورد | مقدار |
-|---|---|
-| Network | BNB Smart Chain Mainnet |
-| EVM chain id | `56` |
-| Canonical network id | `eip155:56` |
-| Native asset | `eip155:56/native:bnb` |
-| Canonical address | `0x` + 40 lowercase hex characters |
-| ClickHouse database | `bsc_aml` |
-| API prefix | `/api/bsc` |
-| Default local API port | `6001` |
-| Path-search ceiling | `10` hops |
-| AI/ML risk | خارج از scope فعلی و خاموش |
-
-در شروع هر process، مقدار `eth_chainId` باید دقیقاً `0x38` باشد؛ mismatch باید process را متوقف کند.
-تغییر endpoint نباید بتواند داده شبکه دیگری را داخل `bsc_aml` بنویسد.
-
-## اجرای capability probe
-
-فایل نمونه را کپی و فقط مقدار `BSC_RPC_URL` را با endpoint خودتان جایگزین کنید:
+پس از تنظیم `.env` از [.env.example](.env.example)، از ریشه روی VM BSC:
 
 ```bash
-cp -n .env.example .env
-cargo run --locked --bin bsc_rpc_probe
+bash scripts/vm.sh bsc up --build
+bash scripts/vm.sh bsc check-schema
+bash scripts/vm.sh bsc check-runtime
 ```
 
-خروجی JSON یکی از این وضعیت‌ها را دارد:
+بازه در `BSC_INGEST_START_BLOCK/BSC_INGEST_END_BLOCK` و رفتار دریافت در
+`BSC_SYNC_MODE` است. بازهٔ منتشرشده باید پیوسته باشد؛ شروع تازه می‌تواند از
+بلاک انتخابی باشد. برای دریافت، replay یا repair از ingestorهای خود پروژه
+استفاده کنید. اجرای هم‌زمانشان روی یک database با lock رد می‌شود.
 
-- `ready`: همه قابلیت‌های موردنیاز mode فعلی حاضرند و capability اختیاری هم کم نیست.
-- `degraded`: نیازهای اجباری حاضرند، اما قابلیت اختیاری مانند trace روی RPC عمومی در دسترس نیست.
-- `unready`: حداقل یک قابلیت اجباری production غایب است و process با exit code ناموفق تمام می‌شود.
-
-در production باید `BSC_MODE=production` باشد. در این mode، trace و block receipts اجباری هستند؛
-endpoint اتریوم یا endpoint فاقد این قابلیت‌ها پذیرفته نمی‌شود. URL و secretهای داخل آن در log یا report
-چاپ نمی‌شوند.
-
-## اجرای ClickHouse و schema
-
-فایل environment را بسازید و حداقل `BSC_CLICKHOUSE_PASSWORD` را به یک رمز قوی تغییر دهید:
-
-```bash
-cp -n .env.example .env
-bash scripts/refresh-linux-vendor.sh
-docker compose up -d --build
-docker compose ps -a
-docker compose logs bsc-schema
-```
-
-ClickHouse HTTP روی `127.0.0.1:38123` و native protocol روی `127.0.0.1:39000` در دسترس است. سرویس
-`bsc-schema` یک job کوتاه‌عمر است: منتظر healthy شدن ClickHouse می‌ماند، migrationهای جدید را اجرا
-می‌کند، تمام table/viewها را validate می‌کند و با exit code صفر خارج می‌شود.
-
-برای دیدن objectهای ساخته‌شده بدون نوشتن رمز در command history:
-
-```bash
-docker compose exec clickhouse sh -lc 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "SHOW TABLES FROM bsc_aml"'
-```
-
-برای validation دستی schema موجود از host:
-
-```bash
-cargo run --locked --offline --bin bsc_schema -- --check
-```
-
-فایل‌های `sql/migrations` پس از اجرا تغییر داده نمی‌شوند. هر تغییر schema باید migration جدید داشته باشد؛
-تغییر checksum یک migration قبلی عمداً startup را fail می‌کند.
-
-## اجرای reliable canonical ingestion
-
-یک range مشخص را بدون حرکت cursor پردازش کنید:
-
-```bash
-cargo run --locked --offline --bin bsc_ingest -- --mode range --start 119947828 --end 119947900
-```
-
-اولین اجرای auto به start نیاز دارد؛ اجراهای بعدی فقط از `sync_state_current.next_block` ادامه می‌یابند:
-
-```bash
-cargo run --locked --offline --bin bsc_ingest -- --mode auto --start 119947828
-cargo run --locked --offline --bin bsc_ingest -- --mode auto
-```
-
-برای follow دائمی در Docker، start را فقط بار اول در `.env` تنظیم کنید:
-
-```bash
-docker compose --profile runtime up -d bsc-follow
-docker compose logs -f bsc-follow
-```
-
-Replay cursor را جابه‌جا نمی‌کند و فقط همان evidence را با revision جدید بازسازی می‌کند:
-
-```bash
-cargo run --locked --offline --bin bsc_replay -- --start 119947828 --end 119947900
-cargo run --locked --offline --bin bsc_replay -- --hash 0xBLOCK_HASH
-```
-
-Repair فقط gapها، traceهای ناقص و failureهای باز را بازسازی می‌کند. dead-letter فقط با opt-in دوباره اجرا می‌شود:
-
-```bash
-cargo run --locked --offline --bin bsc_repair -- --start 119947828 --end 119947900
-cargo run --locked --offline --bin bsc_repair -- --start 119947828 --end 119947900 --include-dead
-```
-
-Benchmark نتیجه را در `ingestion_benchmarks` نگه می‌دارد:
-
-```bash
-cargo run --release --locked --offline --bin bsc_benchmark -- --start 119947828 --end 119948027
-```
-
-`BSC_BLOCK_FETCH_CONCURRENCY` فقط fetch/receipt/trace را موازی می‌کند. `BSC_INGEST_BATCH_SIZE`،
-`BSC_RPC_REQUEST_DELAY_MILLIS`، `BSC_REORG_MAX_DEPTH` و `BSC_FAILURE_MAX_ATTEMPTS` مرزهای عملیاتی هستند.
-تمام endpointهای `BSC_RPC_FALLBACK_URLS` در startup بررسی و درخواست‌ها میان endpointهای معتبر round-robin
-می‌شوند؛ خطای retryable همان درخواست را به endpoint بعدی منتقل می‌کند.
-
-در `BSC_RECEIPT_FETCH_MODE=auto` ابتدا `eth_getBlockReceipts` استفاده می‌شود و فقط در صورت unavailable
-بودن method به receiptهای تکی با `BSC_RECEIPT_CONCURRENCY` محدود fallback می‌کند. response ناقص، receipt
-گم‌شده، index ناسازگار یا block جدیدتر از finalized باعث failure می‌شود و marker کامل نوشته نمی‌شود.
-
-در `BSC_TRACE_MODE=auto`، ingestion برای هر block از `debug_traceBlockByNumber` و `callTracer` استفاده
-می‌کند. اگر RPC عمومی متد trace یا historical state آن block را نداشته باشد، block با
-`trace_data_complete=false` و بدون internal edge commit می‌شود؛ native و token edgeها همچنان کامل‌اند.
-در `required` این gap خطاست و marker نوشته نمی‌شود. برای backfill کامل production باید node/RPC دارای
-trace تاریخی استفاده شود. raw trace ذخیره نمی‌شود و فقط movementهای واقعی `CALL`، `CREATE/CREATE2` و
-`SELFDESTRUCT` ذخیره می‌شوند؛ `DELEGATECALL`، `STATICCALL` و `CALLCODE` edge جعلی تولید نمی‌کنند.
-
-برای بررسی ingest:
-
-```bash
-docker compose exec clickhouse sh -lc 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "SELECT block_number, transaction_count, log_count, trace_data_complete, current_revision FROM bsc_aml.ingested_blocks_canonical ORDER BY block_number DESC LIMIT 10"'
-```
-
-برای دیدن edgeهای استخراج‌شده:
-
-```bash
-docker compose exec clickhouse sh -lc 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "SELECT transfer_type, count() FROM bsc_aml.address_relationships_canonical GROUP BY transfer_type ORDER BY transfer_type"'
-```
-
-Cursor فقط بعد از marker کامل جلو می‌رود. اگر process پس از marker و قبل از cursor قطع شود، restart marker را
-می‌بیند، factها را دوباره نمی‌نویسد و cursor را ترمیم می‌کند. اختلاف hash موجب rewind تا common ancestor و
-نامرئی‌شدن revision orphan از viewهای canonical می‌شود؛ raw evidence برای audit حذف نمی‌شود.
-
-## رجیستری protocol و semantic evidence
-
-فایل JSONL ابتدا بدون نوشتن در دیتابیس validate می‌شود:
-
-```bash
-cargo run --locked --offline --bin bsc_import_protocols -- --file docs/protocol-registry.example.jsonl --dry-run
-```
-
-برای import واقعی، هر خط یک revision جدید append می‌کند. تنها رکورد `approved` که `enabled=true` و
-`reviewed_by` معتبر دارد در `protocol_contract_registry_active` دیده می‌شود؛ `pending` و `rejected` هیچ eventی
-تولید نمی‌کنند. اجرای import همزمان برای یک آدرس پشتیبانی نمی‌شود و باید از یک operator/job واحد انجام شود.
-
-```bash
-cargo run --locked --offline --bin bsc_import_protocols -- --file ./registry-reviewed.jsonl
-```
-
-اجرای همان ابزار داخل Docker با mount فقط‌خواندنی:
-
-```bash
-docker compose --profile tools run --rm -v "${PWD}/registry-reviewed.jsonl:/input/registry.jsonl:ro" bsc-import-protocols --file /input/registry.jsonl
-```
-
-decoderهای `amm_v2`, `amm_v3`, `aggregator`, `bridge_generic`, `lending_generic`, `staking_generic`,
-`tornado_cash_v1`, `mixer_generic`, `reviewed_interaction` و `bsc_system` پشتیبانی می‌شوند. برای ABIهای خاص
-هر protocol، آرایه‌های هم‌اندازه `method_ids/method_event_types` یا `event_topics/event_types` استفاده می‌شوند.
-در bridge، `remote_receiver_topic_index` و `message_topic_index` اندیس topic را با احتساب `topic0=0` مشخص
-می‌کنند؛ مقدار `-1` یعنی آن evidence قابل استخراج نیست.
-
-خروجی‌ها در `transaction_features_canonical` و `semantic_aml_events_canonical` قابل مشاهده‌اند:
-
-```bash
-docker compose exec clickhouse sh -lc 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "SELECT event_type, protocol, count() FROM bsc_aml.semantic_aml_events_canonical GROUP BY event_type, protocol ORDER BY event_type, protocol"'
-```
-
-`confidence` و `classification_confidence` فقط کیفیت شواهد و decoder را نشان می‌دهند و هرگز احتمال پول‌شویی
-یا نتیجه حقوقی نیستند. mixer/scam event فقط با intelligence تأییدشده تولید می‌شود؛ وجود تعامل نیز به‌تنهایی
-اثبات رفتار غیرقانونی نیست.
-
-## کنترل کیفیت
-
-تحویل تحقیق، اتصال Neo4j مرکزی و مراحل VM در
-[راهنمای VM](docs/VM_READINESS_FA.md) و [چک‌لیست تحویل](docs/completion-checklist.md) آمده است.
-نتیجه آزمون‌ها و روش تکرار آن‌ها: [verification](docs/verification-20260909.md).
-
-```bash
-bash scripts/check.sh
-```
-
-تست واقعی ClickHouse شامل lifecycle migration، checksum drift، پنج مرز crash، reorg، dead-letter/requeue،
-receipt/trace fallback، native/token/internal extraction و replay با canonical count ثابت است:
-
-```bash
-read -r -s -p 'ClickHouse test password: ' BSC_CLICKHOUSE_PASSWORD
-echo
-export BSC_CLICKHOUSE_PASSWORD
-bash scripts/test-clickhouse.sh
-unset BSC_CLICKHOUSE_PASSWORD
-```
-
-Docker build برای Rust به شبکه وابسته نیست و archive کامل source dependencyها را مصرف می‌کند. فایل
-`vendor-linux.tar.gz` به دلیل حجم در Git نگهداری نمی‌شود؛ پیش از اولین build و پس از هر تغییر در
-`Cargo.lock` آن را روی host دارای cache به‌روزرسانی کنید:
-
-```bash
-bash scripts/refresh-linux-vendor.sh
-docker build --network=none -t bsc-aml-service:local .
-```
-
-برای اجرای dependency audit پس از نصب `cargo-audit`:
-
-```bash
-cargo install cargo-audit --locked
-bash scripts/check.sh --audit
-```
-
-## سیاست ساخت فایل‌ها
-
-فایل‌ها و پوشه‌های runtime فقط زمانی ساخته می‌شوند که به binary و test واقعی متصل باشند.
-از ساخت module، table، worker یا environment variable بلااستفاده خودداری می‌کنیم. هر ستون schema باید:
-
-1. producer مشخص داشته باشد؛
-2. consumer، query یا دلیل retention مشخص داشته باشد؛
-3. test درج و خواندن داشته باشد؛
-4. در data dictionary مستند شود.
-
-## منابع رسمی BSC
-
-- [BNB Smart Chain wallet configuration](https://docs.bnbchain.org/bnb-smart-chain/developers/wallet-configuration/)
-- [BNB Smart Chain quick guide](https://docs.bnbchain.org/bnb-smart-chain/developers/quick-guide/)
-- [Official BSC JSON-RPC reference](https://github.com/bnb-chain/bsc/blob/master/rpc/json-rpc-api.md)
-- [Official BSC client repository](https://github.com/bnb-chain/bsc)
+[VM](../docs/VM_SETUP_FA.md)، [استفاده](../docs/USAGE_FA.md)،
+[معماری BSC](docs/architecture.md)، [نگاشت داده](docs/data-dictionary.md)،
+[آزمون‌ها](../docs/TESTING.md)، [TODO_LIST](../TODO_LIST.md).
+پذیرش RPC/VM واقعی و مسیر کامل پنل/Neo4j مرکزی همچنان جدا هستند.

@@ -17,7 +17,6 @@ RUN mkdir -p src \
     && rm -rf src
 
 COPY src ./src
-COPY sql ./sql
 COPY web ./web
 RUN cargo build --locked --release --bins \
     && mkdir -p /out \
@@ -33,8 +32,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid "${APP_GID}" tron \
     && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home --shell /usr/sbin/nologin tron \
-    && mkdir -p /var/lib/tron-analytics \
-    && chown tron:tron /var/lib/tron-analytics
+    && mkdir -p /var/lib/tron-analytics /var/lib/tron-writer \
+    && chown tron:tron /var/lib/tron-analytics /var/lib/tron-writer
 COPY --from=builder /out/ /usr/local/bin/
 WORKDIR /app
 ENV RUST_BACKTRACE=1 TZ=UTC

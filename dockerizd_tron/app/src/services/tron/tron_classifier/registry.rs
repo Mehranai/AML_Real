@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::db::Client;
 use anyhow::{Context, Result};
-use clickhouse::{Client, Row};
+use clickhouse::Row;
 use serde::Deserialize;
 
 use super::types::{ContractCategory, ProtocolInfo};
@@ -64,7 +65,7 @@ impl ProtocolRegistry {
         Ok(true)
     }
 
-    async fn refresh(&self, client: &Client) -> Result<()> {
+    pub(crate) async fn refresh(&self, client: &Client) -> Result<()> {
         let rows = client
             .query(
                 r#"

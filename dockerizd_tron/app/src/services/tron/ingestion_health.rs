@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use crate::db::Client;
 use anyhow::Context;
 use chrono::Utc;
-use clickhouse::Client;
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
@@ -181,14 +181,11 @@ async fn load_journal_summary(
         .query(
             r#"
             SELECT
-                countIf(ingestion_status = 'PROCESSING') AS processing_blocks,
-                countIf(
-                    ingestion_status = 'PROCESSING'
-                    AND indexed_at_unix_ms < ?
-                ) AS stale_processing_blocks,
-                countIf(ingestion_status = 'FAILED') AS failed_blocks
-            FROM ingested_blocks FINAL
-            WHERE chain = 'tron'
+                countIf(data.1='processing' OR (data.1='complete' AND data.3>published.revision)) AS processing_blocks,
+                countIf((data.1='processing' OR (data.1='complete' AND data.3>published.revision)) AND data.2<?) AS stale_processing_blocks,
+                ifNull((SELECT uniqExact(block_number) FROM aml_ingestion_failures_current WHERE network_id='tron:mainnet' AND status!='resolved'),toUInt64(0)) AS failed_blocks
+            FROM (SELECT block_number,argMax(tuple(ingestion_status,created_at_unix_ms,revision),revision) AS data FROM aml_ingested_blocks WHERE network_id='tron:mainnet' GROUP BY block_number) AS journal
+            CROSS JOIN (SELECT max(revision) AS revision FROM aml_sync_state_current WHERE network_id='tron:mainnet') AS published
             "#,
         )
         .bind(stale_before_unix_ms)
@@ -238,7 +235,15 @@ async fn load_gap_health(
             missing_ranges_truncated: false,
         });
     };
-    let window_start = window_end.saturating_sub(gap_window_blocks.saturating_sub(1));
+    let state = aml_warehouse::publication::state(
+        clickhouse,
+        clickhouse.database(),
+        aml_warehouse::Network::Tron,
+    )
+    .await?;
+    let window_start = window_end
+        .saturating_sub(gap_window_blocks.saturating_sub(1))
+        .max(state.start_block);
     let complete = clickhouse
         .query(
             r#"

@@ -44,7 +44,10 @@ impl Database {
     }
     pub fn new(config: DatabaseConfig) -> Result<Self> {
         Ok(Self {
-            client: config::http(90)?,
+            // Do not reuse idle ClickHouse sockets: short server keep-alive
+            // expiry can race a pooled request even with a one-second local
+            // expiry. A fresh connection also avoids replaying ambiguous writes.
+            client: config::http_builder(90).pool_max_idle_per_host(0).build()?,
             config: Arc::new(config),
         })
     }

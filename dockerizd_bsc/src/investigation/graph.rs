@@ -14,6 +14,10 @@ pub struct Edge {
     pub block_timestamp_unix_ms: u64,
     pub transaction_index: u32,
     pub event_index: u32,
+    #[serde(default)]
+    pub event_sub_index: u32,
+    #[serde(default)]
+    pub trace_address: Vec<u32>,
     pub from_address: String,
     pub to_address: String,
     pub asset_id: String,
@@ -127,8 +131,8 @@ pub async fn edges(
 ) -> Result<Vec<Edge>> {
     let rows = db.rows(
         "SELECT relationship_id AS id, network_id, tx_hash, block_number, block_timestamp_unix_ms,
-         transaction_index, event_index, from_address, to_address, asset_id, token_id, toString(amount) AS amount, transfer_type
-         FROM address_relationships_canonical WHERE network_id = 'eip155:56'
+         transaction_index, event_index, event_sub_index, trace_address, from_address, to_address, asset_id, token_id, toString(amount) AS amount, transfer_type
+         FROM bsc_relationships WHERE network_id = 'eip155:56'
          AND (from_address = {address:String} OR to_address = {address:String})
          AND block_number <= {height:UInt64} AND block_timestamp_unix_ms BETWEEN {start:UInt64} AND {end:UInt64}
          AND ({asset:String} = '' OR asset_id = {asset:String})
@@ -358,6 +362,8 @@ mod tests {
             block_timestamp_unix_ms: 1,
             transaction_index: 0,
             event_index: 0,
+            event_sub_index: 0,
+            trace_address: vec![],
             from_address: "a".into(),
             to_address: "b".into(),
             asset_id: "bnb".into(),

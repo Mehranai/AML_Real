@@ -4,9 +4,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::db::Client;
 use alloy::primitives::{Address, U256};
 use anyhow::{Context, Result, ensure};
-use clickhouse::{Client, Row};
+use clickhouse::Row;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{
@@ -66,11 +67,11 @@ async fn load(config: &AppConfig, db: &Client, address: &str) -> Result<Value> {
         SELECT r.asset_id AS asset_id, r.token_id AS token_id, m.symbol AS symbol,
             if(m.decimals_known = 1, toNullable(m.decimals), NULL) AS decimals
         FROM (
-            SELECT DISTINCT network_id, asset_id, token_id FROM address_relationships_canonical
+            SELECT DISTINCT network_id, asset_id, token_id FROM eth_relationships
             WHERE network_id = ? AND (from_address = ? OR to_address = ?) AND asset_id != ?
             ORDER BY asset_id, token_id LIMIT 101
         ) AS r
-        LEFT ANY JOIN token_metadata_canonical AS m
+        LEFT ANY JOIN eth_metadata AS m
             ON r.network_id = m.network_id AND arrayElement(splitByChar(':', r.asset_id), -1) = m.token_address
         ORDER BY asset_id, token_id
     "#).bind(network).bind(address).bind(address).bind(&native).fetch_all::<Asset>().await?;

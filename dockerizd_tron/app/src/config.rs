@@ -34,8 +34,6 @@ pub struct AppConfig {
     pub tron_metadata_batch_size: u64,
     pub tron_metadata_max_attempts: u8,
     pub tron_protocol_registry_refresh_blocks: u64,
-    pub tron_ingestion_batch_max_rows: usize,
-    pub tron_ingestion_flush_interval_seconds: u64,
     pub rpc_timeout_seconds: u64,
     pub rpc_max_concurrency: usize,
     pub tx_worker_concurrency: usize,
@@ -71,11 +69,6 @@ impl AppConfig {
             tron_protocol_registry_refresh_blocks: env_parse(
                 "TRON_PROTOCOL_REGISTRY_REFRESH_BLOCKS",
                 100,
-            ),
-            tron_ingestion_batch_max_rows: env_parse("TRON_INGESTION_BATCH_MAX_ROWS", 10_000),
-            tron_ingestion_flush_interval_seconds: env_parse(
-                "TRON_INGESTION_FLUSH_INTERVAL_SECONDS",
-                120,
             ),
             rpc_timeout_seconds: env_parse("RPC_TIMEOUT_SECONDS", 120),
             rpc_max_concurrency: env_parse("RPC_MAX_CONCURRENCY", 2),

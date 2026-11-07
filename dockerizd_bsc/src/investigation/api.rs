@@ -1,6 +1,6 @@
 use super::{PathOptions, SearchOptions, investigate, paths, status};
 use crate::{
-    config::{ClickHouseConfig, setting},
+    config::{AppConfig, ClickHouseConfig, setting},
     db::{validate_bsc_schema, warehouse::Warehouse},
     domain::normalize_evm_address,
     intelligence, metadata,
@@ -22,16 +22,18 @@ use tokio::sync::Semaphore;
 #[derive(Clone)]
 pub struct ApiState {
     pub db: Warehouse,
+    rpc: metadata::TokenRpc,
     key: Arc<String>,
     slots: Arc<Semaphore>,
 }
 impl ApiState {
-    pub fn new(db: Warehouse, key: String) -> Result<Self> {
+    pub fn new(db: Warehouse, key: String, rpc: metadata::TokenRpc) -> Result<Self> {
         ensure!(
             key.len() >= 32,
             "AML_SERVICE_KEY must have at least 32 characters"
         );
         Ok(Self {
+            rpc,
             db,
             key: Arc::new(key),
             slots: Arc::new(Semaphore::new(4)),
@@ -143,7 +145,7 @@ async fn wallet(
     options.validate().map_err(bad)?;
     let (data, holdings) = tokio::join!(
         investigate(&state.db, &address, &options),
-        metadata::snapshot(&state.db, &address)
+        metadata::snapshot(&state.db, &state.rpc, &address)
     );
     let mut data = data?;
     data["holdings"] = holdings;
@@ -169,9 +171,18 @@ async fn wallet_paths(
     super::wallet::check_epoch(&state.db, &coverage).await?;
     Ok(Json(result))
 }
-async fn holdings(State(state): State<ApiState>, Path(raw): Path<String>) -> ApiResult {
+async fn holdings(
+    State(state): State<ApiState>,
+    Path(raw): Path<String>,
+) -> Result<Response, ApiError> {
     let address = address(&raw)?;
-    Ok(Json(metadata::snapshot(&state.db, &address).await))
+    let value = metadata::snapshot(&state.db, &state.rpc, &address).await;
+    let status = if value["status"] == "unavailable" {
+        StatusCode::SERVICE_UNAVAILABLE
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(value)).into_response())
 }
 async fn candidates(State(state): State<ApiState>, Path(raw): Path<String>) -> ApiResult {
     let address = address(&raw)?;
@@ -212,10 +223,70 @@ pub async fn run() -> Result<()> {
     let state = ApiState::new(
         Warehouse::new(config)?,
         setting("AML_SERVICE_KEY")?.context("AML_SERVICE_KEY is required")?,
+        metadata::TokenRpc::new(AppConfig::from_env()?)?,
     )?;
     tracing::info!(%addr,"BSC API listening; graph snapshots belong to main VM");
     axum::serve(tokio::net::TcpListener::bind(addr).await?, router(state))
         .with_graceful_shutdown(shutdown())
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn wrong_chain_holdings_are_unavailable_and_never_zero() -> anyhow::Result<()> {
+        use super::*;
+        use crate::config::{AppConfig, DeploymentMode, RpcEndpoint, TraceMode};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let rpc_url = format!("http://{}", listener.local_addr()?);
+        let rpc = Router::new().route(
+            "/",
+            axum::routing::post(|Json(request): Json<Value>| async move {
+                Json(json!({"jsonrpc":"2.0","id":request["id"],"result":"0x1"}))
+            }),
+        );
+        let mock = tokio::spawn(async move { axum::serve(listener, rpc).await.unwrap() });
+        let config = AppConfig {
+            mode: DeploymentMode::Development,
+            rpc_endpoint: RpcEndpoint::parse(&rpc_url)?,
+            fallback_rpc_endpoints: vec![],
+            rpc_provider: "wrong-chain-fixture".into(),
+            rpc_timeout: Duration::from_secs(2),
+            trace_mode: TraceMode::Disabled,
+            require_block_receipts: false,
+            trace_probe_block: 0,
+        };
+        let db = Warehouse::new(ClickHouseConfig::fixture(
+            "http://127.0.0.1:9",
+            "fixture",
+            "fixture-only",
+            "bsc_aml",
+        ))?;
+        let key = "bsc-api-fixture-service-key-0123456789";
+        let app = router(ApiState::new(
+            db,
+            key.into(),
+            metadata::TokenRpc::new(config)?,
+        )?);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let url = format!(
+            "http://{}/api/bsc/wallet/0x1111111111111111111111111111111111111111/holdings",
+            listener.local_addr()?
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let response = reqwest::Client::new()
+            .get(url)
+            .header("X-AML-Service-Key", key)
+            .send()
+            .await?;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let value: Value = response.json().await?;
+        assert_eq!(value["status"], "unavailable");
+        assert_eq!(value["assets"], json!([]));
+        assert_eq!(value["unavailable_is_not_zero"], true);
+        server.abort();
+        mock.abort();
+        Ok(())
+    }
 }

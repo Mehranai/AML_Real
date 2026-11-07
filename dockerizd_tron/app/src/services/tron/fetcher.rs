@@ -1,6 +1,5 @@
-use std::collections::HashSet;
+use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow};
 use clickhouse::types::UInt256;
@@ -9,14 +8,12 @@ use serde_json::Value;
 
 use crate::models::tron::modules::TransactionRow;
 
-use crate::progress::core::save_sync_state;
-
 use crate::models::tron::modules::TransactionFeatureRow;
 
 use crate::services::loader::LoaderTron;
 use crate::services::tron::ingestion_state::{
-    FinalizedHashConflict, record_failed_block, record_ingested_block, record_ingestion_failure,
-    record_processing_block, resolve_ingestion_failures, should_ingest_block,
+    FinalizedHashConflict, record_ingestion_failure, resolve_ingestion_failures,
+    should_ingest_block,
 };
 
 // aml section
@@ -34,27 +31,31 @@ use crate::services::tron::transaction_type::{
     TransactionSemanticsInput, classify_transaction_semantics,
 };
 use crate::services::tron::transfer_extractor::{
-    TransferKind, extract_contract_transfers, extract_internal_transfers, extract_trc20_transfers,
+    extract_contract_transfers, extract_internal_transfers, extract_trc20_transfers,
     has_contract_call, primary_contract_summary, primary_method_data, standard_transfer_evidence,
 };
-use chrono::Utc;
 
+use super::publication_store::{PreparedTransaction, publish_block};
+use super::source_evidence::VerifiedTransaction;
 use crate::services::tron::aml::mint_burn_detector::detect_mints_and_burns;
-use crate::services::tron::relationship_builder::build_relationships;
 
 const ZERO_ADDRESS: &str = "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb";
 const GENESIS_BLOCK_NUMBER: u64 = 0;
 const MAX_REPLAY_BLOCKS: u64 = 10_000;
 
-async fn process_tx(loader: Arc<LoaderTron>, tx: Value, block_number: u64) -> Result<()> {
+async fn process_tx(
+    loader: Arc<LoaderTron>,
+    tx: Value,
+    block_number: u64,
+    block_timestamp: u64,
+) -> Result<PreparedTransaction> {
     let txid = tx["txID"]
         .as_str()
         .ok_or_else(|| anyhow!("Missing txID"))?
         .to_string();
 
-    let (contract_type, initiator_address, target_address, contract_address, _) =
+    let (contract_type, mut initiator_address, mut target_address, mut contract_address, _) =
         primary_contract_summary(&tx);
-    let mut canonical_transfers = extract_contract_transfers(&tx, &txid);
 
     let receipt = {
         let _permit = loader.rpc_limiter.acquire().await?;
@@ -62,16 +63,27 @@ async fn process_tx(loader: Arc<LoaderTron>, tx: Value, block_number: u64) -> Re
         loader.tron_client.get_tx_receipt(&txid).await?
     };
 
-    if receipt["id"].as_str().is_none() {
-        return Err(anyhow!("transaction receipt is not available for {txid}"));
+    // All source checks finish before any fact of this block is written.
+    let source = VerifiedTransaction::verify(&tx, &receipt, block_number, block_timestamp)
+        .context("TRON source validation failed")?;
+    let txid = source.tx_hash().to_owned();
+    let mut canonical_transfers = extract_contract_transfers(&tx, &txid);
+    let primary_index = tx["raw_data"]["contract"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .position(|c| c["type"] == "TriggerSmartContract")
+        })
+        .unwrap_or(0);
+    if !source.parameter_verified(primary_index) {
+        initiator_address.clear();
+        target_address.clear();
+        contract_address.clear();
     }
+    let timestamp = block_timestamp;
 
-    let timestamp = tx["raw_data"]["timestamp"]
-        .as_u64()
-        .filter(|timestamp| *timestamp > 0)
-        .ok_or_else(|| anyhow!("transaction {txid} has no valid timestamp"))?;
-
-    let status = transaction_status(&receipt);
+    let status = transaction_status(&tx, &receipt);
 
     let fee = UInt256::from(receipt["fee"].as_u64().unwrap_or(0));
 
@@ -89,8 +101,10 @@ async fn process_tx(loader: Arc<LoaderTron>, tx: Value, block_number: u64) -> Re
         canonical_transfers.clear();
     }
 
+    let asset_resolutions = resolve_legacy_assets(&loader, &tx, &mut canonical_transfers).await?;
     let semantic_transfers = canonical_transfers
         .iter()
+        .filter(|transfer| transfer.token_id.is_none())
         .map(|transfer| transfer.as_simple_transfer())
         .collect::<Vec<SimpleTransfer>>();
     let simple_transfers = semantic_transfers
@@ -99,58 +113,21 @@ async fn process_tx(loader: Arc<LoaderTron>, tx: Value, block_number: u64) -> Re
         .cloned()
         .collect::<Vec<_>>();
 
-    // tx_hash: شناسه تراکنش.
-    // block_number: شماره بلاک.
-    // timestamp: زمان شبکه.
-    // initiator_address: امضاکننده یا شروع‌کننده.
-    // target_address: مقصد اصلی contract.
-    // contract_address: قرارداد هوشمند درگیر.
-    // contract_type: نوع contract در TRON.
-    // fee: هزینه تراکنش.
-    // energy_usage_total: مصرف Energy.
-    // net_usage: مصرف Bandwidth.
-    // status: موفق یا ناموفق بودن اجرا.
-
-    loader
-        .transaction_batcher
-        .push(TransactionRow {
-            tx_hash: txid.clone(),
-            block_number,
-            timestamp,
-
-            initiator_address: initiator_address.clone(),
-            target_address: target_address.clone(),
-            contract_address: contract_address.clone(),
-            contract_type: contract_type.clone(),
-            fee,
-            energy_usage_total,
-            net_usage,
-            status,
-        })
-        .await?;
-
-    let mut discovered_tokens = HashSet::<String>::new();
-
-    for transfer in &canonical_transfers {
-        if transfer.kind == TransferKind::Trc20 {
-            discovered_tokens.insert(transfer.asset_id.clone());
-        }
-    }
-
-    // token metadata worker
-    if !discovered_tokens.is_empty() {
-        let updated_at_unix_ms = Utc::now().timestamp_millis().max(0) as u64;
-        for token_address in discovered_tokens {
-            loader
-                .token_metadata_discovery_batcher
-                .push(crate::models::tron::modules::TokenMetadataDiscoveryRow {
-                    token_address,
-                    discovered_block: block_number,
-                    discovered_at_unix_ms: updated_at_unix_ms,
-                })
-                .await?;
-        }
-    }
+    let transaction = TransactionRow {
+        tx_hash: txid.clone(),
+        block_number,
+        timestamp,
+        initiator_address: initiator_address.clone(),
+        target_address: target_address.clone(),
+        contract_address: contract_address.clone(),
+        contract_type: contract_type.clone(),
+        fee,
+        energy_usage_total,
+        net_usage,
+        status,
+    };
+    let mut events = Vec::new();
+    let mut features = Vec::new();
 
     // Classification combines an approved address registry, native TRON contract types,
     // method selectors, target-contract token events, and conservative flow evidence.
@@ -213,7 +190,7 @@ async fn process_tx(loader: Arc<LoaderTron>, tx: Value, block_number: u64) -> Re
             aml_events.extend(swaps.clone());
         }
         for swap in decoded_swaps {
-            loader.semantic_event_batcher.push(swap.row).await?;
+            events.push(swap.row);
         }
         aml_events.extend(bridges.clone());
         aml_events.extend(mint_burns.clone());
@@ -229,25 +206,7 @@ async fn process_tx(loader: Arc<LoaderTron>, tx: Value, block_number: u64) -> Re
             classification.confidence,
             &canonical_transfers,
         ) {
-            loader.semantic_event_batcher.push(event).await?;
-        }
-
-        //     relationship_id: شناسه یکتای edge.
-        //     from_address: فرستنده واقعی دارایی.
-        //     to_address: گیرنده واقعی دارایی.
-        //     token_address: TRX، TRC10 یا قرارداد TRC20.
-        //     tx_hash: تراکنش منبع.
-        //     block_number: بلاک منبع.
-        //     timestamp: زمان انتقال.
-        //     amount: مقدار خام و بدون از دست دادن precision.
-        //     transfer_type: native، trc10، trc20 یا internal.
-        // از این استفاده میکنیم که جریان واقعی fund رو رسم کنیم
-
-        let relationships =
-            build_relationships(&txid, block_number, timestamp, &canonical_transfers);
-
-        for row in relationships {
-            loader.relationship_batcher.push(row).await?;
+            events.push(event);
         }
 
         let semantics = classify_transaction_semantics(TransactionSemanticsInput {
@@ -280,7 +239,7 @@ async fn process_tx(loader: Arc<LoaderTron>, tx: Value, block_number: u64) -> Re
             is_contract_call,
         };
 
-        loader.transaction_feature_batcher.push(feature).await?;
+        features.push(feature);
     } else {
         let semantics = classify_transaction_semantics(TransactionSemanticsInput {
             classification: &classification,
@@ -292,159 +251,220 @@ async fn process_tx(loader: Arc<LoaderTron>, tx: Value, block_number: u64) -> Re
             mint_burns: &[],
             liquidity_events: &[],
         });
-        loader
-            .transaction_feature_batcher
-            .push(TransactionFeatureRow {
-                tx_hash: txid.clone(),
-                block_number,
-                timestamp,
-                transaction_type: semantics.transaction_type.clone(),
-                transaction_subtype: semantics.transaction_subtype.clone(),
-                classification_confidence: semantics.confidence,
-                classification_source: semantics.source.clone(),
-                protocol: semantics.protocol.clone(),
-                method_id: semantics.method_id.clone(),
-                is_swap: semantics.is_swap,
-                is_bridge: semantics.is_bridge,
-                is_mint: semantics.is_mint,
-                is_burn: semantics.is_burn,
-                is_liquidity_add: semantics.is_liquidity_add,
-                is_liquidity_remove: semantics.is_liquidity_remove,
-                is_contract_call,
-            })
-            .await?;
+        features.push(TransactionFeatureRow {
+            tx_hash: txid.clone(),
+            block_number,
+            timestamp,
+            transaction_type: semantics.transaction_type.clone(),
+            transaction_subtype: semantics.transaction_subtype.clone(),
+            classification_confidence: semantics.confidence,
+            classification_source: semantics.source.clone(),
+            protocol: semantics.protocol.clone(),
+            method_id: semantics.method_id.clone(),
+            is_swap: semantics.is_swap,
+            is_bridge: semantics.is_bridge,
+            is_mint: semantics.is_mint,
+            is_burn: semantics.is_burn,
+            is_liquidity_add: semantics.is_liquidity_add,
+            is_liquidity_remove: semantics.is_liquidity_remove,
+            is_contract_call,
+        });
     }
 
-    Ok(())
+    Ok(PreparedTransaction {
+        source,
+        transaction,
+        transfers: canonical_transfers,
+        events,
+        feature: features.pop(),
+        asset_resolutions,
+    })
 }
 
-#[derive(Debug, Clone, Copy)]
-struct FetchOptions {
-    end_block: Option<u64>,
-    force_replay: bool,
-    advance_checkpoint: bool,
-}
-
-pub async fn fetch_tron(loader: Arc<LoaderTron>, start_block: u64, total_txs: u64) -> Result<()> {
-    fetch_tron_with_options(
-        loader,
-        start_block,
-        total_txs,
-        FetchOptions {
-            end_block: None,
-            force_replay: false,
-            advance_checkpoint: true,
-        },
-    )
-    .await
-}
-
-pub async fn replay_tron_range(
-    loader: Arc<LoaderTron>,
-    start_block: u64,
-    end_block: u64,
-) -> Result<()> {
-    validate_replay_range(start_block, end_block)?;
-
-    fetch_tron_with_options(
-        loader,
-        start_block,
-        0,
-        FetchOptions {
-            end_block: Some(end_block),
-            force_replay: true,
-            advance_checkpoint: false,
-        },
-    )
-    .await
-}
-
-pub async fn ingest_tron_range(
-    loader: Arc<LoaderTron>,
-    start_block: u64,
-    end_block: u64,
-) -> Result<()> {
-    validate_replay_range(start_block, end_block)?;
-
-    fetch_tron_with_options(
-        loader,
-        start_block,
-        0,
-        FetchOptions {
-            end_block: Some(end_block),
-            force_replay: false,
-            advance_checkpoint: false,
-        },
-    )
-    .await
-}
-
-async fn fetch_tron_with_options(
-    loader: Arc<LoaderTron>,
-    start_block: u64,
-    total_txs: u64,
-    options: FetchOptions,
-) -> Result<()> {
-    let latest_block = loader.tron_client.get_solid_block_number().await?;
-    let end_block = options.end_block.unwrap_or(latest_block);
-
-    if end_block > latest_block {
-        return Err(anyhow!(
-            "requested TRON end block {end_block} is above latest solid block {latest_block}"
-        ));
-    }
-
-    println!(
-        "TRON Latest Solid Block: {} | processing range {}..={}",
-        latest_block, start_block, end_block
-    );
-
-    let mut tx_count = 0u64;
-
-    let mut current_block = start_block;
-
-    while current_block <= end_block {
-        if total_txs > 0 && tx_count >= total_txs {
-            break;
-        }
-
-        let block_result = {
-            let _permit = loader.rpc_limiter.acquire().await?;
-
-            loader.tron_client.get_block(current_block).await
+async fn resolve_legacy_assets(
+    loader: &LoaderTron,
+    tx: &Value,
+    transfers: &mut [super::transfer_extractor::ExtractedTransfer],
+) -> Result<BTreeMap<String, Value>> {
+    let mut evidence = BTreeMap::new();
+    for transfer in transfers {
+        let contract = tx["raw_data"]["contract"]
+            .as_array()
+            .and_then(|a| a.get(transfer.source_index as usize));
+        let name_hex = if transfer.source_kind == "contract"
+            && contract.is_some_and(|c| c["type"] == "TransferAssetContract")
+        {
+            contract.unwrap()["parameter"]["value"]["asset_name"]
+                .as_str()
+                .context("verified TRC10 asset bytes missing")?
+                .to_ascii_uppercase()
+        } else if let Some(name) = transfer.asset_id.strip_prefix("TRC10:legacy:") {
+            name.to_owned()
+        } else {
+            continue;
         };
-        let block = match block_result {
-            Ok(block) => block,
-            Err(error) => {
-                record_error(
-                    &loader.clickhouse,
-                    current_block,
-                    "",
-                    "",
-                    "FETCH_BLOCK",
-                    &error,
+        let mut cache = loader.legacy_assets.lock().await;
+        let response = if let Some(value) = cache.get(&name_hex) {
+            value.clone()
+        } else {
+            let _permit = loader.rpc_limiter.acquire().await?;
+            let value = loader
+                .tron_client
+                .post(
+                    "wallet/getassetissuebyname",
+                    serde_json::json!({"value":name_hex}),
                 )
                 .await?;
-                return Err(error)
-                    .with_context(|| format!("failed to fetch TRON block {current_block}"));
+            let name = value["name"].as_str().context(
+                "TRON source validation failed: legacy TRC10 name is unresolved or ambiguous",
+            )?;
+            let id = value["id"]
+                .as_str()
+                .context("TRON source validation failed: legacy TRC10 numeric identity missing")?;
+            let requested = hex::decode(&name_hex)?;
+            let is_id = std::str::from_utf8(&requested).is_ok_and(|s| s == id);
+            anyhow::ensure!(
+                name.eq_ignore_ascii_case(&name_hex) || is_id,
+                "TRON source validation failed: TRC10 catalog name/id mismatch"
+            );
+            let id = aml_warehouse::RawAmount::parse(id)?;
+            anyhow::ensure!(
+                id.as_str() != "0",
+                "TRON source validation failed: invalid TRC10 catalog id"
+            );
+            aml_warehouse::values::tron_wallet(
+                value["owner_address"]
+                    .as_str()
+                    .context("legacy TRC10 issuer missing")?,
+            )?;
+            let record = serde_json::json!({"rpc_method":"wallet/getassetissuebyname","observation":"current_identity_catalog_not_historical_state","observed_at_unix_ms":crate::db::now_ms(),"response":value});
+            if cache.len() >= 10000 {
+                cache.clear();
+            }
+            cache.insert(name_hex.clone(), record.clone());
+            record
+        };
+        let id = response["response"]["id"]
+            .as_str()
+            .context("cached asset id missing")?;
+        evidence.insert(name_hex, response.clone());
+        transfer.asset_id = format!("TRC10:{id}");
+    }
+    Ok(evidence)
+}
+
+pub async fn fetch_tron(loader: Arc<LoaderTron>, start: u64, total_txs: u64) -> Result<()> {
+    fetch_tron_with_options(loader, start, None, total_txs, false).await
+}
+pub async fn replay_tron_range(loader: Arc<LoaderTron>, start: u64, end: u64) -> Result<()> {
+    validate_replay_range(start, end)?;
+    fetch_tron_with_options(loader, start, Some(end), 0, true).await
+}
+pub async fn ingest_tron_range(loader: Arc<LoaderTron>, start: u64, end: u64) -> Result<()> {
+    validate_replay_range(start, end)?;
+    fetch_tron_with_options(loader, start, Some(end), 0, false).await
+}
+async fn fetch_tron_with_options(
+    loader: Arc<LoaderTron>,
+    start: u64,
+    end: Option<u64>,
+    total_txs: u64,
+    force_replay: bool,
+) -> Result<()> {
+    let _writer = super::publication_store::writer_lock(loader.clickhouse.database())?;
+    let latest = loader.tron_client.get_solid_block_number().await?;
+    let end = end.unwrap_or(latest);
+    anyhow::ensure!(
+        end <= latest,
+        "requested TRON end block {end} is above latest solid block {latest}"
+    );
+    let state = aml_warehouse::publication::state(
+        &*loader.clickhouse,
+        loader.clickhouse.database(),
+        aml_warehouse::Network::Tron,
+    )
+    .await?;
+    if force_replay {
+        anyhow::ensure!(
+            state.initialized == 1 && start >= state.start_block && end <= state.last_block_number,
+            "TRON source validation failed: replay refresh requires an already published range; use ingestion for new heights"
+        );
+        loader.protocol_registry.refresh(&loader.clickhouse).await?;
+    } else if state.initialized == 1 {
+        anyhow::ensure!(
+            start >= state.start_block && start <= state.last_block_number.saturating_add(1),
+            "TRON source validation failed: requested range leaves a checkpoint gap or precedes the published start"
+        );
+    }
+    // The follow loop can poll with start=tip+1 and no new solid blocks. Verify
+    // its checkpoint even when the range is empty, before treating it as a no-op.
+    if state.initialized == 1 {
+        let checked = async {
+            anyhow::ensure!(
+                latest >= state.last_block_number,
+                "TRON source validation failed: solid head is behind the published checkpoint"
+            );
+            let source = {
+                let _permit = loader.rpc_limiter.acquire().await?;
+                loader
+                    .tron_client
+                    .get_block(state.last_block_number)
+                    .await?
+            };
+            let header =
+                super::publication_store::block_header(&source, state.last_block_number, 3)?;
+            should_ingest_block(
+                &loader.clickhouse,
+                state.last_block_number,
+                &header.block_hash,
+                false,
+            )
+            .await?;
+            anyhow::Ok(())
+        }
+        .await;
+        if let Err(error) = checked {
+            record_error(
+                &loader.clickhouse,
+                state.last_block_number,
+                &state.last_block_hash,
+                "",
+                "VERIFY_CHECKPOINT",
+                &error,
+            )
+            .await?;
+            return Err(error);
+        }
+        resolve_ingestion_failures(
+            &loader.clickhouse,
+            state.last_block_number,
+            &["VERIFY_CHECKPOINT"],
+        )
+        .await?;
+    }
+    let mut count = 0u64;
+    for height in start..=end {
+        if total_txs > 0 && count >= total_txs {
+            break;
+        }
+        let fetched = {
+            let _permit = loader.rpc_limiter.acquire().await?;
+            loader.tron_client.get_block(height).await
+        };
+        let source = match fetched {
+            Ok(v) => v,
+            Err(error) => {
+                record_error(&loader.clickhouse, height, "", "", "FETCH_BLOCK", &error).await?;
+                return Err(error);
             }
         };
-
-        let empty_txs = Vec::new();
-
-        let txs = block["transactions"].as_array().unwrap_or(&empty_txs);
-        let block_hash_result = block["blockID"]
-            .as_str()
-            .filter(|hash| !hash.is_empty())
-            .map(str::to_string)
-            .ok_or_else(|| anyhow!("TRON block {current_block} has no blockID"));
-        let block_hash = match block_hash_result {
-            Ok(block_hash) => block_hash,
+        let header = match super::publication_store::block_header(&source, height, 3) {
+            Ok(v) => v,
             Err(error) => {
                 record_error(
                     &loader.clickhouse,
-                    current_block,
-                    "",
+                    height,
+                    source["blockID"].as_str().unwrap_or(""),
                     "",
                     "VALIDATE_BLOCK",
                     &error,
@@ -453,284 +473,141 @@ async fn fetch_tron_with_options(
                 return Err(error);
             }
         };
-        let parent_hash = block["block_header"]["raw_data"]["parentHash"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let block_timestamp = block["block_header"]["raw_data"]["timestamp"]
-            .as_u64()
-            .unwrap_or_default();
-
-        let should_ingest = match should_ingest_block(
-            &loader.clickhouse,
-            current_block,
-            &block_hash,
-            options.force_replay,
-        )
-        .await
-        {
-            Ok(should_ingest) => should_ingest,
-            Err(error) => {
-                let (error_class, retryable) =
-                    if error.downcast_ref::<FinalizedHashConflict>().is_some() {
-                        ("HASH_CONFLICT", false)
-                    } else {
-                        classify_ingestion_error(&error)
-                    };
-                record_ingestion_failure(
-                    &loader.clickhouse,
-                    current_block,
-                    &block_hash,
-                    "",
+        let ingest =
+            match should_ingest_block(&loader.clickhouse, height, &header.block_hash, force_replay)
+                .await
+            {
+                Ok(v) => v,
+                Err(error) => {
+                    record_error(
+                        &loader.clickhouse,
+                        height,
+                        &header.block_hash,
+                        "",
+                        "CANONICALITY",
+                        &error,
+                    )
+                    .await?;
+                    return Err(error);
+                }
+            };
+        if !ingest {
+            resolve_ingestion_failures(
+                &loader.clickhouse,
+                height,
+                &[
+                    "VERIFY_CHECKPOINT",
+                    "FETCH_BLOCK",
+                    "VALIDATE_BLOCK",
                     "CANONICALITY",
-                    error_class,
-                    &format!("{error:#}"),
-                    retryable,
-                )
-                .await?;
-                return Err(error);
-            }
-        };
-
-        if !should_ingest {
-            resolve_ingestion_failures(&loader.clickhouse, current_block).await?;
-
-            if options.advance_checkpoint {
-                save_sync_state(loader.clickhouse.clone(), current_block).await?;
-            }
-            current_block += 1;
-            continue;
-        }
-
-        record_processing_block(
-            &loader.clickhouse,
-            current_block,
-            block_hash.clone(),
-            parent_hash.clone(),
-            block_timestamp,
-            txs.len() as u32,
-        )
-        .await?;
-
-        if is_genesis_block(current_block) {
-            println!(
-                "[TRON] block 0 is the genesis block; recording {} allocation transaction(s) without runtime receipts or fund-flow edges",
-                txs.len()
-            );
-
-            record_ingested_block(
-                &loader.clickhouse,
-                current_block,
-                block_hash,
-                parent_hash,
-                block_timestamp,
-                txs.len() as u32,
+                ],
             )
             .await?;
-
-            if options.advance_checkpoint {
-                save_sync_state(loader.clickhouse.clone(), current_block).await?;
-            }
-
-            current_block += 1;
             continue;
         }
-
-        if txs.is_empty() {
-            println!("[TRON] block {} has 0 transaction(s)", current_block);
-
-            record_ingested_block(
-                &loader.clickhouse,
-                current_block,
-                block_hash,
-                parent_hash,
-                block_timestamp,
-                0,
-            )
-            .await?;
-
-            if options.advance_checkpoint {
-                save_sync_state(loader.clickhouse.clone(), current_block).await?;
-            }
-
-            current_block += 1;
-
-            continue;
-        }
-
-        if total_txs > 0 && tx_count > 0 && tx_count.saturating_add(txs.len() as u64) > total_txs {
-            println!(
-                "[TRON] stopping before block {} to preserve block-level checkpoint integrity",
-                current_block
-            );
+        let txs = source
+            .get("transactions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if total_txs > 0 && count > 0 && count.saturating_add(txs.len() as u64) > total_txs {
             break;
         }
-
-        if loader
+        loader
             .protocol_registry
-            .refresh_if_due(&loader.clickhouse, current_block)
-            .await?
-        {
-            println!(
-                "[TRON] refreshed approved protocol registry at block {}",
-                current_block
-            );
-        }
-
-        let tx_vec = txs.to_vec();
-        let block_tx_total = tx_vec.len() as u64;
-
-        println!(
-            "[TRON] block {} fetched {} transaction(s); processing {} transaction(s)",
-            current_block,
-            txs.len(),
-            block_tx_total
-        );
-
-        tx_count += block_tx_total;
-
-        let processed_in_block = Arc::new(AtomicU64::new(0));
-
-        // شروع بخش پردازش مواردی که از بلاک گرفتیم
-        // همه تراکنش های بلاک جمع میشوند بعد ذخیره میشوند
-        // حتی اگه یکی ذخیره نشه نتیجه خطا میده
-        let tx_errors = stream::iter(tx_vec)
-            .map(|tx| {
-                let loader_clone = loader.clone();
-                let tx_hash = tx["txID"].as_str().unwrap_or_default().to_string();
-
-                async move { (tx_hash, process_tx(loader_clone, tx, current_block).await) }
-            })
-            .buffer_unordered(loader.config.tx_worker_concurrency)
-            .filter_map(|(tx_hash, res)| {
-                let processed_in_block = processed_in_block.clone();
-
-                async move {
-                    let processed = processed_in_block.fetch_add(1, Ordering::Relaxed) + 1;
-
-                    match res {
-                        Ok(()) => {
-                            if processed == 1
-                                || processed.is_multiple_of(10)
-                                || processed == block_tx_total
-                            {
-                                println!(
-                                    "[TRON] block {} processed {}/{} transaction(s)",
-                                    current_block, processed, block_tx_total
-                                );
-                            }
-
-                            None
-                        }
-                        Err(err) => {
-                            eprintln!(
-                                "[TRON TX ERROR] block {} processed {}/{} transaction(s): {:?}",
-                                current_block, processed, block_tx_total, err
-                            );
-
-                            Some((tx_hash, err))
+            .refresh_if_due(&loader.clickhouse, height)
+            .await?;
+        let prepared = if is_genesis_block(height) {
+            let values = txs
+                .iter()
+                .map(|tx| PreparedTransaction::genesis(tx, header.block_timestamp_unix_ms))
+                .collect::<Result<Vec<_>>>();
+            match values {
+                Ok(v) => v,
+                Err(error) => {
+                    record_error(
+                        &loader.clickhouse,
+                        height,
+                        &header.block_hash,
+                        "",
+                        "GENESIS_SOURCE",
+                        &error,
+                    )
+                    .await?;
+                    return Err(error);
+                }
+            }
+        } else {
+            let results = stream::iter(txs.into_iter().enumerate())
+                .map(|(position, tx)| {
+                    let current = loader.clone();
+                    let hash = tx["txID"].as_str().unwrap_or("").to_owned();
+                    async move {
+                        (
+                            position,
+                            hash,
+                            process_tx(current, tx, height, header.block_timestamp_unix_ms).await,
+                        )
+                    }
+                })
+                .buffer_unordered(loader.config.tx_worker_concurrency.max(1))
+                .collect::<Vec<_>>()
+                .await;
+            let mut ordered = BTreeMap::new();
+            let mut first = None;
+            for (position, hash, result) in results {
+                match result {
+                    Ok(value) => {
+                        ordered.insert(position, value);
+                    }
+                    Err(error) => {
+                        record_error(
+                            &loader.clickhouse,
+                            height,
+                            &header.block_hash,
+                            &hash,
+                            "PROCESS_TX",
+                            &error,
+                        )
+                        .await?;
+                        if first.is_none() {
+                            first = Some(error);
                         }
                     }
                 }
-            })
-            .collect::<Vec<_>>()
-            .await;
-
-        if !tx_errors.is_empty() {
-            let mut first_error = None;
-
-            for (tx_hash, error) in tx_errors {
-                record_error(
-                    &loader.clickhouse,
-                    current_block,
-                    &block_hash,
-                    &tx_hash,
-                    "PROCESS_TX",
-                    &error,
-                )
-                .await?;
-
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
             }
-
-            if let Err(flush_error) = loader.flush_batches().await {
-                record_error(
-                    &loader.clickhouse,
-                    current_block,
-                    &block_hash,
-                    "",
-                    "FLUSH_AFTER_TX_FAILURE",
-                    &flush_error,
-                )
-                .await?;
+            if let Some(error) = first {
+                return Err(error)
+                    .with_context(|| format!("failed to prepare complete TRON block {height}"));
             }
-
-            let first_error = first_error.expect("transaction errors are not empty");
-            record_failed_block(
-                &loader.clickhouse,
-                current_block,
-                block_hash,
-                parent_hash,
-                block_timestamp,
-                block_tx_total as u32,
-                format!("{first_error:#}"),
-            )
-            .await?;
-
-            return Err(first_error)
-                .with_context(|| format!("failed to process TRON block {current_block}"));
-        }
-
-        if let Err(error) = loader.flush_batches().await {
+            ordered.into_values().collect()
+        };
+        if let Err(error) = publish_block(
+            &loader.clickhouse,
+            &source,
+            height,
+            &prepared,
+            latest,
+            force_replay,
+        )
+        .await
+        {
             record_error(
                 &loader.clickhouse,
-                current_block,
-                &block_hash,
+                height,
+                &header.block_hash,
                 "",
-                "FLUSH_BLOCK",
+                "PUBLISH_BLOCK",
                 &error,
             )
             .await?;
-            record_failed_block(
-                &loader.clickhouse,
-                current_block,
-                block_hash,
-                parent_hash,
-                block_timestamp,
-                block_tx_total as u32,
-                format!("{error:#}"),
-            )
-            .await?;
             return Err(error)
-                .with_context(|| format!("failed to flush TRON block {current_block}"));
+                .with_context(|| format!("failed to publish complete TRON block {height}"));
         }
-
-        record_ingested_block(
-            &loader.clickhouse,
-            current_block,
-            block_hash,
-            parent_hash,
-            block_timestamp,
-            block_tx_total as u32,
-        )
-        .await?;
-
-        if options.advance_checkpoint {
-            save_sync_state(loader.clickhouse.clone(), current_block).await?;
-        }
-
-        println!(
-            "TRON synced block {} | total tx {}",
-            current_block, tx_count
-        );
-
-        current_block += 1;
+        resolve_ingestion_failures(&loader.clickhouse, height, &[]).await?;
+        count = count.saturating_add(prepared.len() as u64);
+        println!("[TRON] published block {height}; {count} transaction(s) in this pass");
     }
-
-    loader.flush_batches().await?;
-
     Ok(())
 }
 
@@ -760,7 +637,7 @@ fn validate_replay_range(start_block: u64, end_block: u64) -> Result<()> {
 }
 
 async fn record_error(
-    clickhouse: &clickhouse::Client,
+    clickhouse: &crate::db::Client,
     block_number: u64,
     block_hash: &str,
     tx_hash: &str,
@@ -782,7 +659,7 @@ async fn record_error(
     .await
 }
 
-fn classify_ingestion_error(error: &anyhow::Error) -> (&'static str, bool) {
+pub(crate) fn classify_ingestion_error(error: &anyhow::Error) -> (&'static str, bool) {
     if error.downcast_ref::<FinalizedHashConflict>().is_some() {
         return ("HASH_CONFLICT", false);
     }
@@ -805,6 +682,12 @@ fn classify_ingestion_error(error: &anyhow::Error) -> (&'static str, bool) {
     }
 
     if [
+        "tron source validation",
+        "core parent mismatch",
+        "noncontiguous core batch",
+        "duplicate transaction",
+        "duplicate stored fact",
+        "refresh cannot",
         "missing",
         "no valid",
         "invalid",
@@ -821,17 +704,8 @@ fn classify_ingestion_error(error: &anyhow::Error) -> (&'static str, bool) {
     ("PROCESSING", true)
 }
 
-fn transaction_status(receipt: &Value) -> u8 {
-    // TRON's protobuf JSON omits default enum values. For TransactionInfo::Receipt,
-    // an omitted result is SUCCESS; failed executions include an explicit result.
-    match receipt
-        .get("receipt")
-        .and_then(|receipt| receipt.get("result"))
-    {
-        None => 1,
-        Some(Value::String(result)) if result == "SUCCESS" => 1,
-        Some(_) => 0,
-    }
+fn transaction_status(tx: &Value, receipt: &Value) -> u8 {
+    u8::from(super::source_evidence::transaction_succeeded(tx, receipt))
 }
 
 #[cfg(test)]
@@ -852,7 +726,8 @@ mod tests {
 
     #[test]
     fn classifies_missing_receipt_as_retryable_rpc_failure() {
-        let error = anyhow!("transaction receipt is not available");
+        let error = anyhow!("transaction receipt is not available")
+            .context("TRON source validation failed");
 
         assert_eq!(classify_ingestion_error(&error), ("RPC_TRANSIENT", true));
     }
@@ -862,6 +737,12 @@ mod tests {
         let error = anyhow!("TRON block 10 has no valid timestamp");
 
         assert_eq!(classify_ingestion_error(&error), ("DATA_VALIDATION", false));
+        let mismatch = anyhow!("protobuf/JSON contract type mismatch")
+            .context("TRON source validation failed");
+        assert_eq!(
+            classify_ingestion_error(&mismatch),
+            ("DATA_VALIDATION", false)
+        );
     }
 
     #[test]
@@ -871,7 +752,7 @@ mod tests {
             "receipt": { "net_fee": 100_000 }
         });
 
-        assert_eq!(transaction_status(&receipt), 1);
+        assert_eq!(transaction_status(&serde_json::json!({}), &receipt), 1);
     }
 
     #[test]
@@ -881,7 +762,7 @@ mod tests {
             "receipt": { "result": "SUCCESS" }
         });
 
-        assert_eq!(transaction_status(&receipt), 1);
+        assert_eq!(transaction_status(&serde_json::json!({}), &receipt), 1);
     }
 
     #[test]
@@ -891,6 +772,6 @@ mod tests {
             "receipt": { "result": "FAILED" }
         });
 
-        assert_eq!(transaction_status(&receipt), 0);
+        assert_eq!(transaction_status(&serde_json::json!({}), &receipt), 0);
     }
 }

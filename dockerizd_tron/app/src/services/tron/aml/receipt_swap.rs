@@ -173,6 +173,10 @@ mod tests {
                 to_address: pool.clone(),
                 amount: 10u64.into(),
                 kind: TransferKind::Trc20,
+                token_id: None,
+                source_index: 0,
+                source_sub_index: 0,
+                source_kind: "log",
             },
             ExtractedTransfer {
                 transfer_id: "out".into(),
@@ -181,6 +185,10 @@ mod tests {
                 to_address: "wallet".into(),
                 amount: 9u64.into(),
                 kind: TransferKind::Trc20,
+                token_id: None,
+                source_index: 0,
+                source_sub_index: 0,
+                source_kind: "log",
             },
         ];
         (receipt, transfers)

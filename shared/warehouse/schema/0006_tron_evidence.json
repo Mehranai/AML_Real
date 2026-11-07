@@ -1,0 +1,587 @@
+{
+  "version": 6,
+  "migration_id": "20261106_0006_tron_evidence",
+  "description": "TRON protobuf contract provenance, ordered receipt logs/internal calls and nullable resource observations.",
+  "previous_checksum": "8fc65f6db710106cf6a476b2ac9469e0bcf1d4769c80e2326436a166fab6dcdf",
+  "columns": {
+    "aml_tron_contracts": [
+      {
+        "name": "transaction_index",
+        "data_type": "Nullable(UInt32)",
+        "description": "Original position in the block; NULL on pre-v6 rows.",
+        "default": "NULL"
+      },
+      {
+        "name": "proto_contract_type",
+        "data_type": "Nullable(UInt32)",
+        "description": "Original protobuf ContractType numeric value.",
+        "default": "NULL"
+      },
+      {
+        "name": "type_url",
+        "data_type": "Nullable(String)",
+        "description": "Exact Any.type_url from the hashed raw_data protobuf.",
+        "default": "NULL"
+      },
+      {
+        "name": "parameter_value_hex",
+        "data_type": "Nullable(String)",
+        "description": "Original Any.value bytes, hex encoded without a prefix.",
+        "default": "NULL"
+      },
+      {
+        "name": "raw_data_hash_verified",
+        "data_type": "UInt8",
+        "description": "Only proves SHA256(raw_data_hex) equals txID; not signature or consensus verification.",
+        "default": "0"
+      },
+      {
+        "name": "parameter_fields_verified",
+        "data_type": "UInt8",
+        "description": "Supported transfer/call fields matched to hashed protobuf; unsupported contract payloads remain unverified.",
+        "default": "0"
+      }
+    ]
+  },
+  "tables": [
+    {
+      "name": "aml_tron_logs",
+      "purpose": "TRON receipt logs with original emitter, topic bytes and receipt-array position; not EVM facts.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash",
+          "default": null
+        },
+        {
+          "name": "transaction_index",
+          "data_type": "UInt32",
+          "description": "Original zero-based transaction position in the block.",
+          "default": null
+        },
+        {
+          "name": "log_index",
+          "data_type": "UInt32",
+          "description": "Original position in TransactionInfo.log.",
+          "default": null
+        },
+        {
+          "name": "address",
+          "data_type": "String",
+          "description": "Canonical TRON Base58Check emitter.",
+          "default": null
+        },
+        {
+          "name": "topics",
+          "data_type": "Array(String)",
+          "description": "Original ordered 32-byte topics in lowercase hex.",
+          "default": null
+        },
+        {
+          "name": "data_hex",
+          "data_type": "String",
+          "description": "Exact log data bytes in lowercase hex.",
+          "default": null
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "Unmodified source object serialized as JSON.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Local ingestion observation time in UTC milliseconds.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "tx_hash",
+        "log_index"
+      ],
+      "partition_by": "intDiv(block_number, 100000)",
+      "indexes": []
+    },
+    {
+      "name": "aml_tron_internals",
+      "purpose": "TRON internal execution records, including rejected calls and original ordered call values.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash",
+          "default": null
+        },
+        {
+          "name": "transaction_index",
+          "data_type": "UInt32",
+          "description": "Original zero-based transaction position in the block.",
+          "default": null
+        },
+        {
+          "name": "internal_index",
+          "data_type": "UInt32",
+          "description": "Original position in TransactionInfo.internal_transactions.",
+          "default": null
+        },
+        {
+          "name": "internal_hash",
+          "data_type": "Nullable(String)",
+          "description": "Internal record hash if actually returned; never a transaction hash.",
+          "default": null
+        },
+        {
+          "name": "caller_address",
+          "data_type": "Nullable(String)",
+          "description": "Original caller, normalized to Base58Check when present.",
+          "default": null
+        },
+        {
+          "name": "transfer_to_address",
+          "data_type": "Nullable(String)",
+          "description": "Original transferTo_address, normalized to Base58Check when present.",
+          "default": null
+        },
+        {
+          "name": "rejected",
+          "data_type": "Nullable(UInt8)",
+          "description": "Explicit RPC rejection flag; NULL means omitted, not confirmed success.",
+          "default": null
+        },
+        {
+          "name": "note_hex",
+          "data_type": "Nullable(String)",
+          "description": "Original note bytes; NULL if omitted.",
+          "default": null
+        },
+        {
+          "name": "call_value_info_json",
+          "data_type": "String",
+          "description": "Exact ordered callValueInfo array; array positions are not filtered or renumbered.",
+          "default": null
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "Unmodified source object serialized as JSON.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Local ingestion observation time in UTC milliseconds.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "tx_hash",
+        "internal_index"
+      ],
+      "partition_by": "intDiv(block_number, 100000)",
+      "indexes": []
+    },
+    {
+      "name": "aml_tron_resources",
+      "purpose": "Per-transaction TRON receipt costs/resources. Omitted resource fields remain NULL.",
+      "columns": [
+        {
+          "name": "network_id",
+          "data_type": "LowCardinality(String)",
+          "description": "Canonical network identity; required in every primary and lookup scope.",
+          "default": null
+        },
+        {
+          "name": "block_number",
+          "data_type": "UInt64",
+          "description": "Canonical block height.",
+          "default": null
+        },
+        {
+          "name": "block_hash",
+          "data_type": "String",
+          "description": "Chain-validated hash; Bitcoin uses 64 hex characters, EVM retains its canonical encoding.",
+          "default": null
+        },
+        {
+          "name": "block_timestamp_unix_ms",
+          "data_type": "UInt64",
+          "description": "UTC block time in milliseconds; Bitcoin RPC seconds are multiplied with overflow checking.",
+          "default": null
+        },
+        {
+          "name": "commit_id",
+          "data_type": "String",
+          "description": "Identifier of the complete ingestion attempt.",
+          "default": null
+        },
+        {
+          "name": "revision",
+          "data_type": "UInt64",
+          "description": "Monotonic publication or record revision; never a floating point timestamp.",
+          "default": null
+        },
+        {
+          "name": "tx_hash",
+          "data_type": "String",
+          "description": "tx hash",
+          "default": null
+        },
+        {
+          "name": "transaction_index",
+          "data_type": "UInt32",
+          "description": "Original zero-based transaction position in the block.",
+          "default": null
+        },
+        {
+          "name": "fee_raw",
+          "data_type": "Nullable(UInt256)",
+          "description": "Exact transaction fee in SUN if present; no synthesized zero.",
+          "default": null
+        },
+        {
+          "name": "energy_usage",
+          "data_type": "Nullable(UInt64)",
+          "description": "Energy charged to caller from receipt if present.",
+          "default": null
+        },
+        {
+          "name": "energy_usage_total",
+          "data_type": "Nullable(UInt64)",
+          "description": "Total execution Energy if present.",
+          "default": null
+        },
+        {
+          "name": "origin_energy_usage",
+          "data_type": "Nullable(UInt64)",
+          "description": "Energy charged to creator if present.",
+          "default": null
+        },
+        {
+          "name": "energy_fee",
+          "data_type": "Nullable(UInt64)",
+          "description": "Energy fee in SUN if present.",
+          "default": null
+        },
+        {
+          "name": "net_usage",
+          "data_type": "Nullable(UInt64)",
+          "description": "Bandwidth usage if present.",
+          "default": null
+        },
+        {
+          "name": "net_fee",
+          "data_type": "Nullable(UInt64)",
+          "description": "Bandwidth fee in SUN if present.",
+          "default": null
+        },
+        {
+          "name": "energy_penalty_total",
+          "data_type": "Nullable(UInt64)",
+          "description": "Dynamic Energy penalty if present.",
+          "default": null
+        },
+        {
+          "name": "receipt_result",
+          "data_type": "Nullable(String)",
+          "description": "Literal TVM receipt result if returned.",
+          "default": null
+        },
+        {
+          "name": "transaction_result",
+          "data_type": "Nullable(String)",
+          "description": "Literal TransactionInfo.result if returned.",
+          "default": null
+        },
+        {
+          "name": "raw_evidence_json",
+          "data_type": "String",
+          "description": "Unmodified source object serialized as JSON.",
+          "default": null
+        },
+        {
+          "name": "created_at_unix_ms",
+          "data_type": "UInt64",
+          "description": "Local ingestion observation time in UTC milliseconds.",
+          "default": null
+        }
+      ],
+      "engine": "ReplacingMergeTree(revision)",
+      "order_by": [
+        "network_id",
+        "block_number",
+        "block_hash",
+        "commit_id",
+        "tx_hash"
+      ],
+      "partition_by": "intDiv(block_number, 100000)",
+      "indexes": []
+    }
+  ],
+  "views": [
+    {
+      "name": "aml_tron_contracts_canonical",
+      "purpose": "Published canonical TRON source facts only; exact complete block/commit/revision fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.contract_index AS contract_index, f.contract_type AS contract_type, f.payload_json AS payload_json, f.created_at_unix_ms AS created_at_unix_ms, f.transaction_index AS transaction_index, f.proto_contract_type AS proto_contract_type, f.type_url AS type_url, f.parameter_value_hex AS parameter_value_hex, f.raw_data_hash_verified AS raw_data_hash_verified, f.parameter_fields_verified AS parameter_fields_verified FROM {{database}}.aml_tron_contracts AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+    },
+    {
+      "name": "aml_tron_logs_canonical",
+      "purpose": "Published canonical TRON source facts only; exact complete block/commit/revision fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.log_index AS log_index, f.address AS address, f.topics AS topics, f.data_hex AS data_hex, f.raw_evidence_json AS raw_evidence_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_tron_logs AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+    },
+    {
+      "name": "aml_tron_internals_canonical",
+      "purpose": "Published canonical TRON source facts only; exact complete block/commit/revision fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.internal_index AS internal_index, f.internal_hash AS internal_hash, f.caller_address AS caller_address, f.transfer_to_address AS transfer_to_address, f.rejected AS rejected, f.note_hex AS note_hex, f.call_value_info_json AS call_value_info_json, f.raw_evidence_json AS raw_evidence_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_tron_internals AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+    },
+    {
+      "name": "aml_tron_resources_canonical",
+      "purpose": "Published canonical TRON source facts only; exact complete block/commit/revision fence.",
+      "select": "SELECT f.network_id AS network_id, f.block_number AS block_number, f.block_hash AS block_hash, f.block_timestamp_unix_ms AS block_timestamp_unix_ms, f.commit_id AS commit_id, f.revision AS revision, f.tx_hash AS tx_hash, f.transaction_index AS transaction_index, f.fee_raw AS fee_raw, f.energy_usage AS energy_usage, f.energy_usage_total AS energy_usage_total, f.origin_energy_usage AS origin_energy_usage, f.energy_fee AS energy_fee, f.net_usage AS net_usage, f.net_fee AS net_fee, f.energy_penalty_total AS energy_penalty_total, f.receipt_result AS receipt_result, f.transaction_result AS transaction_result, f.raw_evidence_json AS raw_evidence_json, f.created_at_unix_ms AS created_at_unix_ms FROM {{database}}.aml_tron_resources AS f FINAL INNER JOIN {{database}}.aml_ingested_blocks_canonical AS b ON f.network_id=b.network_id AND f.block_number=b.block_number AND f.block_hash=b.block_hash AND f.commit_id=b.commit_id AND f.revision=b.revision"
+    }
+  ],
+  "rules": [
+    {
+      "table": "aml_tron_contracts",
+      "column": "parameter_value_hex",
+      "kind": "hex_bytes"
+    },
+    {
+      "table": "aml_tron_contracts",
+      "column": "raw_data_hash_verified",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_tron_contracts",
+      "column": "parameter_fields_verified",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_tron_logs",
+      "column": "network_id",
+      "kind": "enum",
+      "values": [
+        "tron:mainnet"
+      ]
+    },
+    {
+      "table": "aml_tron_logs",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_tron_logs",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_tron_logs",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_tron_logs",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_tron_logs",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_tron_logs",
+      "column": "address",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_tron_logs",
+      "column": "data_hex",
+      "kind": "hex_bytes"
+    },
+    {
+      "table": "aml_tron_internals",
+      "column": "network_id",
+      "kind": "enum",
+      "values": [
+        "tron:mainnet"
+      ]
+    },
+    {
+      "table": "aml_tron_internals",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_tron_internals",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_tron_internals",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_tron_internals",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_tron_internals",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_tron_internals",
+      "column": "internal_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_tron_internals",
+      "column": "rejected",
+      "kind": "boolean"
+    },
+    {
+      "table": "aml_tron_internals",
+      "column": "note_hex",
+      "kind": "hex_bytes"
+    },
+    {
+      "table": "aml_tron_internals",
+      "column": "call_value_info_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_tron_resources",
+      "column": "network_id",
+      "kind": "enum",
+      "values": [
+        "tron:mainnet"
+      ]
+    },
+    {
+      "table": "aml_tron_resources",
+      "column": "block_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_tron_resources",
+      "column": "commit_id",
+      "kind": "nonempty"
+    },
+    {
+      "table": "aml_tron_resources",
+      "column": "revision",
+      "kind": "positive"
+    },
+    {
+      "table": "aml_tron_resources",
+      "column": "tx_hash",
+      "kind": "hash"
+    },
+    {
+      "table": "aml_tron_resources",
+      "column": "raw_evidence_json",
+      "kind": "json"
+    },
+    {
+      "table": "aml_tron_contracts",
+      "column": "raw_data_hash_verified",
+      "kind": "tron_contract_proof"
+    },
+    {
+      "table": "aml_tron_logs",
+      "column": "topics",
+      "kind": "hex_topics"
+    },
+    {
+      "table": "aml_tron_internals",
+      "column": "call_value_info_json",
+      "kind": "json_array"
+    }
+  ]
+}

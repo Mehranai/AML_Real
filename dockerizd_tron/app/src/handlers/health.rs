@@ -1,17 +1,22 @@
 use std::time::Duration;
 
+use crate::db::Client;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use clickhouse::Client;
 
 use serde::Deserialize;
 use serde_json::json;
 use tokio::time::timeout;
 
 pub async fn central_projection_only() -> impl IntoResponse {
-    (StatusCode::GONE, Json(json!({"error":"Use the main VM investigation Export endpoint; chain APIs do not persist graphs."})))
+    (
+        StatusCode::GONE,
+        Json(
+            json!({"error":"Use the main VM investigation Export endpoint; chain APIs do not persist graphs."}),
+        ),
+    )
 }
 
 pub async fn health_check() -> Json<serde_json::Value> {

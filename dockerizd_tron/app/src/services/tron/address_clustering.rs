@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::db::Client;
 use anyhow::Result;
 use chrono::Utc;
-use clickhouse::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};

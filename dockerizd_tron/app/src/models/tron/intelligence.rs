@@ -69,33 +69,3 @@ pub struct AddressClusterClaimRow {
     pub created_by: String,
     pub created_at_unix_ms: u64,
 }
-
-#[derive(Debug, Clone, Row, Serialize, Deserialize)]
-pub struct AddressClusterMembershipRow {
-    pub chain: String,
-    pub address: String,
-    pub cluster_id: String,
-    pub cluster_type: String,
-    pub address_role: String,
-    pub confidence: f32,
-    pub source_claim_id: String,
-    pub review_id: String,
-    pub cluster_version: u32,
-    pub is_active: u8,
-    pub created_at_unix_ms: u64,
-}
-
-#[derive(Debug, Clone, Row, Serialize, Deserialize)]
-pub struct ClusterVersionRow {
-    pub chain: String,
-    pub cluster_id: String,
-    pub version: u32,
-    pub cluster_type: String,
-    pub display_name: String,
-    pub change_type: String,
-    pub change_reason: String,
-    pub source_claim_ids: Vec<String>,
-    pub active_member_count: u64,
-    pub created_by: String,
-    pub created_at_unix_ms: u64,
-}

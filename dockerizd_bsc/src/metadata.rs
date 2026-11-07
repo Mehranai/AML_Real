@@ -166,20 +166,50 @@ fn abi_text(raw: &str) -> Result<String> {
 
 pub async fn worker_once(db: &Warehouse, rpc: &TokenRpc) -> Result<usize> {
     let now = now_ms().to_string();
-    let pending=db.rows("SELECT token_address,standard_hint FROM token_metadata_discoveries_canonical
-        WHERE token_address NOT IN (SELECT token_address FROM token_metadata_current WHERE metadata_status='complete')
-        AND token_address NOT IN (SELECT token_address FROM token_metadata_jobs_current
+    let pending=db.rows("SELECT token_address,standard_hint,min(discovered_block) AS discovered_block FROM bsc_discoveries AS d
+        WHERE d.asset_id NOT IN (SELECT asset_id FROM bsc_metadata WHERE metadata_status='complete')
+        AND d.asset_id NOT IN (SELECT asset_id FROM bsc_metadata_jobs
             WHERE next_attempt_at_unix_ms>{now:UInt64} OR attempt_count>=10)
-        ORDER BY discovered_block,token_address LIMIT 25",&[("now",&now)]).await?;
+        GROUP BY token_address,standard_hint ORDER BY discovered_block,token_address LIMIT 25",&[("now",&now)]).await?;
     if pending.is_empty() {
         return Ok(0);
     }
-    let block = rpc.finalized().await?;
-    let height = block_height(&block)?;
+    let finalized = rpc.finalized().await?;
     for item in &pending {
         let token = item["token_address"].as_str().context("token address")?;
         let standard = item["standard_hint"].as_str().unwrap_or("unknown");
-        let attempts=db.rows("SELECT attempt_count FROM token_metadata_jobs_current WHERE token_address={token:String}",&[("token",token)]).await?;
+        let height = item["discovered_block"]
+            .as_u64()
+            .context("metadata discovery height missing")?;
+        ensure!(
+            height <= block_height(&finalized)?,
+            "metadata discovery exceeds finalized RPC head"
+        );
+        let block = rpc
+            .call(
+                "eth_getBlockByNumber",
+                json!([format!("0x{height:x}"), false]),
+            )
+            .await?;
+        ensure!(
+            block_height(&block)? == height,
+            "metadata RPC returned wrong source block"
+        );
+        let expected = db
+            .rows(
+                "SELECT block_hash FROM bsc_blocks WHERE block_number={height:UInt64}",
+                &[("height", &height.to_string())],
+            )
+            .await?;
+        ensure!(
+            expected
+                .first()
+                .is_some_and(|v| v["block_hash"] == block["hash"]),
+            "metadata RPC disagrees with canonical source"
+        );
+        rpc.verify(&block).await?;
+
+        let attempts=db.rows("SELECT attempt_count FROM bsc_metadata_jobs WHERE token_address={token:String} AND startsWith(asset_id,concat({standard:String},':'))",&[("token",token),("standard",standard)]).await?;
         let attempt = attempts
             .first()
             .and_then(|v| v["attempt_count"].as_u64())
@@ -210,7 +240,7 @@ pub async fn worker_once(db: &Warehouse, rpc: &TokenRpc) -> Result<usize> {
             "name":name.unwrap_or_default(),"symbol":symbol.unwrap_or_default(),"decimals":decimals,
             "metadata_status":if complete {"complete"}else{"partial"},"metadata_source":"rpc","is_verified":0,
             "observed_block":height,"created_at_unix_ms":now_ms(),"source_reference":block["hash"],"reviewed_by":""})]).await?;
-        db.insert("token_metadata_jobs",&[json!({"network_id":BSC_NETWORK_ID,"token_address":token,
+        db.insert("token_metadata_jobs",&[json!({"network_id":BSC_NETWORK_ID,"token_address":token,"token_standard":standard,"discovered_block":height,
             "status":if complete {"complete"}else{"retry"},"attempt_count":attempt,
             "last_error_class":if complete {""}else{"metadata_unavailable"},
             "next_attempt_at_unix_ms":now_ms()+60_000*(1u64<<attempt.min(10)),"updated_at_unix_ms":now_ms()})]).await?;
@@ -282,7 +312,7 @@ pub async fn import_metadata(db: &Warehouse, mut rows: Vec<Value>, dry_run: bool
         row["metadata_status"] = json!("complete");
         row["metadata_source"] = json!("manual");
         row["is_verified"] = json!(1);
-        row["observed_block"] = json!(0);
+        row["observed_block"] = Value::Null;
         row["created_at_unix_ms"] = json!(now_ms());
     }
     if !dry_run {
@@ -294,11 +324,11 @@ pub async fn import_metadata(db: &Warehouse, mut rows: Vec<Value>, dry_run: bool
 pub async fn holdings(db: &Warehouse, rpc: &TokenRpc, address: &str) -> Result<Value> {
     let block = rpc.finalized().await?;
     let mut assets=db.rows("SELECT r.asset_id AS asset_id,r.token_id AS token_id,m.symbol AS symbol,m.decimals AS decimals
-        FROM (SELECT DISTINCT network_id,asset_id,token_id FROM address_relationships_canonical
+        FROM (SELECT DISTINCT network_id,asset_id,token_id FROM bsc_relationships
         WHERE network_id='eip155:56' AND (from_address={address:String} OR to_address={address:String})
         AND asset_id!='eip155:56/native:bnb' ORDER BY asset_id,token_id LIMIT 101) AS r
-        LEFT ANY JOIN token_metadata_current AS m ON r.network_id=m.network_id
-        AND arrayElement(splitByChar(':',r.asset_id),-1)=m.token_address
+        LEFT ANY JOIN bsc_metadata AS m ON r.network_id=m.network_id
+        AND arrayElement(splitByChar('/',arrayElement(splitByChar(':',r.asset_id),-1)),1)=m.token_address
         ORDER BY asset_id,token_id",&[("address",address)]).await?;
     let truncated = assets.len() > 100;
     assets.truncate(100);
@@ -406,11 +436,8 @@ async fn read_balance(
     }
 }
 
-pub async fn snapshot(db: &Warehouse, address: &str) -> Value {
-    let read = async {
-        let rpc = TokenRpc::new(AppConfig::from_env()?)?;
-        holdings(db, &rpc, address).await
-    };
+pub async fn snapshot(db: &Warehouse, rpc: &TokenRpc, address: &str) -> Value {
+    let read = holdings(db, rpc, address);
     match timeout(Duration::from_secs(35), read).await {
         Ok(Ok(value)) => value,
         _ => json!({"network_id":BSC_NETWORK_ID,"address":address,"source":"finalized_rpc",

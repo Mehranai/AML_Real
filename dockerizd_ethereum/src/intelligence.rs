@@ -4,8 +4,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::db::Client;
 use anyhow::{Context, ensure};
-use clickhouse::Client;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -398,17 +398,12 @@ fn normalize_review_status(value: &str) -> anyhow::Result<String> {
     Ok(status)
 }
 
-async fn insert_one<R>(client: &Client, table: &str, row: &R) -> anyhow::Result<()>
-where
-    R: clickhouse::RowOwned + clickhouse::RowWrite,
-{
-    let mut insert = client
-        .insert::<R>(table)
-        .await
-        .with_context(|| format!("failed to start insert into {table}"))?;
-    insert.write(row).await?;
-    insert.end().await?;
-    Ok(())
+async fn insert_one<R: serde::Serialize>(
+    client: &Client,
+    kind: &str,
+    row: &R,
+) -> anyhow::Result<()> {
+    crate::db::records::store(client, kind, serde_json::to_value(row)?).await
 }
 
 fn stable_id(namespace: &str, fields: &[&str]) -> String {

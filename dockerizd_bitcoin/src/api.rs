@@ -1,4 +1,4 @@
-use crate::{db::Database, model, warehouse};
+use crate::{db::Database, model};
 use anyhow::{Result, ensure};
 use axum::{
     Json, Router,
@@ -182,7 +182,7 @@ fn address(raw: &str) -> std::result::Result<String, ApiError> {
     })
 }
 async fn ready(State(api): State<Api>) -> Response {
-    match async { api.db.ready().await?; warehouse::migration_ready(&api.db).await }.await {
+    match api.db.ready().await {
         Ok(()) => Json(json!({"status":"ready","network_id":crate::NETWORK_ID,"dependencies":{"clickhouse":"ready"},"graph_storage":"main_vm"})).into_response(),
         Err(_) => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"status":"not_ready","dependencies":{"clickhouse":"unavailable"}}))).into_response()
     }

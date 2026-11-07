@@ -7,7 +7,7 @@ use bitcoin_aml::{
     config::DatabaseConfig,
     db::Database,
     intelligence, model, risk,
-    warehouse::{self, LegacyBlock, WriteContext},
+    warehouse::{self, BlockHeader, WriteContext},
 };
 use serde_json::{Value, json};
 use std::{collections::HashMap, path::PathBuf, time::Duration};
@@ -34,7 +34,7 @@ async fn append(
     warehouse::write_block(
         db,
         &state,
-        &LegacyBlock {
+        &BlockHeader {
             block_height: height,
             block_hash: hash.into(),
             parent_hash: state.tip_hash.clone(),
@@ -47,7 +47,6 @@ async fn append(
             observed: height,
             start: 0,
             source_id: "synthetic-worker-fixture",
-            legacy_fence: None,
         },
     )
     .await?;

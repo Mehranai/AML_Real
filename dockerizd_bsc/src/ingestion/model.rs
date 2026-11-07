@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use clickhouse::types::UInt256;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::BSC_NETWORK_ID;
 
@@ -48,6 +48,8 @@ pub(crate) struct RpcReceipt {
     pub transaction_type: Option<String>,
     pub gas_used: String,
     pub effective_gas_price: Option<String>,
+    pub blob_gas_used: Option<String>,
+    pub blob_gas_price: Option<String>,
     pub logs: Vec<RpcLog>,
 }
 
@@ -86,7 +88,7 @@ pub(crate) struct RpcCallFrame {
     pub calls: Vec<RpcCallFrame>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct CanonicalBlock {
     pub number: u64,
     pub hash: String,
@@ -96,7 +98,7 @@ pub(crate) struct CanonicalBlock {
     pub logs: Vec<CanonicalLog>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct CanonicalTransaction {
     pub hash: String,
     pub transaction_index: u32,
@@ -115,7 +117,7 @@ pub(crate) struct CanonicalTransaction {
     pub fee_paid: EvmU256,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct CanonicalLog {
     pub event_id: String,
     pub tx_hash: String,
@@ -130,6 +132,17 @@ pub(crate) struct CanonicalLog {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EvmU256([u8; 32]);
 
+impl Serialize for EvmU256 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.decimal_string())
+    }
+}
+#[derive(Debug, Clone)]
+pub(crate) struct SourceEvidence {
+    pub block: serde_json::Value,
+    pub receipts: Vec<serde_json::Value>,
+    pub traces: Option<Vec<serde_json::Value>>,
+}
 impl EvmU256 {
     pub(crate) fn parse(field: &'static str, value: &str) -> Result<Self, DecodeError> {
         let hex = quantity_hex(field, value)?;
@@ -179,6 +192,17 @@ impl EvmU256 {
             carry = product >> 64;
         }
         (carry == 0).then_some(Self(output))
+    }
+
+    fn checked_add(self, rhs: Self) -> Option<Self> {
+        let mut bytes = [0; 32];
+        let mut carry = 0u16;
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            let sum = u16::from(self.0[index]) + u16::from(rhs.0[index]) + carry;
+            *byte = sum as u8;
+            carry = sum >> 8;
+        }
+        (carry == 0).then_some(Self(bytes))
     }
 
     pub(crate) fn as_clickhouse(self) -> UInt256 {
@@ -349,13 +373,39 @@ pub(crate) fn normalize_block(
                 .or(transaction.gas_price.as_deref())
                 .ok_or(DecodeError::MissingField("receipt.effectiveGasPrice"))?,
         )?;
-        let fee_paid =
+        let execution_fee =
             effective_gas_price
                 .checked_mul_u64(gas_used)
                 .ok_or(DecodeError::InvalidField {
                     field: "fee_paid",
                     reason: "gas fee exceeds UInt256",
                 })?;
+        let blob_fee = match (&receipt.blob_gas_used, &receipt.blob_gas_price) {
+            (Some(used), Some(price)) => {
+                let used = parse_u64("receipt.blobGasUsed", used)?;
+                if transaction_type == 3 && used == 0 {
+                    return Err(DecodeError::EvidenceMismatch("receipt.blobGasUsed"));
+                }
+                EvmU256::parse("receipt.blobGasPrice", price)?
+                    .checked_mul_u64(used)
+                    .ok_or(DecodeError::InvalidField {
+                        field: "fee_paid",
+                        reason: "blob fee exceeds UInt256",
+                    })?
+            }
+            (None, None) if transaction_type != 3 => EvmU256([0; 32]),
+            _ => {
+                return Err(DecodeError::MissingField(
+                    "receipt.blobGasUsed/blobGasPrice",
+                ));
+            }
+        };
+        let fee_paid = execution_fee
+            .checked_add(blob_fee)
+            .ok_or(DecodeError::InvalidField {
+                field: "fee_paid",
+                reason: "total fee exceeds UInt256",
+            })?;
         let input_data = normalize_data("transaction.input", &transaction.input)?;
         let input_selector = if input_data.len() >= 10 {
             input_data[..10].to_string()
@@ -685,6 +735,25 @@ mod tests {
     }
 
     #[test]
+    fn blob_fee_is_included_for_failed_execution_and_missing_evidence_is_rejected() {
+        let (mut block, mut receipt) = block_and_receipt();
+        block.transactions[0].transaction_type = Some("0x3".into());
+        receipt.transaction_type = Some("0x3".into());
+        receipt.status = Some("0x0".into());
+        receipt.blob_gas_used = Some("0x20000".into());
+        receipt.blob_gas_price = Some("0x3".into());
+        let normalized = normalize_block(block.clone(), vec![receipt.clone()]).unwrap();
+        assert_eq!(
+            normalized.transactions[0].fee_paid.decimal_string(),
+            "21000000393216"
+        );
+        receipt.blob_gas_price = None;
+        assert!(normalize_block(block.clone(), vec![receipt.clone()]).is_err());
+        receipt.blob_gas_used = None;
+        assert!(normalize_block(block, vec![receipt]).is_err());
+    }
+
+    #[test]
     fn rejects_missing_receipt_and_removed_log() {
         let (block, mut receipt) = block_and_receipt();
         assert!(normalize_block(block.clone(), Vec::new()).is_err());
@@ -711,6 +780,7 @@ mod tests {
         )
         .unwrap();
         assert!(maximum.checked_mul_u64(2).is_none());
+        assert!(maximum.checked_add(EvmU256::one()).is_none());
     }
 
     #[test]

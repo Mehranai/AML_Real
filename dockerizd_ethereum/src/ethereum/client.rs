@@ -221,6 +221,20 @@ impl EthereumRpc {
             .map(|code| code.to_vec())
     }
 
+    pub async fn code_at_block(&self, address: Address, block: u64) -> anyhow::Result<Vec<u8>> {
+        let encoded: String = timeout(
+            self.deadline,
+            self.provider.raw_request(
+                "eth_getCode".into(),
+                (format!("{address:#x}"), format!("0x{block:x}")),
+            ),
+        )
+        .await
+        .context("Ethereum eth_getCode request timed out")??;
+        alloy::hex::decode(encoded.strip_prefix("0x").unwrap_or(&encoded))
+            .context("eth_getCode returned invalid hex")
+    }
+
     pub async fn finalized_block_number(&self) -> anyhow::Result<u64> {
         let finality_tag = match self.finality_tag {
             FinalityTag::Finalized => BlockNumberOrTag::Finalized,
@@ -234,6 +248,23 @@ impl EthereumRpc {
         .context("Ethereum finalized-block request timed out")??
         .ok_or_else(|| anyhow!("Ethereum RPC did not return a finalized block"))?;
         Ok(finalized.header.number)
+    }
+
+    /// Recheck stored evidence without fetching receipts/traces or changing coverage.
+    pub async fn block_hash(&self, block_number: u64) -> anyhow::Result<String> {
+        let block = timeout(
+            self.deadline,
+            self.provider
+                .get_block_by_number(BlockNumberOrTag::Number(block_number)),
+        )
+        .await
+        .with_context(|| format!("Ethereum block {block_number} header request timed out"))??
+        .with_context(|| format!("Ethereum block {block_number} header was not found"))?;
+        ensure!(
+            block.header.number == block_number,
+            "Ethereum RPC returned an unexpected checkpoint height"
+        );
+        Ok(format!("{:#x}", block.header.hash))
     }
 
     pub async fn fetch_block(&self, block_number: u64) -> anyhow::Result<FetchedRpcBlock> {
@@ -377,9 +408,13 @@ fn normalize_trace_results(
         .enumerate()
         .map(|(position, (result, transaction))| {
             let expected_hash = transaction.tx_hash();
+            ensure!(
+                transaction.transaction_index == Some(position as u64),
+                "trace transaction position missing or inconsistent"
+            );
             let transaction_index = transaction
                 .transaction_index
-                .unwrap_or(position as u64)
+                .context("original trace transaction position missing")?
                 .try_into()
                 .context("transaction index exceeds UInt32")?;
 

@@ -116,6 +116,10 @@ mod tests {
             to_address: "pool".into(),
             amount: UInt256::from_le_bytes([255; 32]),
             kind: TransferKind::Trc20,
+            token_id: None,
+            source_index: 0,
+            source_sub_index: 0,
+            source_kind: "log",
         };
         let event = AmlEvent::Swap {
             user: "wallet".into(),

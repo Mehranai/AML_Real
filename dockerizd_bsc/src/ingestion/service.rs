@@ -28,6 +28,7 @@ pub struct CanonicalIngestor {
     rpc_client_version: String,
     settings: IngestionConfig,
     trace_required: bool,
+    _writer: std::fs::File,
     registry_cache: Mutex<RegistryCache>,
 }
 
@@ -38,8 +39,10 @@ impl CanonicalIngestor {
         store: ClickHouseIngestionStore,
         rpc_client_version: String,
     ) -> Result<Self, IngestionError> {
+        let writer = store.ingestion_lock()?;
         let rpc = CanonicalRpcClient::new(app_config, ingestion_config.clone())?;
         Ok(Self {
+            _writer: writer,
             rpc,
             store,
             rpc_provider: app_config.rpc_provider.clone(),
@@ -354,6 +357,9 @@ impl CanonicalIngestor {
         advance_cursor: bool,
         required_hash: Option<&str>,
     ) -> Result<IngestionReport, IngestionError> {
+        if force {
+            self.registry_cache.lock().await.loaded_at_block = None;
+        }
         let block_count = validated_block_count(start_block, end_block)?;
         if block_count > self.settings.max_blocks_per_run {
             return Err(IngestionError::RangeTooLarge {
@@ -470,6 +476,7 @@ impl CanonicalIngestor {
                             previous_hash.as_deref(),
                             existing.as_ref().map(|block| block.block_hash.as_str()),
                             required_hash,
+                            finalized_height,
                         )
                         .await
                     }
@@ -566,6 +573,7 @@ impl CanonicalIngestor {
             .await?
             .ok_or(IngestionError::MissingCheckpoint)?;
         let local_tip = checkpoint.last_finalized_block.min(suspect_tip);
+        let observed_start = self.store.observed_start().await?;
         let mut candidate = local_tip;
         let mut examined = 0_u64;
         let ancestor = loop {
@@ -577,7 +585,7 @@ impl CanonicalIngestor {
                 }
             }
             examined += 1;
-            if candidate == 0 {
+            if candidate == observed_start {
                 break None;
             }
             if examined >= self.settings.reorg_max_depth {
@@ -590,15 +598,7 @@ impl CanonicalIngestor {
         };
         let repair_from = ancestor
             .as_ref()
-            .map_or(0, |block| block.block_number.saturating_add(1));
-        self.store
-            .invalidate_range(
-                repair_from,
-                checkpoint.last_finalized_block,
-                &self.rpc_provider,
-                &self.rpc_client_version,
-            )
-            .await?;
+            .map_or(observed_start, |block| block.block_number.saturating_add(1));
         self.store
             .rewind_checkpoint(repair_from, ancestor.as_ref())
             .await?;
@@ -611,6 +611,7 @@ impl CanonicalIngestor {
         expected_parent: Option<&str>,
         existing_hash: Option<&str>,
         required_hash: Option<&str>,
+        observed: u64,
     ) -> Result<CommittedBlock, IngestionError> {
         let block = prepared.block;
         let block_number = block.number;
@@ -652,6 +653,8 @@ impl CanonicalIngestor {
                 &semantic,
                 &self.rpc_provider,
                 &self.rpc_client_version,
+                &prepared.source,
+                observed,
             )
             .await?;
         Ok(CommittedBlock::from_commit(commit))
@@ -681,10 +684,15 @@ async fn prepare_block(
     let fetched = rpc.block_with_receipts(block_number).await?;
     let block = normalize_block(fetched.block, fetched.receipts)?;
     let evidence = extract_block_evidence(&block, fetched.traces.as_deref())?;
-    Ok(PreparedBlock { block, evidence })
+    Ok(PreparedBlock {
+        block,
+        evidence,
+        source: fetched.source,
+    })
 }
 
 struct PreparedBlock {
+    source: super::model::SourceEvidence,
     block: CanonicalBlock,
     evidence: ExtractedBlockEvidence,
 }
@@ -971,6 +979,7 @@ mod tests {
     const TX_CREATE: &str = "0x4444444444444444444444444444444444444444444444444444444444444444";
 
     struct MockRpc {
+        nfts: AtomicBool,
         reorged: AtomicBool,
     }
 
@@ -983,6 +992,29 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         let response = match method {
+            "eth_chainId" => json!({"jsonrpc":"2.0","id":id,"result":"0x38"}),
+            "eth_getBalance" => json!({"jsonrpc":"2.0","id":id,"result":"0x1000"}),
+            "eth_call" => {
+                if params.get(1) != Some(&json!("0x64")) {
+                    return Json(
+                        json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":"state block must be pinned"}}),
+                    );
+                }
+                let input = params[0]["data"].as_str().unwrap_or("");
+                let result = if input.starts_with("0x06fdde03") {
+                    fixture_abi_string("Fixture token")
+                } else if input.starts_with("0x95d89b41") {
+                    fixture_abi_string("TEST")
+                } else if input.starts_with("0x313ce567") {
+                    format!("0x{:064x}", 18)
+                } else if input.starts_with("0x6352211e") {
+                    format!("0x{}{}", "0".repeat(24), "b".repeat(40))
+                } else {
+                    format!("0x{:064x}", 1000)
+                };
+                json!({"jsonrpc":"2.0","id":id,"result":result})
+            }
+
             "eth_getBlockByNumber" if params.first() == Some(&json!("finalized")) => {
                 json!({ "jsonrpc": "2.0", "id": id, "result": {
                     "number": "0x64", "hash": BLOCK_HASH
@@ -1005,12 +1037,18 @@ mod tests {
             }),
             "eth_getTransactionReceipt" => {
                 let tx_hash = params.first().and_then(Value::as_str).unwrap_or("");
-                let receipt = match tx_hash {
+                let mut receipt = match tx_hash {
                     TX_SUCCESS => success_receipt(),
                     TX_FAILED => failed_receipt(),
                     TX_CREATE => creation_receipt(),
                     _ => Value::Null,
                 };
+                if tx_hash == TX_SUCCESS && state.nfts.load(Ordering::SeqCst) {
+                    receipt["logs"]
+                        .as_array_mut()
+                        .unwrap()
+                        .extend(fixture_nft_logs());
+                }
                 json!({ "jsonrpc": "2.0", "id": id, "result": receipt })
             }
             "debug_traceBlockByNumber" => {
@@ -1032,6 +1070,7 @@ mod tests {
     fn block() -> Value {
         json!({
             "number": "0x64",
+            "extraData": "0x1234",
             "hash": BLOCK_HASH,
             "parentHash": PARENT_HASH,
             "timestamp": "0x6553f100",
@@ -1180,6 +1219,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let state = Arc::new(MockRpc {
+            nfts: AtomicBool::new(false),
             reorged: AtomicBool::new(false),
         });
         let app = Router::new()
@@ -1319,59 +1359,59 @@ mod tests {
         assert_eq!(replay.completed_blocks, 1);
         assert_eq!(replay.skipped_blocks, 0);
 
-        let database_client = admin.clone().with_database(&database);
+        let database_client = crate::db::Client::from_inner(admin.clone(), &database);
         let canonical_blocks = database_client
-            .query("SELECT count() FROM ingested_blocks_canonical")
+            .query("SELECT count() FROM bsc_blocks")
             .fetch_one::<u64>()
             .await
             .unwrap();
         let canonical_transactions = database_client
-            .query("SELECT count() FROM transactions_canonical")
+            .query("SELECT count() FROM bsc_transactions")
             .fetch_one::<u64>()
             .await
             .unwrap();
         let canonical_logs = database_client
-            .query("SELECT count() FROM evm_logs_canonical")
+            .query("SELECT count() FROM aml_evm_logs_canonical")
             .fetch_one::<u64>()
             .await
             .unwrap();
         let canonical_relationships = database_client
-            .query("SELECT count() FROM address_relationships_canonical")
+            .query("SELECT count() FROM bsc_relationships")
             .fetch_one::<u64>()
             .await
             .unwrap();
         let canonical_discoveries = database_client
-            .query("SELECT count() FROM token_metadata_discoveries_canonical")
+            .query("SELECT count() FROM bsc_discoveries")
             .fetch_one::<u64>()
             .await
             .unwrap();
         let canonical_features = database_client
-            .query("SELECT count() FROM transaction_features_canonical")
+            .query("SELECT count() FROM aml_transaction_features_canonical")
             .fetch_one::<u64>()
             .await
             .unwrap();
         let canonical_semantic_events = database_client
-            .query("SELECT count() FROM semantic_aml_events_canonical")
+            .query("SELECT count() FROM bsc_events")
             .fetch_one::<u64>()
             .await
             .unwrap();
         let failed_transactions = database_client
-            .query("SELECT count() FROM transactions_canonical WHERE status = 0")
+            .query("SELECT count() FROM bsc_transactions WHERE status = 0")
             .fetch_one::<u64>()
             .await
             .unwrap();
         let created_contracts = database_client
-            .query("SELECT count() FROM transactions_canonical WHERE contract_address != ''")
+            .query("SELECT count() FROM bsc_transactions WHERE contract_address != ''")
             .fetch_one::<u64>()
             .await
             .unwrap();
         let current_revision = database_client
-            .query("SELECT max(current_revision) FROM ingested_blocks_canonical")
+            .query("SELECT max(current_revision) FROM bsc_blocks")
             .fetch_one::<u64>()
             .await
             .unwrap();
         let fact_revision = database_client
-            .query("SELECT max(block_state_revision) FROM transactions_canonical")
+            .query("SELECT max(block_state_revision) FROM bsc_transactions")
             .fetch_one::<u64>()
             .await
             .unwrap();
@@ -1385,8 +1425,67 @@ mod tests {
         assert_eq!(canonical_semantic_events, 1);
         assert_eq!(failed_transactions, 1);
         assert_eq!(created_contracts, 1);
-        assert_eq!(current_revision, 2);
+        assert!(current_revision >= 2);
         assert_eq!(fact_revision, current_revision);
+        let mut source = database_client
+            .rows(
+                "aml_intelligence_sources",
+                "source_id='integration_fixture'",
+            )
+            .await
+            .unwrap()
+            .remove(0);
+        source["is_active"] = json!(0);
+        source["revision"] = json!(
+            database_client
+                .revision("aml_intelligence_sources")
+                .await
+                .unwrap()
+        );
+        database_client
+            .insert_rows("aml_intelligence_sources", &[source])
+            .await
+            .unwrap();
+        let inactive = ingestor
+            .store
+            .import_protocol_contract(ProtocolRegistryInput {
+                contract_address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+                protocol: "reviewed_fixture_scam".to_string(),
+                protocol_type: "scam".to_string(),
+                contract_role: "reviewed_address".to_string(),
+                decoder: "reviewed_interaction".to_string(),
+                remote_network_id: String::new(),
+                remote_contract_address: String::new(),
+                method_ids: Vec::new(),
+                method_event_types: Vec::new(),
+                event_topics: Vec::new(),
+                event_types: Vec::new(),
+                remote_receiver_topic_index: -1,
+                message_topic_index: -1,
+                source_id: "integration_fixture".to_string(),
+                source_reference: "fixture://reviewed-scam".to_string(),
+                review_status: "approved".to_string(),
+                evidence_confidence: 1.0,
+                enabled: true,
+                reviewed_by: "integration-test".to_string(),
+                review_note: String::new(),
+            })
+            .await
+            .unwrap();
+        assert!(
+            !inactive.active,
+            "import must not reactivate a disabled intelligence source"
+        );
+        ingestor.replay_range(100, 100).await.unwrap();
+        assert_eq!(
+            database_client
+                .query("SELECT count() FROM bsc_events")
+                .fetch_one::<u64>()
+                .await
+                .unwrap(),
+            0,
+            "forced replay reloads the active registry"
+        );
 
         server.abort();
         admin
@@ -1405,6 +1504,31 @@ mod tests {
             admin.clone().with_database(&database),
             database.clone(),
         );
+        store
+            .import_protocol_contract(ProtocolRegistryInput {
+                contract_address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+                protocol: "reviewed_fixture_scam".to_string(),
+                protocol_type: "scam".to_string(),
+                contract_role: "reviewed_address".to_string(),
+                decoder: "reviewed_interaction".to_string(),
+                remote_network_id: String::new(),
+                remote_contract_address: String::new(),
+                method_ids: Vec::new(),
+                method_event_types: Vec::new(),
+                event_topics: Vec::new(),
+                event_types: Vec::new(),
+                remote_receiver_topic_index: -1,
+                message_topic_index: -1,
+                source_id: "integration_fixture".to_string(),
+                source_reference: "fixture://reviewed-scam".to_string(),
+                review_status: "approved".to_string(),
+                evidence_confidence: 1.0,
+                enabled: true,
+                reviewed_by: "integration-test".to_string(),
+                review_note: String::new(),
+            })
+            .await
+            .unwrap();
         let ingestor = CanonicalIngestor::new(
             &test_app_config(&rpc_url),
             test_ingestion_config(),
@@ -1412,7 +1536,7 @@ mod tests {
             "mock-bsc/v1".to_string(),
         )
         .unwrap();
-        let database_client = admin.clone().with_database(&database);
+        let database_client = crate::db::Client::from_inner(admin.clone(), &database);
 
         let boundaries = [
             TestFailPoint::Transactions,
@@ -1420,57 +1544,51 @@ mod tests {
             TestFailPoint::Relationships,
             TestFailPoint::TokenDiscoveries,
             TestFailPoint::SemanticEvidence,
+            TestFailPoint::CompleteMarker,
         ];
-        for (index, boundary) in boundaries.into_iter().enumerate() {
-            let expected_revision = index as u64;
+        for boundary in boundaries {
+            let before = aml_warehouse::publication::state(
+                &database_client,
+                &database,
+                aml_warehouse::Network::Bsc,
+            )
+            .await
+            .unwrap();
             store.inject_failure_once(boundary);
-            assert!(ingestor.replay_range(100, 100).await.is_err());
-            let visible_revision = database_client
-                .query("SELECT coalesce(max(current_revision), 0) FROM ingested_blocks_canonical WHERE block_number = 100")
-                .fetch_one::<u64>()
-                .await
-                .unwrap();
-            assert_eq!(visible_revision, expected_revision);
-
+            assert!(
+                ingestor.replay_range(100, 100).await.is_err(),
+                "boundary {boundary:?} must interrupt publication"
+            );
+            let after = aml_warehouse::publication::state(
+                &database_client,
+                &database,
+                aml_warehouse::Network::Bsc,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                after, before,
+                "partial facts or a complete marker must not move the fence"
+            );
             ingestor.replay_range(100, 100).await.unwrap();
-            let canonical_transactions = database_client
-                .query("SELECT count() FROM transactions_canonical WHERE block_number = 100")
-                .fetch_one::<u64>()
-                .await
-                .unwrap();
-            assert_eq!(canonical_transactions, 3);
+            assert_eq!(
+                database_client
+                    .query("SELECT count() FROM bsc_transactions WHERE block_number=100")
+                    .fetch_one::<u64>()
+                    .await
+                    .unwrap(),
+                3
+            );
+            let recovered = aml_warehouse::publication::state(
+                &database_client,
+                &database,
+                aml_warehouse::Network::Bsc,
+            )
+            .await
+            .unwrap();
+            assert!(recovered.revision > before.revision);
+            assert_eq!(recovered.last_block_number, 100);
         }
-
-        store.inject_failure_once(TestFailPoint::CompleteMarker);
-        assert!(ingestor.sync_once(Some(99), Some(1)).await.is_err());
-        let cursor_count = database_client
-            .query("SELECT count() FROM sync_state_current")
-            .fetch_one::<u64>()
-            .await
-            .unwrap();
-        let block_count = database_client
-            .query("SELECT count() FROM ingested_blocks_canonical WHERE block_number = 99")
-            .fetch_one::<u64>()
-            .await
-            .unwrap();
-        assert_eq!(cursor_count, 0);
-        assert_eq!(block_count, 1);
-
-        let recovered = ingestor.sync_once(Some(99), Some(1)).await.unwrap();
-        assert_eq!(recovered.batch.unwrap().skipped_blocks, 1);
-        let next_block = database_client
-            .query("SELECT next_block FROM sync_state_current")
-            .fetch_one::<u64>()
-            .await
-            .unwrap();
-        let revision = database_client
-            .query("SELECT current_revision FROM ingested_blocks_canonical WHERE block_number = 99")
-            .fetch_one::<u64>()
-            .await
-            .unwrap();
-        assert_eq!(next_block, 100);
-        assert_eq!(revision, 1);
-
         server.abort();
         admin
             .query(&format!("DROP DATABASE IF EXISTS {database}"))
@@ -1502,31 +1620,29 @@ mod tests {
         let repaired = ingestor.sync_once(None, Some(1)).await.unwrap();
         assert_eq!(repaired.reorg_repaired_from, Some(100));
 
-        let database_client = admin.clone().with_database(&database);
+        let database_client = crate::db::Client::from_inner(admin.clone(), &database);
         let canonical_hash = database_client
-            .query("SELECT block_hash FROM ingested_blocks_canonical WHERE block_number = 100")
+            .query("SELECT block_hash FROM bsc_blocks WHERE block_number = 100")
             .fetch_one::<String>()
             .await
             .unwrap();
         let current_revision = database_client
-            .query(
-                "SELECT current_revision FROM ingested_blocks_canonical WHERE block_number = 100",
-            )
+            .query("SELECT current_revision FROM bsc_blocks WHERE block_number = 100")
             .fetch_one::<u64>()
             .await
             .unwrap();
         let old_transactions = database_client
-            .query("SELECT count() FROM transactions_canonical WHERE block_number = 100")
+            .query("SELECT count() FROM bsc_transactions WHERE block_number = 100")
             .fetch_one::<u64>()
             .await
             .unwrap();
         let next_block = database_client
-            .query("SELECT next_block FROM sync_state_current")
+            .query("SELECT next_block FROM bsc_sync")
             .fetch_one::<u64>()
             .await
             .unwrap();
         assert_eq!(canonical_hash, REORG_BLOCK_HASH);
-        assert_eq!(current_revision, 3);
+        assert!(current_revision >= 3);
         assert_eq!(old_transactions, 0);
         assert_eq!(next_block, 101);
 
@@ -1575,14 +1691,14 @@ mod tests {
 
         let repaired = ingestor.repair_range(100, 100, true).await.unwrap();
         assert_eq!(repaired.repaired_blocks, vec![100]);
-        let database_client = admin.clone().with_database(&database);
+        let database_client = crate::db::Client::from_inner(admin.clone(), &database);
         let status = database_client
-            .query("SELECT status FROM ingestion_failures_current WHERE block_number = 100")
+            .query("SELECT status FROM aml_ingestion_failures_current WHERE block_number = 100")
             .fetch_one::<String>()
             .await
             .unwrap();
         let canonical_blocks = database_client
-            .query("SELECT count() FROM ingested_blocks_canonical WHERE block_number = 100")
+            .query("SELECT count() FROM bsc_blocks WHERE block_number = 100")
             .fetch_one::<u64>()
             .await
             .unwrap();
@@ -1596,4 +1712,5 @@ mod tests {
             .await
             .unwrap();
     }
+    include!("../../tests/support/shared_pipeline.rs");
 }

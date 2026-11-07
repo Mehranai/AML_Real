@@ -185,7 +185,7 @@ async fn v3_upgrade_preserves_all_analytics_values_on_four_networks() -> Result<
         let result = initialize(&db, &database, network).await?;
         assert_eq!(
             (result.schema_version, result.table_count, result.view_count),
-            (5, 39, 53)
+            (6, 42, 56)
         );
         assert!(result.newly_applied);
         assert!(!initialize(&db, &database, network).await?.newly_applied);

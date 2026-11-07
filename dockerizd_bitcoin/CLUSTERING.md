@@ -145,4 +145,4 @@ content consistency and do not constitute digital signatures.
 Continuous bounded refresh is available through the [AML-08 worker](ANALYTICS.md).
 Global clustering, performance acceptance on a real node/VM and the remaining
 four-network migration remain separate tasks.
-See [validation](CLUSTERING_VALIDATION.md) for the tests actually executed.
+See [validation](../docs/TESTING.md) for the tests actually executed.

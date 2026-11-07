@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use crate::db::Client;
 use anyhow::Context;
-use clickhouse::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::services::tron::risk_math::clamp01;
@@ -176,6 +176,7 @@ pub async fn load_wallet_exposure_summary(
     address: &str,
     limit: Option<u64>,
 ) -> anyhow::Result<WalletExposureSummary> {
+    let read_fence = crate::db::client::ReadFence::capture(&clickhouse).await?;
     let limit = limit.unwrap_or(25).clamp(1, 100);
 
     let rows = clickhouse
@@ -233,6 +234,7 @@ pub async fn load_wallet_exposure_summary(
         .await
         .context("failed to load TRON propagated wallet exposure")?;
 
+    read_fence.unchanged(&clickhouse).await?;
     Ok(WalletExposureSummary::from_rows(address, rows))
 }
 

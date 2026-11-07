@@ -38,14 +38,17 @@ pub struct IngestionService {
     rpc: EthereumRpc,
     store: EthereumStore,
     registry_cache: Mutex<RegistryCache>,
+    _writer: std::fs::File,
 }
 
 impl IngestionService {
     pub async fn connect(config: AppConfig) -> anyhow::Result<Self> {
+        let writer = crate::storage::ingestion_lock(&config.clickhouse_database)?;
         let rpc = EthereumRpc::connect(&config).await?;
         let store = EthereumStore::new(&config);
         let registry = SemanticDecoderRegistry::from_contracts(store.protocol_contracts().await?);
         Ok(Self {
+            _writer: writer,
             config,
             rpc,
             store,
@@ -71,7 +74,8 @@ impl IngestionService {
             "requested block {to_block} is above finalized head {finalized}"
         );
 
-        self.ingest_bounded_range(from_block, to_block).await
+        self.ingest_bounded_range(from_block, to_block, finalized)
+            .await
     }
 
     pub async fn follow_finalized(
@@ -93,8 +97,10 @@ impl IngestionService {
 
         loop {
             let finalized = self.rpc.finalized_block_number().await?;
+            // Polls at the current head must also detect a changed finalized source.
+            self.verify_checkpoint(finalized).await?;
             while next_block <= finalized {
-                let block_report = self.ingest_one(next_block).await?;
+                let block_report = self.ingest_one(next_block, finalized).await?;
                 report.absorb(block_report);
                 report.to_block = next_block;
                 next_block = next_block.saturating_add(1);
@@ -114,7 +120,9 @@ impl IngestionService {
         &self,
         from_block: u64,
         to_block: u64,
+        observed: u64,
     ) -> anyhow::Result<IngestionReport> {
+        self.verify_checkpoint(observed).await?;
         let started = Instant::now();
         let mut report = IngestionReport {
             from_block,
@@ -124,7 +132,7 @@ impl IngestionService {
         };
 
         for block_number in from_block..=to_block {
-            let block_report = self.ingest_one(block_number).await?;
+            let block_report = self.ingest_one(block_number, observed).await?;
             report.absorb(block_report);
             report.to_block = block_number;
             if block_number < to_block {
@@ -135,28 +143,58 @@ impl IngestionService {
         Ok(report)
     }
 
-    async fn ingest_one(&self, block_number: u64) -> anyhow::Result<IngestionReport> {
-        let started = Instant::now();
-        if self
-            .store
-            .is_block_complete(block_number, self.config.eth_trace_mode.required())
-            .await?
-        {
-            tracing::info!(
-                block_number,
-                "finalized Ethereum block already complete; skipping replay"
-            );
-            return Ok(IngestionReport {
-                from_block: block_number,
-                to_block: block_number,
-                skipped_blocks: 1,
-                elapsed_ms: elapsed_millis(started),
-                trace_data_complete: false,
-                ..Default::default()
-            });
+    async fn verify_checkpoint(&self, observed: u64) -> anyhow::Result<()> {
+        if let Some((height, hash)) = self.store.checkpoint().await? {
+            let result = async {
+                ensure!(
+                    observed >= height,
+                    "Ethereum finalized head {observed} is behind published checkpoint {height}"
+                );
+                ensure!(
+                    self.rpc.block_hash(height).await? == hash,
+                    "finalized Ethereum hash conflict at checkpoint {height}; refusing an implicit branch replacement"
+                );
+                Ok::<_, anyhow::Error>(())
+            }.await;
+            if let Err(error) = result {
+                self.store
+                    .record_failure(
+                        height,
+                        "canonicality",
+                        &format!("{error:#}"),
+                        1,
+                        unix_time_millis()?,
+                    )
+                    .await?;
+                return Err(error);
+            }
+            self.store.resolve_failure(height, "canonicality").await?;
         }
+        Ok(())
+    }
 
+    async fn ingest_one(
+        &self,
+        block_number: u64,
+        observed: u64,
+    ) -> anyhow::Result<IngestionReport> {
+        let started = Instant::now();
         let result = async {
+            if let Some(hash) = self.store
+                .complete_block_hash(block_number, self.config.eth_trace_mode.required())
+                .await?
+            {
+                ensure!(
+                    self.rpc.block_hash(block_number).await? == hash,
+                    "finalized Ethereum hash conflict at block {block_number}; refusing an implicit branch replacement"
+                );
+                return Ok(IngestionReport {
+                    from_block: block_number,
+                    to_block: block_number,
+                    skipped_blocks: 1,
+                    ..Default::default()
+                });
+            }
             let fetched = self.rpc.fetch_block(block_number).await?;
             let registry = self.semantic_registry(block_number).await?;
             let extracted = extract_block(
@@ -182,13 +220,16 @@ impl IngestionService {
                 elapsed_ms: 0,
                 trace_data_complete: fetched.traces.is_some(),
             };
-            self.store.persist_block(&extracted).await?;
+            self.store.persist_block(&extracted, observed).await?;
             Ok::<_, anyhow::Error>(report)
         }
         .await;
 
         match result {
             Ok(mut report) => {
+                self.store
+                    .resolve_failure(block_number, "fetch_extract_persist")
+                    .await?;
                 report.elapsed_ms = elapsed_millis(started);
                 tracing::info!(
                     block_number,
@@ -273,10 +314,13 @@ impl IngestionReport {
     }
 }
 
-fn follow_start(requested_start: Option<u64>, checkpoint: Option<u64>, configured_start: u64) -> u64 {
-    requested_start.unwrap_or_else(|| {
-        checkpoint.map_or(configured_start, |block| block.saturating_add(1))
-    })
+fn follow_start(
+    requested_start: Option<u64>,
+    checkpoint: Option<u64>,
+    configured_start: u64,
+) -> u64 {
+    requested_start
+        .unwrap_or_else(|| checkpoint.map_or(configured_start, |block| block.saturating_add(1)))
 }
 
 fn unix_time_millis() -> anyhow::Result<u64> {

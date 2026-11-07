@@ -1,3 +1,4 @@
+mod mapping;
 mod model;
 mod rpc;
 mod service;

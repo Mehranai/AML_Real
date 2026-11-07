@@ -221,11 +221,9 @@ class EncodingTests(unittest.TestCase):
         client = type("SchemaClient", (), {"rows": lambda *_: [{"n": "2"}], "execute": lambda *_: self.fail("unexpected mutation")})()
         with patch.object(backup, "snapshot", return_value={"objects": [table]}), self.assertRaises(ValueError):
             backup.prepare_restore_data(client, {"database": "target", "network": "bitcoin", "source": {"objects": [table]}})
-    def test_every_repository_column_type_has_an_explicit_encoder(self):
-        report = json.loads((ROOT / "docs/warehouse/data-dictionary.json").read_text(encoding="utf-8"))
-        kinds = {c["type"] for network in report["chains"].values() for obj in network["objects"] for c in obj["columns"]}
+    def test_current_contract_column_types_have_an_explicit_backup_encoder(self):
         contract = json.loads((ROOT / "docs/warehouse/current-contract.json").read_text(encoding="utf-8"))
-        kinds.update(c["data_type"] for t in contract["tables"] for c in t["columns"])
+        kinds = {c["data_type"] for t in contract["tables"] for c in t["columns"]}
         for kind in kinds:
             with self.subTest(kind=kind): self.assertTrue(backup.value_expression("`v`", kind))
     def test_unknown_state_types_are_rejected(self):

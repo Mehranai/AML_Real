@@ -1,5 +1,5 @@
-//! DB-06 interpretation/read contract over the immutable v4 storage schema.
-//! This module never rewrites legacy evidence or infers input/output allocation.
+//! Typed relationship interpretation and reads over the common storage schema.
+//! Bitcoin input/output allocation is never inferred.
 mod model;
 mod query;
 pub const INTERPRETATION_VERSION: &str = "typed_relationships_v1";

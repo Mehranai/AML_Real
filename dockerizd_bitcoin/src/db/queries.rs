@@ -1,6 +1,5 @@
 //! Canonical state, publication and coverage queries.
 use super::*;
-use anyhow::ensure;
 use serde_json::{Value, json};
 impl Database {
     pub async fn state(&self) -> Result<SyncState> {
@@ -12,21 +11,6 @@ impl Database {
             )
             .await?,
         ))
-    }
-    pub async fn legacy_state(&self) -> Result<SyncState> {
-        let tables: Vec<Value> = self.rows("SELECT count() AS n FROM system.tables WHERE database=currentDatabase() AND name IN ('bitcoin_sync_state','bitcoin_sync_current','bitcoin_block_commits','bitcoin_blocks_canonical','bitcoin_transactions','bitcoin_transactions_canonical','bitcoin_inputs','bitcoin_inputs_canonical','bitcoin_outputs','bitcoin_outputs_canonical','bitcoin_utxos')", &[]).await?;
-        if tables[0]["n"] == 0 {
-            return Ok(SyncState::default());
-        }
-        ensure!(
-            tables[0]["n"] == 11,
-            "incomplete Bitcoin legacy schema; restore its missing objects before backfill"
-        );
-        Ok(self
-            .rows("SELECT * FROM bitcoin_sync_current", &[])
-            .await?
-            .pop()
-            .unwrap_or_default())
     }
     pub async fn publish(&self, state: &SyncState) -> Result<()> {
         self.publish_after(&self.state().await?, state).await

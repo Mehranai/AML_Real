@@ -3,12 +3,13 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use alloy::primitives::{Address, U256, keccak256};
+use alloy::primitives::{Address, B256, U256, keccak256};
 use anyhow::{Context, anyhow};
 use tokio::time::sleep;
 
 use crate::{
     config::AppConfig,
+    db::database_client,
     storage::{EthereumStore, TokenMetadataJobRow, TokenMetadataRow},
 };
 
@@ -101,24 +102,29 @@ async fn resolve_metadata(
 ) -> anyhow::Result<TokenMetadataRow> {
     let address = Address::from_str(&job.token_address)
         .with_context(|| format!("invalid token address {}", job.token_address))?;
-    let code = rpc.code_at(address).await?;
+    let height = job.discovered_block;
+    let hash = database_client(config).query("SELECT block_hash FROM aml_ingested_blocks_canonical WHERE network_id='eip155:1' AND block_number=?")
+        .bind(height).fetch_optional::<String>().await?.context("metadata discovery block is not canonical")?;
+    let expected_hash = B256::from_str(&hash).context("invalid metadata block hash")?;
+    rpc.verify_block_hash(height, expected_hash).await?;
+    let code = rpc.code_at_block(address, height).await?;
     if code.is_empty() {
         return Err(anyhow!("token address has no deployed bytecode"));
     }
 
-    let token_standard = resolve_standard(rpc, address, &job.token_standard).await;
-    let name = optional_call(rpc, address, &NAME_SELECTOR)
+    let token_standard = resolve_standard(rpc, address, &job.token_standard, height).await;
+    let name = optional_call(rpc, address, &NAME_SELECTOR, height)
         .await
         .and_then(|value| decode_abi_string(&value))
         .unwrap_or_default();
-    let symbol = optional_call(rpc, address, &SYMBOL_SELECTOR)
+    let symbol = optional_call(rpc, address, &SYMBOL_SELECTOR, height)
         .await
         .and_then(|value| decode_abi_string(&value))
         .unwrap_or_default();
-    let decimals = optional_call(rpc, address, &DECIMALS_SELECTOR)
+    let decimals = optional_call(rpc, address, &DECIMALS_SELECTOR, height)
         .await
         .and_then(|value| decode_abi_u8(&value));
-    let total_supply = optional_call(rpc, address, &TOTAL_SUPPLY_SELECTOR)
+    let total_supply = optional_call(rpc, address, &TOTAL_SUPPLY_SELECTOR, height)
         .await
         .and_then(|value| decode_abi_u256(&value))
         .map(|value| value.to_string())
@@ -127,7 +133,10 @@ async fn resolve_metadata(
     let metadata_complete =
         !name.is_empty() && !symbol.is_empty() && (token_standard != "erc20" || decimals.is_some());
 
+    rpc.verify_block_hash(height, expected_hash).await?;
     Ok(TokenMetadataRow {
+        observed_block: height,
+        observed_block_hash: hash,
         network_id: config.eth_network_id.clone(),
         token_address: format!("{address:#x}"),
         token_standard,
@@ -148,33 +157,48 @@ async fn resolve_metadata(
     })
 }
 
-async fn resolve_standard(rpc: &EthereumRpc, address: Address, discovered: &str) -> String {
+async fn resolve_standard(
+    rpc: &EthereumRpc,
+    address: Address,
+    discovered: &str,
+    height: u64,
+) -> String {
     let normalized = discovered.trim().to_ascii_lowercase();
     if matches!(normalized.as_str(), "erc20" | "erc721" | "erc1155") {
         return normalized;
     }
-    if supports_interface(rpc, address, ERC1155_INTERFACE).await {
+    if supports_interface(rpc, address, ERC1155_INTERFACE, height).await {
         "erc1155".to_string()
-    } else if supports_interface(rpc, address, ERC721_INTERFACE).await {
+    } else if supports_interface(rpc, address, ERC721_INTERFACE, height).await {
         "erc721".to_string()
     } else {
         "erc20".to_string()
     }
 }
 
-async fn supports_interface(rpc: &EthereumRpc, address: Address, interface_id: [u8; 4]) -> bool {
+async fn supports_interface(
+    rpc: &EthereumRpc,
+    address: Address,
+    interface_id: [u8; 4],
+    height: u64,
+) -> bool {
     let mut calldata = Vec::with_capacity(36);
     calldata.extend_from_slice(&SUPPORTS_INTERFACE_SELECTOR);
     calldata.extend_from_slice(&[0_u8; 28]);
     calldata.extend_from_slice(&interface_id);
-    optional_call(rpc, address, &calldata)
+    optional_call(rpc, address, &calldata, height)
         .await
         .and_then(|value| value.last().copied())
         == Some(1)
 }
 
-async fn optional_call(rpc: &EthereumRpc, address: Address, calldata: &[u8]) -> Option<Vec<u8>> {
-    match rpc.call_contract(address, calldata).await {
+async fn optional_call(
+    rpc: &EthereumRpc,
+    address: Address,
+    calldata: &[u8],
+    height: u64,
+) -> Option<Vec<u8>> {
+    match rpc.call_contract_at_block(address, calldata, height).await {
         Ok(value) if !value.is_empty() => Some(value),
         Ok(_) => None,
         Err(error) => {

@@ -38,7 +38,7 @@ fn row(network: Network, input: bool, index: u32) -> Result<Value> {
     r["commit_id"] = json!("observed ? ' commit");
     r["event_index"] = json!(index);
     r["event_sub_index"] = json!(0);
-    r["transaction_index"] = json!(1);
+    r["transaction_index"] = json!(0);
     r["transfer_type"] = json!("native_transfer");
     r["attribution_method"] = json!("observed_transfer");
     r["confidence"] = json!(1.0);

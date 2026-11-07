@@ -9,7 +9,7 @@ use bitcoin_aml::{
     intelligence::{self, Claim, Review, Source},
     model,
     storage::writer::{self, WriteContext},
-    warehouse::LegacyBlock,
+    warehouse::BlockHeader,
 };
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -81,7 +81,7 @@ async fn fixtures_with_clock(db: &Database, base: u64, step: u64) -> Result<()> 
         };
         let block = json!({"height":height,"hash":hash,"previousblockhash":parent,"time":base+height*step,"tx":txs});
         let facts = model::extract(&block, &format!("fixture-{height}"), &resolved)?;
-        let source = LegacyBlock {
+        let source = BlockHeader {
             block_height: height,
             block_hash: block["hash"].as_str().unwrap().into(),
             parent_hash: block["previousblockhash"].as_str().unwrap().into(),
@@ -98,8 +98,7 @@ async fn fixtures_with_clock(db: &Database, base: u64, step: u64) -> Result<()> 
                 observed: 3,
                 start: 0,
                 source_id: "synthetic-exposure-fixture",
-                legacy_fence: None,
-            },
+                },
         )
         .await?;
         for out in facts.outputs {
@@ -132,8 +131,9 @@ async fn activity_exact_legs_fees_days_filters_and_counterparty_context() -> Res
     use tower::ServiceExt;
     let db = Database::new(DatabaseConfig {
         url: std::env::var("BITCOIN_TEST_CLICKHOUSE_URL")?.parse()?,
-        user: "bitcoin_test".into(),
-        password: "bitcoin-test-only".into(),
+        user: std::env::var("BITCOIN_TEST_CLICKHOUSE_USER").unwrap_or("bitcoin_test".into()),
+        password: std::env::var("BITCOIN_TEST_CLICKHOUSE_PASSWORD")
+            .unwrap_or("bitcoin-test-only".into()),
         database: "bitcoin_activity_test".into(),
     })?;
     db.initialize().await?;
@@ -394,7 +394,7 @@ async fn activity_repeated_txids_branch_rollback_and_partial_history() -> Result
         let height = block["height"].as_u64().unwrap();
         let commit = format!("activity-occurrence-{}", block["hash"].as_str().unwrap());
         let facts = model::extract(&block, &commit, resolved)?;
-        let source = LegacyBlock {
+        let source = BlockHeader {
             block_height: height,
             block_hash: block["hash"].as_str().unwrap().into(),
             parent_hash: block["previousblockhash"].as_str().unwrap().into(),
@@ -411,8 +411,7 @@ async fn activity_repeated_txids_branch_rollback_and_partial_history() -> Result
                 observed: height,
                 start,
                 source_id: "synthetic-activity-occurrences",
-                legacy_fence: None,
-            },
+                },
         )
         .await?;
         for out in facts.outputs {
@@ -423,8 +422,9 @@ async fn activity_repeated_txids_branch_rollback_and_partial_history() -> Result
     let config = |name: &str| -> Result<DatabaseConfig> {
         Ok(DatabaseConfig {
             url: std::env::var("BITCOIN_TEST_CLICKHOUSE_URL")?.parse()?,
-            user: "bitcoin_test".into(),
-            password: "bitcoin-test-only".into(),
+            user: std::env::var("BITCOIN_TEST_CLICKHOUSE_USER").unwrap_or("bitcoin_test".into()),
+            password: std::env::var("BITCOIN_TEST_CLICKHOUSE_PASSWORD")
+                .unwrap_or("bitcoin-test-only".into()),
             database: name.into(),
         })
     };
@@ -502,10 +502,19 @@ async fn audit_insert(table: &str, rows: &[Value]) -> Result<()> {
         .post(std::env::var("BITCOIN_TEST_CLICKHOUSE_URL")?)
         .query(&[
             ("query", format!("INSERT INTO {table} FORMAT JSONEachRow")),
-            ("database", "bitcoin_risk_test".into()),
+            (
+                "database",
+                std::env::var("BITCOIN_RISK_TEST_DATABASE").unwrap_or("bitcoin_risk_test".into()),
+            ),
         ])
-        .header("X-ClickHouse-User", "bitcoin_test")
-        .header("X-ClickHouse-Key", "bitcoin-test-only")
+        .header(
+            "X-ClickHouse-User",
+            std::env::var("BITCOIN_TEST_CLICKHOUSE_USER").unwrap_or("bitcoin_test".into()),
+        )
+        .header(
+            "X-ClickHouse-Key",
+            std::env::var("BITCOIN_TEST_CLICKHOUSE_PASSWORD").unwrap_or("bitcoin-test-only".into()),
+        )
         .body(body)
         .send()
         .await?;
@@ -522,9 +531,10 @@ async fn risk_policy_assessments_signals_seals_and_freshness() -> Result<()> {
     use tower::ServiceExt;
     let config = DatabaseConfig {
         url: std::env::var("BITCOIN_TEST_CLICKHOUSE_URL")?.parse()?,
-        user: "bitcoin_test".into(),
-        password: "bitcoin-test-only".into(),
-        database: "bitcoin_risk_test".into(),
+        user: std::env::var("BITCOIN_TEST_CLICKHOUSE_USER").unwrap_or("bitcoin_test".into()),
+        password: std::env::var("BITCOIN_TEST_CLICKHOUSE_PASSWORD")
+            .unwrap_or("bitcoin-test-only".into()),
+        database: std::env::var("BITCOIN_RISK_TEST_DATABASE").unwrap_or("bitcoin_risk_test".into()),
     };
     let db = Database::new(config.clone())?;
     db.initialize().await?;
@@ -730,8 +740,9 @@ async fn risk_policy_assessments_signals_seals_and_freshness() -> Result<()> {
 async fn exact_outpoint_bounds_publication_freshness_and_investigation() -> Result<()> {
     let db = Database::new(DatabaseConfig {
         url: std::env::var("BITCOIN_TEST_CLICKHOUSE_URL")?.parse()?,
-        user: "bitcoin_test".into(),
-        password: "bitcoin-test-only".into(),
+        user: std::env::var("BITCOIN_TEST_CLICKHOUSE_USER").unwrap_or("bitcoin_test".into()),
+        password: std::env::var("BITCOIN_TEST_CLICKHOUSE_PASSWORD")
+            .unwrap_or("bitcoin-test-only".into()),
         database: "bitcoin_exposure_test".into(),
     })?;
     db.initialize().await?;

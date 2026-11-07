@@ -175,9 +175,8 @@ fn endpoint(row: &Value, network: Network, side: &str) -> Result<Subject> {
     );
     Ok(subject)
 }
-/// Deliberately separate from v4 value validation: v4 history remains immutable.
-/// Call this at interpreted graph/write boundaries; old nonconforming rows are
-/// retained in storage and must be converted explicitly in DB-08.
+/// Validate typed endpoints and provenance at live graph/write boundaries.
+/// Storage DDL stays unchanged; source adapters must supply observed identities.
 pub fn validate(row: &Value) -> Result<()> {
     validate_with_contract(&crate::current_contract()?, row)
 }

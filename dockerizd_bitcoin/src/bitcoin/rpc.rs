@@ -47,12 +47,16 @@ impl Rpc {
     pub fn probe_from_env() -> Result<Self> {
         Self::new(
             &config::required("BITCOIN_RPC_URL")?,
-            config::required("BITCOIN_RPC_USER")?,
-            config::required("BITCOIN_RPC_PASSWORD")?,
+            config::setting("BITCOIN_RPC_USER", ""),
+            config::setting("BITCOIN_RPC_PASSWORD", ""),
             config::bounded("BITCOIN_RPC_TIMEOUT_SECONDS", 60, 1, 600)?,
         )
     }
     pub fn new(url: &str, user: String, password: String, timeout: u64) -> Result<Self> {
+        ensure!(
+            user.is_empty() == password.is_empty(),
+            "Bitcoin RPC user/password must both be configured or both empty for a keyless endpoint"
+        );
         Ok(Self {
             client: config::http(timeout)?,
             url: config::origin(url)?,
@@ -80,11 +84,13 @@ impl Rpc {
             tokio::time::sleep_until(*next).await;
             *next = Instant::now() + Duration::from_millis(self.policy.interval_ms);
         }
-        let mut response = self
-            .client
-            .post(self.url.clone())
-            .basic_auth(&self.user, Some(&self.password))
-            .json(payload)
+        let request = self.client.post(self.url.clone()).json(payload);
+        let request = if self.user.is_empty() {
+            request
+        } else {
+            request.basic_auth(&self.user, Some(&self.password))
+        };
+        let mut response = request
             .send()
             .await
             .map_err(|_| failure("transport failed", true))?;
@@ -294,5 +300,59 @@ impl RpcPool {
             }
         }
         Self::new(endpoints)
+    }
+}
+
+#[cfg(test)]
+mod authentication_tests {
+    use super::*;
+
+    #[test]
+    fn credentials_are_either_a_complete_pair_or_absent() -> Result<()> {
+        assert!(Rpc::new("http://127.0.0.1:8332", "".into(), "".into(), 2).is_ok());
+        assert!(Rpc::new("http://127.0.0.1:8332", "test".into(), "secret".into(), 2).is_ok());
+        for (user, password) in [("test", ""), ("", "secret")] {
+            assert!(Rpc::new("http://127.0.0.1:8332", user.into(), password.into(), 2).is_err());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn keyless_requests_have_no_authorization_and_core_keeps_basic_auth() -> Result<()> {
+        use axum::{Json, Router, http::HeaderMap, routing::post};
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = seen.clone();
+        let app = Router::new().route(
+            "/",
+            post(move |headers: HeaderMap, Json(request): Json<Value>| {
+                let captured = captured.clone();
+                async move {
+                    captured.lock().unwrap().push(
+                        headers
+                            .get("authorization")
+                            .map(|v| v.to_str().unwrap().to_owned()),
+                    );
+                    Json(json!({"id":request["id"],"result":true,"error":null}))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let url = format!("http://{}", listener.local_addr()?);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        for (user, password) in [("", ""), ("test", "secret")] {
+            let client = Rpc::new(&url, user.into(), password.into(), 2)?;
+            assert_eq!(
+                client.call("getblockchaininfo", json!([])).await?,
+                json!(true)
+            );
+        }
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![None, Some("Basic dGVzdDpzZWNyZXQ=".into())]
+        );
+        server.abort();
+        Ok(())
     }
 }

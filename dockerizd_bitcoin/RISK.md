@@ -130,5 +130,5 @@ Composeها named context مربوط به `shared/risk_policy` را دارند؛
 
 این مرحله clustering، semantic detector، worker پیوسته، replay، benchmark یا
 مهاجرت legacy سه شبکهٔ دیگر را تکمیل نمی‌کند. پذیرش نهایی با mainnet، Neo4j زنده،
-VMهای مقصد و بار production همچنان جداست. [TODO](../TODO_BITCOIN.md)،
-[گزارش پذیرش](RISK_VALIDATION.md).
+VMهای مقصد و بار production همچنان جداست. [TODO](../TODO_LIST.md)،
+[آزمون‌های جاری](../docs/TESTING.md).

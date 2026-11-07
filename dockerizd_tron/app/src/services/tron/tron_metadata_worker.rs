@@ -1,354 +1,259 @@
-use std::sync::Arc;
+//! Metadata observations at a bracketed solid RPC head, never backdated to discovery.
+use crate::{
+    config::AppConfig,
+    db::{Client, now_ms, records::operational_lock, row},
+    helper::tron::TronClient,
+};
+use aml_warehouse::{Network, visibility};
+use anyhow::{Context, Result, ensure};
+use clickhouse::types::UInt256;
+use serde::Deserialize;
+use serde_json::{Value, json};
 use std::time::Duration;
-
-use anyhow::{Context, Result, anyhow};
-use chrono::Utc;
-use clickhouse::{Client, types::UInt256};
-use serde::{Deserialize, Serialize};
-use tokio::time::sleep;
-
-use crate::config::AppConfig;
-use crate::helper::tron::TronClient;
-use crate::models::token_metadata::TokenMetadataRow;
-use crate::progress::core::save_token_metadata;
-
 const METADATA_OWNER_ADDRESS: &str = "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb";
-
-#[derive(Debug, Deserialize, clickhouse::Row)]
-struct PendingMetadataJob {
+#[derive(Deserialize, clickhouse::Row)]
+struct Job {
+    asset_id: String,
+    discovery_id: String,
+    discovered_block: u64,
     token_address: String,
-    attempt_count: u8,
 }
-
-#[derive(Debug, Clone, Serialize, clickhouse::Row)]
-struct TokenMetadataJobState {
-    token_address: String,
-    status: String,
-    attempt_count: u8,
-    last_error: String,
-    updated_at_unix_ms: u64,
-}
-
 pub async fn run_token_metadata_worker(config: AppConfig) -> Result<()> {
-    let clickhouse = Arc::new(
-        Client::default()
-            .with_url(&config.clickhouse_url)
-            .with_user(&config.clickhouse_user)
-            .with_password(&config.clickhouse_pass)
-            .with_database(&config.clickhouse_db_tron),
-    );
-    let rpc_url = config
-        .tron_rpc_url
-        .as_deref()
-        .ok_or_else(|| anyhow!("TRON_RPC_URL or TRON_RPC_HTTP must be configured"))?;
-    let tron_client = Arc::new(TronClient::new(
-        rpc_url,
+    let client = Client::default()
+        .with_url(&config.clickhouse_url)
+        .with_user(&config.clickhouse_user)
+        .with_password(&config.clickhouse_pass)
+        .with_database(&config.clickhouse_db_tron);
+    let rpc = TronClient::new(
+        config
+            .tron_rpc_url
+            .as_deref()
+            .context("TRON_RPC_URL required")?,
         config.tron_api_key.clone(),
         config.rpc_timeout_seconds,
-    )?);
-    let poll_interval = Duration::from_secs(config.tron_metadata_poll_interval_seconds.max(1));
-
-    println!(
-        "[TRON METADATA] worker started (batch_size={}, max_attempts={})",
-        config.tron_metadata_batch_size, config.tron_metadata_max_attempts
-    );
-
+    )?;
     loop {
-        let jobs = load_pending_jobs(
-            &clickhouse,
+        if let Err(error) = worker_once(
+            &client,
+            &rpc,
             config.tron_metadata_batch_size,
             config.tron_metadata_max_attempts,
         )
-        .await?;
-
-        if jobs.is_empty() {
-            sleep(poll_interval).await;
-            continue;
+        .await
+        {
+            eprintln!("[TRON METADATA] cycle failed: {error:#}");
         }
-
-        for job in jobs {
-            process_metadata_job(
-                clickhouse.clone(),
-                tron_client.clone(),
-                job,
-                config.tron_metadata_max_attempts,
-            )
-            .await;
-        }
+        tokio::time::sleep(Duration::from_secs(
+            config.tron_metadata_poll_interval_seconds.max(1),
+        ))
+        .await;
     }
 }
-
-async fn load_pending_jobs(
-    clickhouse: &Client,
+pub async fn worker_once(
+    client: &Client,
+    rpc: &TronClient,
     batch_size: u64,
     max_attempts: u8,
-) -> Result<Vec<PendingMetadataJob>> {
-    clickhouse
-        .query(
-            r#"
-            SELECT
-                discovery.token_address AS token_address,
-                if(job.token_address = '', toUInt8(0), job.attempt_count) AS attempt_count
-            FROM token_metadata_discoveries AS discovery FINAL
-            LEFT JOIN token_metadata AS metadata FINAL
-                ON metadata.token_address = discovery.token_address
-            LEFT JOIN token_metadata_jobs AS job FINAL
-                ON job.token_address = discovery.token_address
-            WHERE metadata.token_address = ''
-              AND (
-                    job.token_address = ''
-                    OR (job.status = 'RETRY' AND job.attempt_count < ?)
-                  )
-            ORDER BY discovery.discovered_block, discovery.token_address
-            LIMIT ?
-            "#,
-        )
-        .bind(max_attempts)
-        .bind(batch_size.max(1))
-        .fetch_all::<PendingMetadataJob>()
-        .await
-        .context("failed to load pending TRON token metadata jobs")
-}
-
-async fn process_metadata_job(
-    clickhouse: Arc<Client>,
-    tron_client: Arc<TronClient>,
-    job: PendingMetadataJob,
-    max_attempts: u8,
-) {
-    let attempt_count = job.attempt_count.saturating_add(1);
-
-    match fetch_token_metadata(&tron_client, &job.token_address).await {
-        Ok(metadata) => {
-            if let Err(error) = save_token_metadata(clickhouse.clone(), metadata).await {
-                record_metadata_failure(
-                    &clickhouse,
+) -> Result<usize> {
+    ensure!(max_attempts > 0, "metadata max attempts must be positive");
+    let _lock = operational_lock(client)?;
+    let snapshot = visibility::capture(client, client.database(), Network::Tron).await?;
+    if snapshot.state().initialized == 0 {
+        return Ok(0);
+    }
+    let jobs=client.query("SELECT asset_id,argMin(discovery_id,(block_number,transaction_index)) AS discovery_id,min(block_number) AS discovered_block,argMin(JSONExtractString(raw_evidence_json,'token_address'),(block_number,transaction_index)) AS token_address FROM aml_metadata_discoveries_canonical WHERE network_id='tron:mainnet' AND standard_hint='trc20' AND asset_id NOT IN (SELECT asset_id FROM aml_asset_metadata_visible WHERE network_id='tron:mainnet' AND metadata_status='complete') AND asset_id NOT IN (SELECT asset_id FROM aml_metadata_jobs_visible WHERE network_id='tron:mainnet' AND (attempts>=? OR next_attempt_unix_ms>?)) GROUP BY asset_id ORDER BY discovered_block,asset_id LIMIT ?")
+        .bind(u32::from(max_attempts)).bind(now_ms()).bind(batch_size.clamp(1,100)).fetch_all::<Job>().await?;
+    let count = jobs.len();
+    for job in jobs {
+        let prior = client
+            .rows_from(
+                "aml_metadata_jobs",
+                "visible",
+                &format!(
+                    "asset_id={}",
+                    aml_warehouse::publication::literal(&job.asset_id)
+                ),
+            )
+            .await?;
+        let attempts = prior
+            .first()
+            .and_then(|v| v["attempts"].as_u64())
+            .unwrap_or(0)
+            + 1;
+        write_job(client, &job, &snapshot, attempts, "running", "").await?;
+        match observe(client, rpc, &job, &snapshot).await {
+            Ok(metadata) => {
+                visibility::unchanged(client, client.database(), &snapshot).await?;
+                client
+                    .insert_rows("aml_asset_metadata", &[metadata])
+                    .await?;
+                write_job(client, &job, &snapshot, attempts, "complete", "").await?;
+            }
+            Err(error) => {
+                let status = if attempts >= u64::from(max_attempts) {
+                    "dead_letter"
+                } else {
+                    "retry"
+                };
+                write_job(
+                    client,
                     &job,
-                    attempt_count,
-                    max_attempts,
-                    format!("failed to persist metadata: {error:#}"),
+                    &snapshot,
+                    attempts,
+                    status,
+                    &format!("{error:#}"),
                 )
-                .await;
-                return;
+                .await?;
             }
-
-            if let Err(error) = write_job_state(
-                &clickhouse,
-                TokenMetadataJobState {
-                    token_address: job.token_address.clone(),
-                    status: "COMPLETE".to_string(),
-                    attempt_count,
-                    last_error: String::new(),
-                    updated_at_unix_ms: now_unix_ms(),
-                },
-            )
-            .await
-            {
-                eprintln!(
-                    "[TRON METADATA] failed to mark {} complete: {error:#}",
-                    job.token_address
-                );
-            } else {
-                println!(
-                    "[TRON METADATA] resolved {} on attempt {}",
-                    job.token_address, attempt_count
-                );
-            }
-        }
-        Err(error) => {
-            record_metadata_failure(
-                &clickhouse,
-                &job,
-                attempt_count,
-                max_attempts,
-                format!("{error:#}"),
-            )
-            .await;
         }
     }
+    Ok(count)
 }
-
-async fn record_metadata_failure(
-    clickhouse: &Client,
-    job: &PendingMetadataJob,
-    attempt_count: u8,
-    max_attempts: u8,
-    error: String,
-) {
-    let status = if attempt_count >= max_attempts {
-        "FAILED"
-    } else {
-        "RETRY"
-    };
-    let last_error = truncate_error(&error);
-    let result = write_job_state(
-        clickhouse,
-        TokenMetadataJobState {
-            token_address: job.token_address.clone(),
-            status: status.to_string(),
-            attempt_count,
-            last_error: last_error.clone(),
-            updated_at_unix_ms: now_unix_ms(),
-        },
+async fn write_job(
+    client: &Client,
+    job: &Job,
+    snapshot: &visibility::Snapshot,
+    attempts: u64,
+    status: &str,
+    error: &str,
+) -> Result<()> {
+    let now = now_ms();
+    let value = row(
+        "aml_metadata_jobs",
+        json!({"job_id":format!("tron:metadata:{}",job.asset_id),"asset_id":job.asset_id,"status":status,"attempts":attempts,"next_attempt_unix_ms":if status=="retry" {now+30000} else {0},"last_error":truncate_error(error),"discovery_id":job.discovery_id,"discovered_block":job.discovered_block,"source_revision":snapshot.state().revision,"updated_at_unix_ms":now,"started_at_unix_ms":now,"completed_at_unix_ms":if status=="complete" {json!(now)} else {Value::Null},"raw_evidence_json":json!({"token_address":job.token_address}).to_string()}),
+        client.revision("aml_metadata_jobs").await?,
+        now,
+    )?;
+    client.insert_rows("aml_metadata_jobs", &[value]).await
+}
+async fn head(rpc: &TronClient) -> Result<(u64, String, Value)> {
+    let value = rpc.get_now_solid_block().await?;
+    let height = value["block_header"]["raw_data"]["number"]
+        .as_u64()
+        .context("solid RPC height missing")?;
+    let hash = aml_warehouse::values::normalize_hash(
+        Network::Tron,
+        value["blockID"]
+            .as_str()
+            .context("solid RPC hash missing")?,
+    )?;
+    Ok((height, hash, value))
+}
+async fn observe(
+    client: &Client,
+    rpc: &TronClient,
+    job: &Job,
+    snapshot: &visibility::Snapshot,
+) -> Result<Value> {
+    let address = aml_warehouse::values::tron_wallet(&job.token_address)?;
+    let (height, hash, head_before) = head(rpc).await?;
+    ensure!(
+        height >= job.discovered_block && height <= snapshot.state().last_block_number,
+        "solid metadata head is outside indexed canonical history; wait for ingestion"
+    );
+    let expected=client.query("SELECT block_hash FROM aml_ingested_blocks_canonical WHERE network_id='tron:mainnet' AND block_number=?").bind(height).fetch_optional::<String>().await?.context("metadata observation block not indexed")?;
+    ensure!(
+        expected == hash,
+        "RPC metadata head differs from indexed canonical block"
+    );
+    let mut calls = Vec::new();
+    let symbol = call_constant(rpc, &address, "symbol()", &mut calls).await?;
+    let name = call_constant(rpc, &address, "name()", &mut calls).await?;
+    let decimals = call_constant(rpc, &address, "decimals()", &mut calls).await?;
+    let decimals =
+        u8::try_from(decode_abi_uint256(&decimals)?).context("decimals exceeds UInt8")?;
+    let symbol = abi_text(&symbol)?;
+    let name = abi_text(&name)?;
+    let (after_height, after_hash, head_after) = head(rpc).await?;
+    ensure!(
+        height == after_height && hash == after_hash,
+        "solid state changed during metadata calls; retry"
+    );
+    visibility::unchanged(client, client.database(), snapshot).await?;
+    row(
+        "aml_asset_metadata",
+        json!({"asset_id":job.asset_id,"symbol":symbol,"name":name,"decimals":decimals,"asset_standard":"trc20","source_id":"tron_solidity_rpc","source_reference":format!("block:{hash}"),"review_status":"pending","reviewed_by":"","evidence_refs":[format!("block:{hash}"),format!("discovery:{}",job.discovery_id)],"is_verified":0,"metadata_status":"complete","observed_block":height,"observed_block_hash":hash,"source_revision":snapshot.state().revision,"updated_at_unix_ms":now_ms(),"raw_evidence_json":json!({"token_address":address,"head_before":head_before,"head_after":head_after,"calls":calls,"state_basis":"latest_solid_state_bracketed_not_historical_query"}).to_string()}),
+        client.revision("aml_asset_metadata").await?,
+        now_ms(),
     )
-    .await;
-
-    if let Err(write_error) = result {
-        eprintln!(
-            "[TRON METADATA] {} attempt {} failed ({last_error}); state write also failed: {write_error:#}",
-            job.token_address, attempt_count
-        );
+}
+async fn call_constant(
+    rpc: &TronClient,
+    address: &str,
+    selector: &str,
+    calls: &mut Vec<Value>,
+) -> Result<Vec<u8>> {
+    let response=rpc.post("walletsolidity/triggerconstantcontract",json!({"owner_address":METADATA_OWNER_ADDRESS,"contract_address":address,"function_selector":selector,"parameter":"","visible":true})).await?;
+    ensure!(
+        constant_succeeded(&response),
+        "constant call failed: {selector}"
+    );
+    let raw = response["constant_result"][0]
+        .as_str()
+        .context("missing constant result")?;
+    ensure!(
+        raw.len() <= 8192 && raw.len() % 2 == 0,
+        "invalid metadata ABI size"
+    );
+    let bytes = hex::decode(raw.strip_prefix("0x").unwrap_or(raw))?;
+    calls.push(json!({"function_selector":selector,"response":response}));
+    Ok(bytes)
+}
+fn constant_succeeded(response: &Value) -> bool {
+    response["result"]["result"] == true
+        && response["transaction"]["ret"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .all(|entry| {
+                ["ret", "contractRet"]
+                    .iter()
+                    .all(|key| entry[*key].as_str().is_none_or(|value| value == "SUCCESS"))
+            })
+}
+fn abi_text(bytes: &[u8]) -> Result<String> {
+    let value = if bytes.len() == 32 {
+        std::str::from_utf8(bytes)?
+            .trim_end_matches('\0')
+            .to_owned()
     } else {
-        eprintln!(
-            "[TRON METADATA] {} attempt {} -> {}: {}",
-            job.token_address, attempt_count, status, last_error
-        );
-    }
+        decode_dynamic_abi_string(bytes).context("invalid dynamic ABI text")?
+    };
+    ensure!(
+        value.chars().count() <= 128 && !value.chars().any(char::is_control),
+        "invalid metadata text"
+    );
+    Ok(sanitize_metadata_text(&value))
 }
-
-async fn write_job_state(clickhouse: &Client, state: TokenMetadataJobState) -> Result<()> {
-    let mut insert = clickhouse
-        .insert::<TokenMetadataJobState>("token_metadata_jobs")
-        .await?;
-    insert.write(&state).await?;
-    insert.end().await?;
-    Ok(())
-}
-
-pub async fn fetch_token_metadata(
-    tron_client: &TronClient,
-    token_address: &str,
-) -> Result<TokenMetadataRow> {
-    let symbol = call_string(tron_client, token_address, "symbol()")
-        .await
-        .context("symbol() failed")?;
-    let name = call_string(tron_client, token_address, "name()")
-        .await
-        .unwrap_or_else(|_| symbol.clone());
-    let decimals_value = call_uint(tron_client, token_address, "decimals()")
-        .await
-        .context("decimals() failed")?;
-    let decimals = u8::try_from(decimals_value)
-        .map_err(|_| anyhow!("decimals() returned an out-of-range value"))?;
-    Ok(TokenMetadataRow {
-        token_address: token_address.to_string(),
-        name: sanitize_metadata_text(&name),
-        symbol: sanitize_metadata_text(&symbol),
-        decimals,
-        is_verified: 0,
-    })
-}
-
-async fn call_string(
-    tron_client: &TronClient,
-    contract_address: &str,
-    function_selector: &str,
-) -> Result<String> {
-    let bytes = call_constant(tron_client, contract_address, function_selector).await?;
-
-    if let Some(value) = decode_dynamic_abi_string(&bytes) {
-        return Ok(value);
-    }
-
-    if let Some(word) = bytes.get(..32) {
-        let value = String::from_utf8_lossy(word)
-            .trim_matches('\0')
-            .trim()
-            .to_string();
-        if !value.is_empty() {
-            return Ok(value);
-        }
-    }
-
-    Err(anyhow!(
-        "{function_selector} did not return a supported ABI string"
-    ))
-}
-
-async fn call_uint(
-    tron_client: &TronClient,
-    contract_address: &str,
-    function_selector: &str,
-) -> Result<UInt256> {
-    let bytes = call_constant(tron_client, contract_address, function_selector).await?;
-    decode_abi_uint256(&bytes)
-        .with_context(|| format!("{function_selector} returned invalid ABI uint data"))
-}
-
 fn decode_dynamic_abi_string(bytes: &[u8]) -> Option<String> {
-    let offset = abi_word_to_usize(bytes.get(..32)?)?;
-    let length_word_end = offset.checked_add(32)?;
-    let length = abi_word_to_usize(bytes.get(offset..length_word_end)?)?;
-    let value_end = length_word_end.checked_add(length)?;
-    let value = String::from_utf8_lossy(bytes.get(length_word_end..value_end)?)
-        .trim_matches('\0')
-        .trim()
-        .to_string();
-    (!value.is_empty()).then_some(value)
-}
-
-fn abi_word_to_usize(word: &[u8]) -> Option<usize> {
-    if word.len() != 32 || word[..24].iter().any(|byte| *byte != 0) {
+    if bytes.len() < 64
+        || bytes[..31].iter().any(|b| *b != 0)
+        || bytes[31] != 32
+        || bytes[32..56].iter().any(|b| *b != 0)
+    {
         return None;
     }
-    Some(u64::from_be_bytes(word[24..].try_into().ok()?) as usize)
+    let len = u64::from_be_bytes(bytes[56..64].try_into().ok()?) as usize;
+    if len > 512 || 64usize.checked_add(len)? > bytes.len() {
+        return None;
+    }
+    std::str::from_utf8(&bytes[64..64 + len])
+        .ok()
+        .map(str::to_owned)
 }
-
 fn decode_abi_uint256(bytes: &[u8]) -> Result<UInt256> {
-    let word = bytes
-        .get(..32)
-        .ok_or_else(|| anyhow!("ABI uint256 requires a 32-byte word"))?;
-    let mut little_endian = [0_u8; 32];
-    for (index, byte) in word.iter().rev().enumerate() {
-        little_endian[index] = *byte;
+    ensure!(bytes.len() == 32, "ABI uint256 requires exactly one word");
+    let mut word = [0u8; 32];
+    for (i, b) in bytes.iter().rev().enumerate() {
+        word[i] = *b;
     }
-    Ok(UInt256::from_le_bytes(little_endian))
+    Ok(UInt256::from_le_bytes(word))
 }
-
-async fn call_constant(
-    tron_client: &TronClient,
-    contract_address: &str,
-    function_selector: &str,
-) -> Result<Vec<u8>> {
-    let response = tron_client
-        .post(
-            "wallet/triggerconstantcontract",
-            serde_json::json!({
-                "owner_address": METADATA_OWNER_ADDRESS,
-                "contract_address": contract_address,
-                "function_selector": function_selector,
-                "parameter": "",
-                "visible": true
-            }),
-        )
-        .await?;
-
-    if !response["result"]["result"].as_bool().unwrap_or(false) {
-        return Err(anyhow!(
-            "contract rejected {function_selector}: {}",
-            response["result"]["message"]
-                .as_str()
-                .unwrap_or("unknown contract error")
-        ));
-    }
-
-    let encoded = response["constant_result"][0]
-        .as_str()
-        .ok_or_else(|| anyhow!("{function_selector} returned no constant_result"))?;
-    hex::decode(encoded.trim_start_matches("0x"))
-        .with_context(|| format!("{function_selector} returned invalid hex"))
-}
-
 fn sanitize_metadata_text(value: &str) -> String {
     value.trim_matches('\0').trim().chars().take(128).collect()
 }
-
 fn truncate_error(error: &str) -> String {
-    error.chars().take(1_000).collect()
-}
-
-fn now_unix_ms() -> u64 {
-    Utc::now().timestamp_millis().max(0) as u64
+    error.chars().take(1000).collect()
 }
 
 #[cfg(test)]
@@ -357,6 +262,18 @@ mod tests {
         decode_abi_uint256, decode_dynamic_abi_string, sanitize_metadata_text, truncate_error,
     };
 
+    #[test]
+    fn explicit_simulation_failure_wins_over_http_success_and_data() {
+        use serde_json::json;
+        assert!(super::constant_succeeded(
+            &json!({"result":{"result":true}})
+        ));
+        for key in ["ret", "contractRet"] {
+            let mut response = json!({"result":{"result":true},"constant_result":["00"],"transaction":{"ret":[{}]}});
+            response["transaction"]["ret"][0][key] = json!("REVERT");
+            assert!(!super::constant_succeeded(&response));
+        }
+    }
     #[test]
     fn metadata_text_is_trimmed_and_bounded() {
         let value = format!("  USDT\0{}  ", "x".repeat(200));

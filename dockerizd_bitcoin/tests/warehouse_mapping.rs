@@ -2,28 +2,28 @@ use aml_warehouse::{Network, publication::Block};
 use anyhow::Result;
 use bitcoin_aml::{
     model,
-    warehouse::{self, LegacyBlock},
+    warehouse::{self, BlockHeader},
 };
 use serde_json::json;
 use std::collections::HashMap;
 
-fn evidence() -> Result<(LegacyBlock, model::Evidence)> {
+fn evidence() -> Result<(BlockHeader, model::Evidence)> {
     let block = json!({"height":7,"hash":"a".repeat(64),"previousblockhash":"b".repeat(64),"time":123,
     "tx":[
         {"txid":"1".repeat(64),"vin":[{"coinbase":"00"}],"vout":[{"n":0,"value":"50","scriptPubKey":{"hex":"6a01ff","type":"nulldata"}}]},
         {"txid":"2".repeat(64),"vin":[{"txid":"3".repeat(64),"vout":2,"prevout":{"value":"0.00000002","scriptPubKey":{"hex":"6a01ff","type":"nulldata"}}}],"vout":[{"n":0,"value":"0.00000001","scriptPubKey":{"hex":"6a01ee","type":"nulldata"}}]}
     ]});
-    let source = LegacyBlock {
+    let source = BlockHeader {
         block_height: 7,
         block_hash: "a".repeat(64),
         parent_hash: "b".repeat(64),
         block_time: 123,
-        commit_id: "legacy-attempt".into(),
+        commit_id: "fixture-attempt".into(),
         transaction_count: 2,
     };
     Ok((
         source,
-        model::extract(&block, "legacy-attempt", &HashMap::new())?,
+        model::extract(&block, "fixture-attempt", &HashMap::new())?,
     ))
 }
 
@@ -88,7 +88,7 @@ fn utxo_legs_preserve_one_satoshi_and_unknown_addresses() -> Result<()> {
 }
 
 #[test]
-fn incomplete_or_mismatched_legacy_evidence_cannot_be_published() -> Result<()> {
+fn incomplete_or_mismatched_block_evidence_cannot_be_published() -> Result<()> {
     let (mut source, mut evidence) = evidence()?;
     source.transaction_count = 3;
     assert!(warehouse::validate_evidence(&source, &evidence).is_err());

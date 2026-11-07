@@ -5,7 +5,6 @@ use bitcoin_aml::{
     db::Database,
     failures, ingestion, probe, repair,
     rpc::{Rpc, RpcPool},
-    warehouse,
 };
 
 #[tokio::main]
@@ -260,7 +259,6 @@ async fn main() -> Result<std::process::ExitCode> {
         }
         "api" => {
             db.check_schema().await?;
-            warehouse::migration_ready(&db).await?;
             let state = api::Api::new(db, config::required("AML_SERVICE_KEY")?)?;
             let address = config::setting("BITCOIN_API_ADDR", "127.0.0.1:6101")
                 .parse::<std::net::SocketAddr>()
@@ -269,18 +267,6 @@ async fn main() -> Result<std::process::ExitCode> {
             axum::serve(listener, api::router(state))
                 .with_graceful_shutdown(shutdown())
                 .await?;
-        }
-        "warehouse-backfill" => {
-            let args = std::env::args().skip(2).collect::<Vec<_>>();
-            anyhow::ensure!(
-                args.len() == 2 && args[0] == "--max-blocks",
-                "usage: bitcoin_aml warehouse-backfill --max-blocks N (stop all ingestion writers first)"
-            );
-            config::required("BITCOIN_WRITER_LOCK_DIR")?;
-            println!(
-                "{}",
-                warehouse::backfill(&db, args[1].parse().context("invalid --max-blocks")?).await?
-            );
         }
         "ingest" | "once" => {
             config::required("BITCOIN_WRITER_LOCK_DIR")?;
@@ -296,7 +282,7 @@ async fn main() -> Result<std::process::ExitCode> {
             tokio::select! { result = work => result?, _ = shutdown() => {} }
         }
         _ => anyhow::bail!(
-            "usage: bitcoin_aml [schema|warehouse-backfill --max-blocks N|analytics|intelligence|clusters|exposure|risk|probe [--compact]|failures|scan-gaps|repair|api|ingest|once|--healthcheck] (tools accept --help)"
+            "usage: bitcoin_aml [schema|analytics|intelligence|clusters|exposure|risk|probe [--compact]|failures|scan-gaps|repair|api|ingest|once|--healthcheck] (tools accept --help)"
         ),
     }
     Ok(std::process::ExitCode::SUCCESS)

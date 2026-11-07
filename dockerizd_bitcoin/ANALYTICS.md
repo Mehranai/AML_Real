@@ -175,4 +175,4 @@ capacity. This bounded address-sweep implementation needs real-node/mainnet,
 production load and five-VM acceptance. Alerts, watchlists, case management,
 cross-chain tracing and historical replay are separate work.
 
-See [validation](ANALYTICS_VALIDATION.md) and the [remaining tasks](../TODO_BITCOIN.md).
+See [validation](../docs/TESTING.md) and the [remaining tasks](../TODO_LIST.md).

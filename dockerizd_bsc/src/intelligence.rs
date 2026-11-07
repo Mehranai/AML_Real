@@ -51,7 +51,7 @@ impl Claim {
         ensure!(
             matches!(
                 self.review_status.as_str(),
-                "pending" | "approved" | "rejected"
+                "pending" | "approved" | "rejected" | "revoked"
             ),
             "invalid review status"
         );
@@ -86,8 +86,9 @@ impl Claim {
             "evidence references are required"
         );
         ensure!(
-            self.review_status == "pending" || !self.reviewed_by.trim().is_empty(),
-            "review decision requires reviewer"
+            self.review_status == "pending"
+                || (!self.reviewed_by.trim().is_empty() && !self.review_note.trim().is_empty()),
+            "review decision requires reviewer and reason"
         );
         ensure!(
             !self.is_exposure_seed
@@ -118,7 +119,7 @@ pub async fn import(db: &Warehouse, mut claims: Vec<Claim>, dry_run: bool) -> Re
     }
     let max = db
         .rows(
-            "SELECT max(revision) AS revision FROM intelligence_claims",
+            "SELECT max(revision) AS revision FROM aml_intelligence_claims_current",
             &[],
         )
         .await?;
@@ -138,7 +139,7 @@ pub async fn active(db: &Warehouse, address: &str) -> Result<Vec<Value>> {
     db.rows("SELECT claim_id,claim_kind,address,entity_id,entity_name,entity_type,address_role,confidence,
         risk_level,is_exposure_seed,seed_category,source_id,source_reference,evidence_refs,review_status,
         reviewed_by,revision,created_at_unix_ms,entity_id AS cluster_id,'reviewed_attribution' AS membership_type
-        FROM intelligence_active WHERE network_id='eip155:56' AND address={address:String}
+        FROM bsc_intelligence WHERE network_id='eip155:56' AND address={address:String}
         ORDER BY confidence DESC,claim_id LIMIT 100",&[("address",address)]).await
 }
 
@@ -148,8 +149,8 @@ pub async fn candidates(db: &Warehouse, address: &str) -> Result<Vec<Value>> {
         "SELECT to_address AS destination, asset_id, uniqExact(from_address) AS distinct_senders,
         count() AS transfers, groupUniqArray(20)(relationship_id) AS evidence_refs,
         'shared_destination_lead' AS heuristic, 'pending' AS review_status
-        FROM address_relationships_canonical
-        WHERE to_address IN (SELECT to_address FROM address_relationships_canonical
+        FROM bsc_relationships
+        WHERE to_address IN (SELECT to_address FROM bsc_relationships
             WHERE from_address={address:String} LIMIT 100)
         AND to_address!='0x0000000000000000000000000000000000000000'
         AND from_address!=to_address AND from_address!='0x0000000000000000000000000000000000000000'
@@ -305,6 +306,8 @@ mod tests {
             "review_status":"approved","reviewed_by":"","review_note":""})).unwrap();
         assert!(c.validate().is_err());
         c.reviewed_by = "analyst".into();
+        assert!(c.validate().is_err());
+        c.review_note = "Reviewed fixture evidence".into();
         assert!(c.validate().is_ok());
         c.claim_kind = "cluster".into();
         assert!(c.validate().is_err());

@@ -1,371 +1,198 @@
-use anyhow::{Context, ensure};
-use clickhouse::{Client, Row, RowOwned, RowWrite};
-use serde::Deserialize;
-use sha2::{Digest, Sha256};
-
 use crate::{
     config::AppConfig,
+    db::{Client, database_client, now_ms},
     ethereum::ExtractedBlock,
-    storage::{
-        IngestionFailureRow, ProtocolContractRow, SyncStateRow, TokenMetadataJobRow,
-        TokenMetadataRow,
-    },
+    storage::{ProtocolContractRow, TokenMetadataJobRow, TokenMetadataRow},
 };
-
-#[derive(Debug, Deserialize, Row)]
-struct StoredBlockHash {
-    block_hash: String,
-    trace_data_complete: u8,
-}
-
-#[derive(Debug, Deserialize, Row)]
-struct StoredCheckpoint {
-    last_synced_block: u64,
-    last_synced_block_hash: String,
-}
-
+use aml_warehouse::{
+    Network,
+    publication::{self, Block},
+};
+use anyhow::{Context, Result, ensure};
+use clickhouse::Row;
+use serde::Deserialize;
+use serde_json::json;
 #[derive(Clone)]
 pub struct EthereumStore {
     client: Client,
-    network_id: String,
-    max_batch_rows: usize,
 }
-
+#[derive(Deserialize, Row)]
+struct StoredBlock {
+    block_hash: String,
+    trace_data_complete: u8,
+}
 impl EthereumStore {
     pub fn new(config: &AppConfig) -> Self {
         Self {
-            client: crate::db::database_client(config),
-            network_id: config.eth_network_id.clone(),
-            max_batch_rows: config.eth_ingestion_batch_max_rows,
+            client: database_client(config),
         }
     }
-
-    pub async fn checkpoint(&self) -> anyhow::Result<Option<(u64, String)>> {
-        let checkpoint = self
-            .client
-            .query(
-                r#"
-                SELECT last_synced_block, last_synced_block_hash
-                FROM sync_state
-                WHERE network_id = ?
-                ORDER BY updated_at DESC
-                LIMIT 1
-                "#,
-            )
-            .bind(&self.network_id)
-            .fetch_optional::<StoredCheckpoint>()
-            .await
-            .context("failed to read Ethereum ingestion checkpoint")?;
-
-        Ok(checkpoint.map(|row| (row.last_synced_block, row.last_synced_block_hash)))
+    pub async fn checkpoint(&self) -> Result<Option<(u64, String)>> {
+        let state =
+            publication::state(&self.client, self.client.database(), Network::Ethereum).await?;
+        Ok((state.initialized == 1).then_some((state.last_block_number, state.last_block_hash)))
     }
-
-    pub async fn is_block_complete(
+    pub async fn complete_block_hash(
         &self,
-        block_number: u64,
+        height: u64,
         require_traces: bool,
-    ) -> anyhow::Result<bool> {
-        Ok(self
-            .stored_block_hash(block_number)
-            .await?
-            .is_some_and(|stored| !require_traces || stored.trace_data_complete == 1))
+    ) -> Result<Option<String>> {
+        Ok(self.client.query("SELECT block_hash,ifNull(trace_coverage,toUInt8(0)) AS trace_data_complete FROM aml_ingested_blocks_canonical WHERE network_id='eip155:1' AND block_number=?").bind(height).fetch_optional::<StoredBlock>().await?.filter(|b|!require_traces||b.trace_data_complete==1).map(|b|b.block_hash))
     }
-
-    pub async fn protocol_contracts(&self) -> anyhow::Result<Vec<ProtocolContractRow>> {
-        self.client
-            .query(
-                r#"
-                SELECT
-                    network_id,
-                    contract_address,
-                    protocol,
-                    protocol_type,
-                    contract_role,
-                    remote_network_id,
-                    remote_contract_address,
-                    decoder,
-                    source,
-                    confidence,
-                    enabled,
-                    created_at_unix_ms
-                FROM protocol_contract_registry_active
-                WHERE network_id = ?
-                "#,
+    pub async fn protocol_contracts(&self) -> Result<Vec<ProtocolContractRow>> {
+        Ok(self.client.query("SELECT network_id,contract_address,protocol,protocol_type,contract_role,remote_network_id,remote_contract_address,decoder,source,confidence,enabled,created_at_unix_ms FROM eth_protocols").fetch_all().await?)
+    }
+    pub async fn persist_block(&self, source: &ExtractedBlock, observed: u64) -> Result<()> {
+        let previous =
+            publication::state(&self.client, self.client.database(), Network::Ethereum).await?;
+        let mut refresh = false;
+        if previous.initialized == 1 && source.block.block_number <= previous.last_block_number {
+            let old=self.client.query("SELECT block_hash,ifNull(trace_coverage,toUInt8(0)) AS trace_data_complete FROM aml_ingested_blocks_canonical WHERE network_id='eip155:1' AND block_number=?").bind(source.block.block_number).fetch_optional::<StoredBlock>().await?.context("requested replay lies outside the observed range")?;
+            ensure!(
+                old.block_hash == source.block.block_hash,
+                "finalized Ethereum hash conflict; refusing an implicit branch replacement"
+            );
+            if old.trace_data_complete >= source.block.trace_data_complete {
+                return Ok(());
+            }
+            refresh = true;
+        }
+        let revision = publication::next_revision(
+            &self.client,
+            self.client.database(),
+            Network::Ethereum,
+            previous.revision,
+        )
+        .await?;
+        let block = Block {
+            network_id: Network::Ethereum.id().into(),
+            block_number: source.block.block_number,
+            block_hash: source.block.block_hash.clone(),
+            block_timestamp_unix_ms: source.block.block_timestamp_unix_ms,
+            commit_id: format!("{revision}-{}", source.block.block_hash),
+            revision,
+            parent_hash: source.block.parent_hash.clone(),
+            canonical: 1,
+            ingestion_status: "complete".into(),
+            transaction_count: source.block.transaction_count,
+            receipt_coverage: Some(source.block.receipt_data_complete),
+            trace_coverage: Some(source.block.trace_data_complete),
+            prevout_coverage: None,
+            source_id: source.block.rpc_provider.clone(),
+            created_at_unix_ms: now_ms(),
+        };
+        let facts = super::mapping::evidence(&block, source)?;
+        let original =
+            json!({"ethereum_block":source.source_block,"withdrawals":source.block_credits});
+        if refresh {
+            aml_warehouse::core::refresh_observed_batch(
+                &self.client,
+                self.client.database(),
+                &previous,
+                &block,
+                &facts,
+                &original.to_string(),
+                observed,
             )
-            .bind(&self.network_id)
-            .fetch_all::<ProtocolContractRow>()
-            .await
-            .context("failed to load active Ethereum protocol registry")
-    }
-
-    pub async fn persist_block(&self, extracted: &ExtractedBlock) -> anyhow::Result<()> {
-        self.validate_chain_continuity(extracted).await?;
-
-        insert_rows(
-            &self.client,
-            "transactions",
-            &extracted.transactions,
-            self.max_batch_rows,
-        )
-        .await?;
-        insert_rows(
-            &self.client,
-            "evm_logs",
-            &extracted.logs,
-            self.max_batch_rows,
-        )
-        .await?;
-        insert_rows(
-            &self.client,
-            "address_relationships",
-            &extracted.relationships,
-            self.max_batch_rows,
-        )
-        .await?;
-        insert_rows(
-            &self.client,
-            "transaction_features",
-            &extracted.transaction_features,
-            self.max_batch_rows,
-        )
-        .await?;
-        insert_rows(
-            &self.client,
-            "semantic_aml_events",
-            &extracted.semantic_events,
-            self.max_batch_rows,
-        )
-        .await?;
-        insert_rows(
-            &self.client,
-            "token_metadata_discoveries",
-            &extracted.token_discoveries,
-            self.max_batch_rows,
-        )
-        .await?;
-        insert_rows(
-            &self.client,
-            "token_metadata_jobs",
-            &extracted.token_jobs,
-            self.max_batch_rows,
-        )
-        .await?;
-
-        // The completion marker is deliberately last. A failed partial write is replayable.
-        insert_rows(
-            &self.client,
-            "ingested_blocks",
-            std::slice::from_ref(&extracted.block),
-            1,
-        )
-        .await?;
-
-        let checkpoint = self.checkpoint().await?;
-        if checkpoint
-            .as_ref()
-            .is_none_or(|(block_number, _)| extracted.block.block_number >= *block_number)
-        {
-            let row = SyncStateRow {
-                network_id: extracted.block.network_id.clone(),
-                last_synced_block: extracted.block.block_number,
-                last_synced_block_hash: extracted.block.block_hash.clone(),
-                updated_at_unix_ms: extracted.block.indexed_at_unix_ms,
-            };
-            insert_rows(&self.client, "sync_state", std::slice::from_ref(&row), 1).await?;
+            .await?;
+        } else {
+            aml_warehouse::core::publish_observed_batch(
+                &self.client,
+                self.client.database(),
+                &previous,
+                &block,
+                &facts,
+                &original.to_string(),
+                observed,
+            )
+            .await?;
         }
 
         Ok(())
     }
-
     pub async fn pending_token_metadata_jobs(
         &self,
         limit: u64,
         max_attempts: u8,
-    ) -> anyhow::Result<Vec<TokenMetadataJobRow>> {
-        self.client
-            .query(
-                r#"
-                SELECT
-                    any(network_id) AS network_id,
-                    token_address,
-                    argMax(token_standard, updated_at_unix_ms) AS token_standard,
-                    min(discovered_block) AS discovered_block,
-                    'pending' AS status,
-                    max(attempt_count) AS attempt_count,
-                    argMax(last_error, updated_at_unix_ms) AS last_error,
-                    max(updated_at_unix_ms) AS updated_at_unix_ms
-                FROM token_metadata_jobs
-                WHERE network_id = ?
-                  AND token_address NOT IN
-                  (
-                      SELECT token_address
-                      FROM token_metadata FINAL
-                      WHERE network_id = ?
-                  )
-                GROUP BY token_address
-                HAVING max(attempt_count) < ?
-                ORDER BY discovered_block, token_address
-                LIMIT ?
-                "#,
-            )
-            .bind(&self.network_id)
-            .bind(&self.network_id)
-            .bind(max_attempts)
-            .bind(limit)
-            .fetch_all::<TokenMetadataJobRow>()
-            .await
-            .context("failed to load pending Ethereum token metadata jobs")
+    ) -> Result<Vec<TokenMetadataJobRow>> {
+        Ok(self.client.query(r#"
+            SELECT j.network_id AS network_id,j.token_address AS token_address,
+                argMax(j.token_standard,j.updated_at_unix_ms) AS token_standard,
+                min(j.discovered_block) AS discovered_block,'pending' AS status,
+                max(j.attempt_count) AS attempt_count,
+                argMax(j.last_error,j.updated_at_unix_ms) AS last_error,
+                max(j.updated_at_unix_ms) AS updated_at_unix_ms
+            FROM eth_metadata_jobs AS j
+            WHERE (j.network_id,j.token_address) NOT IN (SELECT network_id,token_address FROM eth_metadata)
+            GROUP BY j.network_id,j.token_address HAVING max(j.attempt_count)<?
+            ORDER BY discovered_block,token_address LIMIT ?
+        "#).bind(max_attempts).bind(limit).fetch_all().await?)
     }
-
     pub async fn persist_token_metadata(
         &self,
-        metadata: &TokenMetadataRow,
-        job: &TokenMetadataJobRow,
-    ) -> anyhow::Result<()> {
-        insert_rows(
-            &self.client,
-            "token_metadata",
-            std::slice::from_ref(metadata),
-            1,
-        )
-        .await?;
-        insert_rows(
-            &self.client,
-            "token_metadata_jobs",
-            std::slice::from_ref(job),
-            1,
-        )
-        .await
+        m: &TokenMetadataRow,
+        j: &TokenMetadataJobRow,
+    ) -> Result<()> {
+        crate::db::records::metadata(&self.client, m, j).await
     }
-
-    pub async fn update_token_metadata_job(&self, job: &TokenMetadataJobRow) -> anyhow::Result<()> {
-        insert_rows(
-            &self.client,
-            "token_metadata_jobs",
-            std::slice::from_ref(job),
-            1,
-        )
-        .await
+    pub async fn update_token_metadata_job(&self, j: &TokenMetadataJobRow) -> Result<()> {
+        crate::db::records::metadata_job(&self.client, j).await
     }
     pub async fn record_failure(
         &self,
-        block_number: u64,
+        height: u64,
         stage: &str,
         message: &str,
-        attempt_count: u32,
-        timestamp_unix_ms: u64,
-    ) -> anyhow::Result<()> {
-        let identity = format!("{}|{block_number}|{stage}", self.network_id);
-        let row = IngestionFailureRow {
-            failure_id: format!("{:x}", Sha256::digest(identity.as_bytes())),
-            network_id: self.network_id.clone(),
-            block_number,
-            block_hash: String::new(),
-            tx_hash: String::new(),
-            stage: stage.to_string(),
-            error_class: "rpc_or_decode".to_string(),
-            error_message: message.to_string(),
-            retryable: 1,
-            attempt_count,
-            status: "open".to_string(),
-            first_failed_at_unix_ms: timestamp_unix_ms,
-            last_failed_at_unix_ms: timestamp_unix_ms,
-            resolved_at_unix_ms: 0,
-        };
-        insert_rows(
-            &self.client,
-            "ingestion_failures",
-            std::slice::from_ref(&row),
-            1,
-        )
-        .await
+        attempts: u32,
+        time: u64,
+    ) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        let data = crate::db::row(
+            "aml_ingestion_failures",
+            json!({"failure_id":format!("{:x}",Sha256::digest(format!("eip155:1|{height}|{stage}"))),"block_number":height,"block_hash":null,"operation":stage,"status":"retry","attempts":attempts,"error_code":"rpc_or_decode","error_message":message,"next_attempt_unix_ms":0,"tx_hash":null,"retryable":1,"first_failed_at_unix_ms":time,"last_failed_at_unix_ms":time,"resolved_at_unix_ms":null,"raw_evidence_json":json!({"stage":stage,"message":message}).to_string()}),
+            self.client.revision("aml_ingestion_failures").await?,
+            time,
+        )?;
+        self.client
+            .insert_rows("aml_ingestion_failures", &[data])
+            .await
     }
-
-    async fn validate_chain_continuity(&self, extracted: &ExtractedBlock) -> anyhow::Result<()> {
-        let same_height = self.stored_block_hash(extracted.block.block_number).await?;
-        if let Some(stored) = same_height {
-            ensure!(
-                stored.block_hash == extracted.block.block_hash,
-                "finalized block hash conflict at height {}: stored {}, received {}",
-                extracted.block.block_number,
-                stored.block_hash,
-                extracted.block.block_hash
-            );
+    pub async fn resolve_failure(&self, height: u64, stage: &str) -> Result<()> {
+        let failures = self
+            .client
+            .rows(
+                "aml_ingestion_failures",
+                &format!(
+                    "block_number={height} AND operation={} AND status!='resolved'",
+                    publication::literal(stage)
+                ),
+            )
+            .await?;
+        for mut row in failures {
+            row["status"] = json!("resolved");
+            row["resolved_at_unix_ms"] = json!(now_ms());
+            row["next_attempt_unix_ms"] = json!(0);
+            row["revision"] = json!(self.client.revision("aml_ingestion_failures").await?);
+            self.client
+                .insert_rows("aml_ingestion_failures", &[row])
+                .await?;
         }
-
-        if extracted.block.block_number > 0 {
-            if let Some(parent) = self
-                .stored_block_hash(extracted.block.block_number - 1)
-                .await?
-            {
-                ensure!(
-                    parent.block_hash == extracted.block.parent_hash,
-                    "parent hash mismatch before finalized block {}: stored {}, received {}",
-                    extracted.block.block_number,
-                    parent.block_hash,
-                    extracted.block.parent_hash
-                );
-            }
-        }
-
         Ok(())
     }
-
-    async fn stored_block_hash(
-        &self,
-        block_number: u64,
-    ) -> anyhow::Result<Option<StoredBlockHash>> {
-        let row = self
-            .client
-            .query(
-                r#"
-                SELECT block_hash, trace_data_complete
-                FROM ingested_blocks
-                WHERE network_id = ?
-                  AND block_number = ?
-                  AND ingestion_status = 'complete'
-                ORDER BY updated_at DESC
-                LIMIT 1
-                "#,
-            )
-            .bind(&self.network_id)
-            .bind(block_number)
-            .fetch_optional::<StoredBlockHash>()
-            .await
-            .with_context(|| format!("failed to inspect stored Ethereum block {block_number}"))?;
-        Ok(row)
-    }
 }
-
-async fn insert_rows<R>(
-    client: &Client,
-    table: &str,
-    rows: &[R],
-    max_batch_rows: usize,
-) -> anyhow::Result<()>
-where
-    R: RowOwned + RowWrite,
-{
-    if rows.is_empty() {
-        return Ok(());
-    }
-
-    for chunk in rows.chunks(max_batch_rows) {
-        let mut insert = client
-            .insert::<R>(table)
-            .await
-            .with_context(|| format!("failed to start ClickHouse insert into {table}"))?;
-        for row in chunk {
-            insert
-                .write(row)
-                .await
-                .with_context(|| format!("failed to serialize row for {table}"))?;
-        }
-        insert
-            .end()
-            .await
-            .with_context(|| format!("failed to commit ClickHouse insert into {table}"))?;
-    }
-
-    Ok(())
+pub fn ingestion_lock(database: &str) -> Result<std::fs::File> {
+    aml_warehouse::contract::identifier(database)?;
+    let directory = std::env::var_os("ETHEREUM_WRITER_LOCK_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("aml-ethereum-writer"));
+    std::fs::create_dir_all(&directory)?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(directory.join(format!("{database}.lock")))?;
+    file.try_lock()
+        .context("another Ethereum ingest/range process owns this database")?;
+    Ok(file)
 }

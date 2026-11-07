@@ -209,7 +209,7 @@ pub(crate) struct SemanticBlockEvidence {
     pub events: Vec<SemanticEvent>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct TransactionFeature {
     pub feature_id: String,
     pub tx_hash: String,
@@ -233,7 +233,7 @@ pub(crate) struct TransactionFeature {
     pub evidence_refs: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct SemanticEvent {
     pub event_id: String,
     pub tx_hash: String,
@@ -261,7 +261,7 @@ pub(crate) struct SemanticEvent {
     classification_source: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct ValidatedProtocolContract {
     pub contract_address: String,
     pub protocol: String,

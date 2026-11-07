@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::db::Client;
 use anyhow::Result;
-use clickhouse::Client;
 use tokio::time::sleep;
 
 use crate::config::{AppConfig, SyncMode};
@@ -19,7 +19,8 @@ pub async fn run_tron_loop(config: AppConfig) -> Result<()> {
     let admin_client = Client::default()
         .with_url(&config.clickhouse_url)
         .with_user(&config.clickhouse_user)
-        .with_password(&config.clickhouse_pass);
+        .with_password(&config.clickhouse_pass)
+        .with_database(&config.clickhouse_db_tron);
 
     // برای بررسی اینکه SQl با مدل Rust ناسازگار نباشد
     validate_tron_schema(&admin_client).await?;
@@ -63,7 +64,9 @@ pub async fn run_tron_loop(config: AppConfig) -> Result<()> {
                 sleep(Duration::from_secs(poll_interval_seconds)).await;
             }
             Err(error) => {
-                if error.downcast_ref::<FinalizedHashConflict>().is_some() {
+                if error.downcast_ref::<FinalizedHashConflict>().is_some()
+                    || !tron::fetcher::classify_ingestion_error(&error).1
+                {
                     eprintln!(
                         "[TRON] ingestion stopped because finalized block evidence conflicts: {error:#}"
                     );

@@ -6,7 +6,7 @@ use bitcoin_aml::{
     db::Database,
     holdings::{self, Query},
     model,
-    warehouse::{self, LegacyBlock, WriteContext},
+    warehouse::{self, BlockHeader, WriteContext},
 };
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -41,7 +41,7 @@ async fn append(
     let previous = db.state().await?;
     let block = json!({"height":height,"hash":hash,"previousblockhash":if height==0 {String::new()}else if previous.initialized==1{previous.tip_hash.clone()}else{format!("{:064x}",height-1)},"time":1700000000+height,"tx":transactions});
     let evidence = model::extract(&block, &format!("holdings-{height}"), resolved)?;
-    let source = LegacyBlock {
+    let source = BlockHeader {
         block_height: height,
         block_hash: hash,
         parent_hash: block["previousblockhash"].as_str().unwrap().into(),
@@ -58,7 +58,6 @@ async fn append(
             observed: height,
             start,
             source_id: "synthetic-holdings-fixture",
-            legacy_fence: None,
         },
     )
     .await?;

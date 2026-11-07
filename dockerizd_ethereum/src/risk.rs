@@ -1,12 +1,10 @@
-use std::{
-    collections::HashMap,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
 
+use crate::clustering::stable_id;
+use crate::db::Client;
 use anyhow::{Context, ensure};
-use clickhouse::{Client, Row, RowOwned, RowWrite};
+use clickhouse::Row;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::{config::AppConfig, db::database_client};
 
@@ -117,24 +115,6 @@ struct RiskSignalRow {
     created_at_unix_ms: u64,
 }
 
-#[derive(Debug, Clone, Row, Serialize)]
-struct RiskAssessmentRow {
-    assessment_id: String,
-    network_id: String,
-    address: String,
-    policy_version: String,
-    risk_score: f64,
-    risk_level: String,
-    signal_count: u16,
-    top_reasons: Vec<String>,
-    evidence_refs: Vec<String>,
-    exposure_run_id: String,
-    as_of_block: u64,
-    as_of_unix_ms: u64,
-    scoring_method: String,
-    created_at_unix_ms: u64,
-}
-
 impl EvidenceRiskEngine {
     pub fn new(config: &AppConfig) -> Self {
         Self {
@@ -163,11 +143,34 @@ impl EvidenceRiskEngine {
             });
         }
 
+        let snapshot = aml_warehouse::visibility::capture(
+            &self.client,
+            self.client.database(),
+            aml_warehouse::Network::Ethereum,
+        )
+        .await?;
+        if snapshot.state().initialized == 0 {
+            return Ok(RiskAssessmentOutput {
+                enabled: true,
+                status: "waiting_for_data".into(),
+                assessment_id: None,
+                policy_version: self.policy_version.clone(),
+                scoring_method: SCORING_METHOD.into(),
+                risk_score: None,
+                risk_level: None,
+                signals: vec![],
+                top_reasons: vec![],
+                exposure_run_id: None,
+                as_of_block: None,
+                probability_claimed: false,
+            });
+        }
+        let output_revision = self.client.revision("aml_wallet_risk_assessments").await?;
         let policy = self.load_policy().await?;
         let rules = self.load_rules().await?;
         let as_of_block = self.load_checkpoint().await?;
         let exposure_run_id = self.load_exposure_run().await?;
-        let now = unix_time_millis()?;
+        let now = crate::db::now_ms();
         let assessment_id = stable_id(
             "eth_risk_assessment",
             &[
@@ -175,6 +178,7 @@ impl EvidenceRiskEngine {
                 address,
                 &self.policy_version,
                 &as_of_block.to_string(),
+                &output_revision.to_string(),
                 exposure_run_id.as_deref().unwrap_or("no_exposure_run"),
             ],
         );
@@ -232,7 +236,7 @@ impl EvidenceRiskEngine {
                 (mixer_events.len() as f64 / 2.0).min(1.0),
                 mixer_events
                     .iter()
-                    .map(|event| event.event_id.clone())
+                    .map(|event| format!("event:{}", event.event_id))
                     .collect(),
                 serde_json::json!({
                     "event_count": mixer_events.len(),
@@ -324,6 +328,8 @@ impl EvidenceRiskEngine {
             exposure_run_id.as_deref().unwrap_or(""),
             as_of_block,
             now,
+            &snapshot,
+            output_revision,
         )
         .await?;
 
@@ -348,7 +354,7 @@ impl EvidenceRiskEngine {
             .query(
                 r#"
                 SELECT medium_threshold, high_threshold
-                FROM risk_policies FINAL
+                FROM aml_risk_policies_current
                 WHERE network_id = ? AND policy_version = ? AND enabled = 1
                 LIMIT 1
                 "#,
@@ -366,7 +372,7 @@ impl EvidenceRiskEngine {
             .query(
                 r#"
                 SELECT signal_type, max_contribution, description
-                FROM risk_policy_rules FINAL
+                FROM aml_risk_policy_rules_current
                 WHERE network_id = ? AND policy_version = ? AND enabled = 1
                 "#,
             )
@@ -388,7 +394,7 @@ impl EvidenceRiskEngine {
             .query(
                 r#"
                 SELECT last_synced_block
-                FROM sync_state
+                FROM eth_sync
                 WHERE network_id = ?
                 ORDER BY updated_at DESC
                 LIMIT 1
@@ -416,8 +422,8 @@ impl EvidenceRiskEngine {
                     max(risk_level) AS risk_level,
                     max(is_exposure_seed) AS is_exposure_seed,
                     groupUniqArray(entity_id) AS entity_ids,
-                    groupUniqArray(source_label_id) AS evidence_refs
-                FROM address_entities_active
+                    groupUniqArray(concat('claim:',source_label_id)) AS evidence_refs
+                FROM eth_entities
                 WHERE network_id = ? AND address = ?
                 HAVING count() > 0
                 "#,
@@ -444,12 +450,12 @@ impl EvidenceRiskEngine {
                     path_id, direction, hop_count, exposure_score,
                     seed_address, seed_entity_id, service_mediated,
                     relationship_ids, tx_hashes, path_addresses
-                FROM address_exposure_best_paths
+                FROM eth_exposure_paths
                 WHERE network_id = ? AND run_id = ? AND subject_address = ?
                   AND direction != 'SEED'
                   AND (seed_address, seed_entity_id) IN
                   (
-                      SELECT address, entity_id FROM address_entities_active
+                      SELECT address, entity_id FROM eth_entities
                       WHERE network_id = ? AND is_exposure_seed = 1 AND risk_level > 0
                   )
                 ORDER BY exposure_score DESC
@@ -473,7 +479,7 @@ impl EvidenceRiskEngine {
             .query(
                 r#"
                 SELECT event_id, tx_hash, event_type, block_timestamp_unix_ms
-                FROM semantic_aml_events_canonical
+                FROM eth_events
                 WHERE network_id = ? AND subject_address = ?
                 ORDER BY block_timestamp_unix_ms
                 LIMIT 1000
@@ -492,12 +498,12 @@ impl EvidenceRiskEngine {
                 r#"
                 SELECT
                     count() AS pair_count,
-                    groupUniqArray(20)(concat(inbound.tx_hash, ':', outbound.tx_hash))
+                    arrayDistinct(arrayFlatten(groupUniqArray(20)([concat('tx:',inbound.tx_hash),concat('tx:',outbound.tx_hash)])))
                         AS evidence_refs
                 FROM
                 (
                     SELECT tx_hash, asset_id, block_timestamp_unix_ms
-                    FROM address_relationships_canonical
+                    FROM eth_relationships
                     WHERE network_id = ? AND to_address = ?
                     ORDER BY block_timestamp_unix_ms DESC
                     LIMIT 5000
@@ -505,7 +511,7 @@ impl EvidenceRiskEngine {
                 INNER JOIN
                 (
                     SELECT tx_hash, asset_id, block_timestamp_unix_ms
-                    FROM address_relationships_canonical
+                    FROM eth_relationships
                     WHERE network_id = ? AND from_address = ?
                     ORDER BY block_timestamp_unix_ms DESC
                     LIMIT 5000
@@ -538,7 +544,13 @@ impl EvidenceRiskEngine {
         exposure_run_id: &str,
         as_of_block: u64,
         created_at: u64,
+        snapshot: &aml_warehouse::visibility::Snapshot,
+        revision: u64,
     ) -> anyhow::Result<()> {
+        ensure!(
+            as_of_block == snapshot.state().last_block_number,
+            "risk input snapshot changed"
+        );
         let rows = signals
             .iter()
             .map(|signal| RiskSignalRow {
@@ -557,26 +569,36 @@ impl EvidenceRiskEngine {
                 created_at_unix_ms: created_at,
             })
             .collect::<Vec<_>>();
-        insert_rows(&self.client, "wallet_risk_signals", &rows).await?;
-        insert_rows(
+        let signal_rows=rows.iter().map(|r|crate::db::row("aml_wallet_risk_signals",serde_json::json!({
+          "signal_id":r.signal_id,"assessment_id":r.assessment_id,"subject_id":r.address,"policy_version":r.policy_version,"signal_type":r.signal_type,
+          "contribution":r.contribution,"summary":r.summary,"evidence_refs":crate::db::refs(&serde_json::to_value(&r.evidence_refs)?),"evidence_json":r.evidence_json,
+          "as_of_block":snapshot.state().last_block_number,"source_revision":snapshot.state().revision,"signal_strength":r.signal_strength,"as_of_unix_ms":created_at
+        }),revision,created_at)).collect::<anyhow::Result<Vec<_>>>()?;
+        let assessment = crate::db::row(
+            "aml_wallet_risk_assessments",
+            serde_json::json!({
+              "assessment_id":assessment_id,"subject_id":address,"policy_version":self.policy_version,"risk_score":risk_score,
+              "risk_level":if risk_level=="NONE"{"UNKNOWN"}else{risk_level},"probability_claimed":0,"signal_count":signals.len(),
+              "exposure_run_id":if exposure_run_id.is_empty(){serde_json::Value::Null}else{serde_json::json!(exposure_run_id)},
+              "limitations":["Evidence-policy score; not a money-laundering probability","Coverage limited to stored canonical data"],
+              "as_of_block":snapshot.state().last_block_number,"source_revision":snapshot.state().revision,"top_reasons":top_reasons,
+              "evidence_refs":crate::db::refs(&serde_json::to_value(evidence_refs)?),"as_of_unix_ms":created_at,"scoring_method":SCORING_METHOD
+            }),
+            revision,
+            created_at,
+        )?;
+        let batch = std::collections::BTreeMap::from([
+            ("aml_wallet_risk_assessments".into(), vec![assessment]),
+            ("aml_wallet_risk_signals".into(), signal_rows),
+        ]);
+        aml_warehouse::visibility::publish_analysis(
             &self.client,
-            "wallet_risk_assessments",
-            &[RiskAssessmentRow {
-                assessment_id: assessment_id.to_string(),
-                network_id: self.network_id.clone(),
-                address: address.to_string(),
-                policy_version: self.policy_version.clone(),
-                risk_score,
-                risk_level: risk_level.to_string(),
-                signal_count: signals.len().try_into().unwrap_or(u16::MAX),
-                top_reasons: top_reasons.to_vec(),
-                evidence_refs: evidence_refs.to_vec(),
-                exposure_run_id: exposure_run_id.to_string(),
-                as_of_block,
-                as_of_unix_ms: created_at,
-                scoring_method: SCORING_METHOD.to_string(),
-                created_at_unix_ms: created_at,
-            }],
+            self.client.database(),
+            snapshot,
+            "risk",
+            assessment_id,
+            revision,
+            &batch,
         )
         .await
     }
@@ -604,7 +626,10 @@ fn push_exposure_signal(
         rules,
         signal_type,
         path.exposure_score.clamp(0.0, 1.0),
-        path.relationship_ids.clone(),
+        path.relationship_ids
+            .iter()
+            .map(|id| format!("relationship:{id}"))
+            .collect(),
         serde_json::json!({
             "path_id": path.path_id,
             "seed_address": path.seed_address,
@@ -652,47 +677,14 @@ fn nearby_semantic_sequence(
                 .abs_diff(second.block_timestamp_unix_ms)
                 <= window_ms
             {
-                return Some(vec![first.event_id.clone(), second.event_id.clone()]);
+                return Some(vec![
+                    format!("event:{}", first.event_id),
+                    format!("event:{}", second.event_id),
+                ]);
             }
         }
     }
     None
-}
-
-async fn insert_rows<R>(client: &Client, table: &str, rows: &[R]) -> anyhow::Result<()>
-where
-    R: RowOwned + RowWrite,
-{
-    if rows.is_empty() {
-        return Ok(());
-    }
-    let mut insert = client
-        .insert::<R>(table)
-        .await
-        .with_context(|| format!("failed to start insert into {table}"))?;
-    for row in rows {
-        insert.write(row).await?;
-    }
-    insert.end().await?;
-    Ok(())
-}
-
-fn stable_id(namespace: &str, fields: &[&str]) -> String {
-    let mut input = namespace.to_string();
-    for field in fields {
-        input.push('|');
-        input.push_str(field);
-    }
-    format!("{:x}", Sha256::digest(input.as_bytes()))
-}
-
-fn unix_time_millis() -> anyhow::Result<u64> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context("system clock is before Unix epoch")?
-        .as_millis()
-        .try_into()
-        .context("Unix timestamp does not fit UInt64")?)
 }
 
 #[cfg(test)]

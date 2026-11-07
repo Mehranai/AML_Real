@@ -1,4 +1,8 @@
 # Local environment files are private; commit only example templates.
+.env
+.env.*
+!.env.example
+!.env.*.example
 .envrc
 secrets/
 .secrets/
@@ -152,7 +156,7 @@ runs/
 *.vmdk
 *.qcow2
 
-# Keep source, migrations/legacy SQL, fixtures, schema snapshots, examples,
+# Keep source, SQL migrations, fixtures, schema snapshots, examples,
 # Cargo.lock, package-lock.json, Dockerfiles, deployment scripts and public docs.
 
 # Required non-secret disabled-auth placeholder used by Compose

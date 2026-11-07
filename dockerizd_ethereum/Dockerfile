@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && rm -rf src
 
 COPY src ./src
-COPY sql ./sql
+COPY config ./config
 COPY web ./web
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
@@ -32,6 +32,7 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifi
 COPY --from=builder /out/ /usr/local/bin/
 WORKDIR /app
 ENV RUST_BACKTRACE=1 TZ=UTC
+RUN mkdir -p /var/lock/ethereum && chown ${APP_UID}:${APP_GID} /var/lock/ethereum
 USER ${APP_UID}:${APP_GID}
 EXPOSE 5001
 STOPSIGNAL SIGTERM

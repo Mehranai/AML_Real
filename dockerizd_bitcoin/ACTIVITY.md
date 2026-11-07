@@ -119,5 +119,5 @@ SQL فعال prefix در `sql/queries/activity.sql` و reader در `src/activity
 query از viewهای canonical قرارداد مشترک مصرف می‌کند. جدول feature یا semantic
 با رکورد ساختگی پر نمی‌شود؛ worker/detectorهای آن‌ها هنوز مراحل جدا هستند.
 
-[اعتبارسنجی](ACTIVITY_VALIDATION.md)، [ساختار بک‌اند](../docs/BACKEND_ARCHITECTURE_FA.md)،
-[کارهای باقی‌مانده](../TODO_BITCOIN.md).
+[اعتبارسنجی](../docs/TESTING.md)، [ساختار بک‌اند](../docs/BACKEND_ARCHITECTURE_FA.md)،
+[کارهای باقی‌مانده](../TODO_LIST.md).

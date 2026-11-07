@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use arz_axum_for_services::config::AppConfig;
+use arz_axum_for_services::db::Client;
 use arz_axum_for_services::services::tron::entity_intelligence::{
     ENTITY_LABEL_SUBJECT, EntityLabelSubmission, IntelligenceReviewInput,
     review_intelligence_subject, submit_entity_label,
 };
-use clickhouse::Client;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]

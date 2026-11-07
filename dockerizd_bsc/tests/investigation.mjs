@@ -29,7 +29,7 @@ try {
   if(dockerApi){await docker('network','create',name);networkCreated=true;}
   await docker('run','--rm','-d','--name',name,...(dockerApi?['--network',name]:[]),'-p','127.0.0.1::8123',
     '-e','CLICKHOUSE_USER=bsc_admin','-e','CLICKHOUSE_PASSWORD='+password,
-    '-e','CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1','clickhouse/clickhouse-server:23.8');
+    '-e','CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1',process.env.CLICKHOUSE_IMAGE || 'clickhouse/clickhouse-server:23.8.16.16');
   created=true;
   const chPort=(await docker('port',name,'8123')).stdout.trim().split(':').at(-1);
   const ch='http://127.0.0.1:'+chPort;
@@ -43,7 +43,7 @@ try {
     let text='';for await(const chunk of req)text+=chunk;
     const {id,method,params}=JSON.parse(text);let result;
     if(method==='eth_chainId')result=rpcChain;
-    else if(method==='eth_getBlockByNumber')result={number:'0x64',hash:hash(100)};
+    else if(method==='eth_getBlockByNumber'){const height=params[0]==='finalized'?100:Number(BigInt(params[0]));result={number:hex(height),hash:hash(height)};}
     else if(method==='eth_getBalance')result=hex(1234567890123456789n);
     else if(method==='eth_call') {
       const data=params[0].data;
@@ -61,36 +61,69 @@ try {
   const env={...process.env,BSC_CLICKHOUSE_URL:ch,BSC_CLICKHOUSE_USER:'bsc_admin',BSC_CLICKHOUSE_PASSWORD:password,
     BSC_CLICKHOUSE_DATABASE:'bsc_aml',BSC_API_ADDR:'0.0.0.0:'+apiPort,AML_SERVICE_KEY:key,
     BSC_MODE:'development',BSC_RPC_URL:'http://127.0.0.1:'+rpc.address().port,BSC_TRACE_MODE:'auto'};
-  await run(executable('bsc_schema'),[],{cwd:directory,env,timeout:60000});
-  await run(executable('bsc_schema'),['--check'],{cwd:directory,env,timeout:60000});
-  const insert=(table,rows)=>sql('INSERT INTO bsc_aml.'+table+' FORMAT JSONEachRow',rows.map(JSON.stringify).join('\n'));
+  await run(executable('bsc_schema'),[],{cwd:directory,env,timeout:180000});
+  await run(executable('bsc_schema'),['--check'],{cwd:directory,env,timeout:180000});
+  // Synthetic UI/path fixtures. Live RPC ingestion and crash/reorg validation run
+  // in Rust; this fixture uses the same aml_* schema and publication boundary.
+  const insert=(table,rows)=>rows.length?sql('INSERT INTO bsc_aml.'+table+' FORMAT JSONEachRow',rows.map(JSON.stringify).join('\n')):Promise.resolve();
   const timestamp=Date.now()-600000;
-  const blocks=Array.from({length:11},(_,i)=>({network_id:'eip155:56',block_number:i+1,block_hash:hash(i+1),
-    parent_hash:hash(i),block_timestamp_unix_ms:timestamp+i*1000,receipt_data_complete:1,trace_data_complete:1,
-    canonical:1,ingestion_status:'complete',state_revision:1,indexed_at_unix_ms:Date.now()}));
-  await insert('ingested_blocks',blocks);
-  const edge=(id,from,to,block,asset=native)=>({network_id:'eip155:56',relationship_id:id,
-    block_number:block,block_hash:hash(block),block_state_revision:1,block_timestamp_unix_ms:timestamp+block*1000,
-    tx_hash:hash(1000+block),transaction_index:0,event_index:0,event_sub_index:0,trace_address:[],
-    from_address:from,to_address:to,asset_id:asset,token_id:'',amount:'1000000000000000000',transfer_type:asset===native?'native':'erc20'});
+  const edge=(id,from,to,block,asset=native)=>({relationship_id:id,block_number:block,
+    from_address:from,to_address:to,asset_id:asset,token_id:'',amount:'1000000000000000000',transfer_type:asset===native?'native_external':'erc20'});
   const edges=Array.from({length:10},(_,i)=>edge('edge-'+i,a(i+1),a(i+2),i+1));
   edges.push(edge('different-asset',a(2),a(12),3,token),edge('wrong-time',a(3),a(13),1));
   edges.push(edge('token',a(2),a(3),4,token));
   const nft=edge('nft',a(2),a(3),5,'eip155:56/erc721:'+a(901)+'/7');nft.token_id='7';nft.amount='1';nft.transfer_type='erc721';edges.push(nft);
   const multi=edge('erc1155',a(2),a(3),6,'eip155:56/erc1155:'+a(902)+'/9');multi.token_id='9';multi.amount='42';multi.transfer_type='erc1155';edges.push(multi);
-  await insert('address_relationships',edges);
-  await insert('address_relationships',[{...edge('uncommitted',a(3),a(99),3),block_state_revision:2}]);
-  await insert('transactions',[{network_id:'eip155:56',tx_hash:hash(1003),block_hash:hash(3),block_number:3,
-    block_state_revision:1,block_timestamp_unix_ms:timestamp+3000,from_address:a(3),to_address:a(4),
-    status:1,fee_paid:'21000000000000',input_data:'0x'}]);
-  await insert('token_metadata_discoveries',[{discovery_id:'token-discovery',network_id:'eip155:56',token_address:a(900),
-    standard_hint:'erc20',discovered_block:4,block_hash:hash(4),block_state_revision:1,tx_hash:hash(1004),
-    evidence_id:'token',created_at_unix_ms:Date.now()}]);
-  await insert('semantic_aml_events',[{event_id:'bridge-fixture',network_id:'eip155:56',block_number:4,
-    block_hash:hash(4),block_state_revision:1,block_timestamp_unix_ms:timestamp+4000,tx_hash:hash(1004),
-    subject_address:a(3),event_type:'bridge_transfer',protocol:'fixture-bridge',remote_network_id:'eip155:1',
-    remote_receiver:a(40),bridge_message_id:hash(40),bridge_direction:'outgoing',confidence:1,
-    detector:'fixture',detector_version:'1',evidence_refs:['fixture:log'],evidence_json:'{}'}]);
+  const facts={aml_transactions:[],aml_address_relationships:[],aml_evm_logs:[],aml_raw_transactions:[],aml_metadata_discoveries:[],aml_semantic_aml_events:[]};
+  const blocks=[];
+  const topic=address=>word(BigInt(address));
+  const transferTopic='0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  for(let block=1;block<=11;block++){
+    const head={network_id:'eip155:56',block_number:block,block_hash:hash(block),block_timestamp_unix_ms:timestamp+block*1000,
+      revision:1,commit_id:'browser-fixture-'+block,created_at_unix_ms:Date.now()};
+    const scoped=edges.filter(e=>e.block_number===block);let logIndex=0;
+    for(const [index,e] of scoped.entries()){
+      const txHash=hash(1000+block*10+index),isNative=e.asset_id===native;
+      const transaction={hash:txHash,blockHash:hash(block),blockNumber:hex(block),transactionIndex:hex(index),
+        from:e.from_address,to:isNative?e.to_address:e.asset_id.split(':').at(-1).split('/')[0],
+        value:hex(isNative?e.amount:0),input:'0x',nonce:hex(index),gas:'0x5208',gasPrice:'0x3b9aca00'};
+      const logs=[];
+      if(!isNative){
+        const contract=transaction.to;
+        let topics=[transferTopic,topic(e.from_address),topic(e.to_address)],data=word(BigInt(e.amount));
+        if(e.transfer_type==='erc721'){topics.push(word(BigInt(e.token_id)));data='0x';}
+        if(e.transfer_type==='erc1155'){topics=['0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62',topic(e.from_address),topic(e.from_address),topic(e.to_address)];data=word(BigInt(e.token_id))+word(BigInt(e.amount)).slice(2);}
+        logs.push({address:contract,topics,data,blockNumber:hex(block),blockHash:hash(block),transactionHash:txHash,transactionIndex:hex(index),logIndex:hex(logIndex),removed:false});
+        facts.aml_evm_logs.push({...head,tx_hash:txHash,transaction_index:index,log_index:logIndex,address:contract,topics,data:data.slice(2),removed:0,raw_evidence_json:JSON.stringify(logs[0])});
+      }
+      const receipt={transactionHash:txHash,blockHash:hash(block),blockNumber:hex(block),transactionIndex:hex(index),from:e.from_address,to:transaction.to,status:'0x1',logs};
+      facts.aml_transactions.push({...head,tx_hash:txHash,transaction_index:index,from_address:e.from_address,to_address:transaction.to,
+        amount_raw:isNative?e.amount:'0',fee_raw:'21000000000000',asset_id:'native:BNB',decimals:18,status:'success',coinbase:0,input_count:null,output_count:null,
+        raw_evidence_json:JSON.stringify({input_data:'0x',gas_limit:21000,gas_used:21000,transaction_type:0,nonce:index})});
+      facts.aml_raw_transactions.push({...head,tx_hash:txHash,transaction_index:index,source_id:'browser_fixture',payload_json:JSON.stringify(transaction),receipt_json:JSON.stringify(receipt),evidence_refs:['tx:'+txHash]});
+      const stored={...head,relationship_id:e.relationship_id,tx_hash:txHash,transaction_index:index,event_index:isNative?0:logIndex,event_sub_index:0,trace_address:[],
+        from_subject_id:e.from_address,from_subject_type:'address',to_subject_id:e.to_address,to_subject_type:'address',from_address:e.from_address,to_address:e.to_address,
+        asset_id:isNative?'native:BNB':e.asset_id.slice('eip155:56/'.length),token_id:e.token_id||null,amount_raw:e.amount,decimals:isNative?18:null,
+        transfer_type:e.transfer_type,attribution_method:'observed_transfer',confidence:1,prev_tx_hash:null,prev_output_index:null,output_index:null,evidence_refs:['tx:'+txHash],raw_evidence_json:'{"fixture":true}'};
+      facts.aml_address_relationships.push(stored);
+      if(e.relationship_id==='token'){
+        facts.aml_metadata_discoveries.push({...head,discovery_id:'token-discovery',tx_hash:txHash,transaction_index:index,asset_id:'erc20:'+a(900),standard_hint:'erc20',evidence_id:'browser-log-'+block+'-'+logIndex,source_id:'browser_fixture',evidence_refs:['tx:'+txHash],raw_evidence_json:'{"fixture":true}'});
+        const event={protocol_contract:a(900),counterparty_address:a(2),asset_in:'',asset_out:'',remote_receiver:a(40),bridge_message_id:hash(40),bridge_direction:'outgoing',amount_in:'',amount_out:''};
+        facts.aml_semantic_aml_events.push({...head,event_id:'bridge-fixture',tx_hash:txHash,subject_id:a(3),event_type:'bridge_transfer',protocol:'fixture-bridge',detector:'fixture',detector_version:'1',confidence:1,
+          asset_in:null,asset_out:null,amount_in:null,amount_out:null,remote_network_id:'eip155:1',evidence_refs:['tx:'+txHash],evidence_json:'{"fixture":true}',event_index:logIndex,event_sub_index:0,raw_evidence_json:JSON.stringify(event)});
+      }
+      if(!isNative)logIndex++;
+    }
+    const counts=Object.fromEntries(Object.entries(facts).map(([table,rows])=>[table,rows.filter(r=>r.block_number===block).length]));
+    blocks.push({...head,parent_hash:hash(block-1),canonical:1,ingestion_status:'complete',transaction_count:scoped.length,
+      receipt_coverage:1,trace_coverage:0,prevout_coverage:null,source_id:'browser_fixture',expected_counts_json:JSON.stringify(counts),raw_evidence_json:'{"fixture":true}'});
+  }
+  for(const [table,rows] of Object.entries(facts))await insert(table,rows);
+  await insert('aml_ingested_blocks',blocks);
+  await insert('aml_sync_state',[{network_id:'eip155:56',revision:1,initialized:1,start_block:1,last_block_number:11,last_block_hash:hash(11),observed_rpc_height:100,published_at_unix_ms:Date.now()}]);
+  const partial=facts.aml_address_relationships.find(e=>e.from_address===a(3));
+  await insert('aml_address_relationships',[{...partial,relationship_id:'uncommitted',to_subject_id:a(99),to_address:a(99),commit_id:'partial-browser-fixture',revision:2}]);
+
   await run(executable('bsc_token_metadata_worker'),[],{cwd:directory,env,timeout:60000});
   if(dockerApi){
     const runtimeEnv={BSC_CLICKHOUSE_URL:'http://'+name+':8123',BSC_CLICKHOUSE_USER:'bsc_admin',
@@ -160,7 +193,7 @@ try {
     await verifyCentral({root,apiPort,key,address:a(3),source:a(1),target:a(11)});
   }
   if(process.argv.includes('--ingestion')) {
-    await run('cargo',['test','--locked','--offline','--lib','--','--ignored'],{cwd:directory,timeout:300000,
+    await run('cargo',['test','--locked','--offline','--lib','--','--ignored','--test-threads=1'],{cwd:directory,timeout:1200000,
       env:{...env,BSC_TEST_CLICKHOUSE_URL:ch,BSC_TEST_CLICKHOUSE_USER:'bsc_admin',BSC_TEST_CLICKHOUSE_PASSWORD:password}});
     console.log('PASS existing schema/replay/crash/reorg ClickHouse tests');
   }

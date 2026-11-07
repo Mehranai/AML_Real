@@ -42,7 +42,6 @@ pub async fn run(
     stop: impl std::future::Future<Output = ()>,
 ) -> Result<Value> {
     db.check_schema().await?;
-    crate::warehouse::migration_ready(&db).await?;
     let mut worker = Worker::open(db.database(), config)?;
     if let Command::Retry(id) = &command {
         worker.retry(id)?;

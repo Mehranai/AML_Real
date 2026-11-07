@@ -11,7 +11,6 @@ use bitcoin_aml::{
     db::Database,
     failures, fetch, ingestion, repair, resolver,
     rpc::{Rpc, RpcPool},
-    warehouse,
     writer_lock::WriterLock,
 };
 use serde_json::{Value, json};
@@ -265,8 +264,9 @@ fn database(name: &str) -> Database {
             .unwrap_or_else(|_| "http://127.0.0.1:9".into())
             .parse()
             .unwrap(),
-        user: "bitcoin_test".into(),
-        password: "bitcoin-test-only".into(),
+        user: std::env::var("BITCOIN_TEST_CLICKHOUSE_USER").unwrap_or("bitcoin_test".into()),
+        password: std::env::var("BITCOIN_TEST_CLICKHOUSE_PASSWORD")
+            .unwrap_or("bitcoin-test-only".into()),
         database: name.into(),
     })
     .unwrap()
@@ -281,10 +281,6 @@ fn actual_mutating_cli_requires_explicit_shared_lock_and_rejects_another_owner()
     for (binary, args) in [
         (env!("CARGO_BIN_EXE_bitcoin_init_schema"), vec![]),
         (env!("CARGO_BIN_EXE_bitcoin_aml"), vec!["schema"]),
-        (
-            env!("CARGO_BIN_EXE_bitcoin_aml"),
-            vec!["warehouse-backfill", "--max-blocks", "1"],
-        ),
         (env!("CARGO_BIN_EXE_bitcoin_aml"), vec!["once"]),
         (
             env!("CARGO_BIN_EXE_bitcoin_aml"),
@@ -548,13 +544,6 @@ async fn competing_mutating_entrypoints_fail_before_database_or_rpc_access() {
     let _owner = WriterLock::for_database("bitcoin_writer_refusal").unwrap();
     assert!(
         ingestion::run(db.clone(), mock.rpc(), ingest_config(), true)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("ownership")
-    );
-    assert!(
-        warehouse::backfill(&db, 1)
             .await
             .unwrap_err()
             .to_string()

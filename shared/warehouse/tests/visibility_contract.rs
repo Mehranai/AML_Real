@@ -13,6 +13,148 @@ use std::{
 };
 mod support;
 use support::fixture;
+
+#[test]
+fn tron_v6_keeps_v5_frozen_and_does_not_invent_verification() -> Result<()> {
+    let old = aml_warehouse::visibility_contract()?;
+    assert_eq!(
+        old.checksum()?,
+        "8fc65f6db710106cf6a476b2ac9469e0bcf1d4769c80e2326436a166fab6dcdf"
+    );
+    let current = aml_warehouse::current_contract()?;
+    assert_eq!(
+        (current.version, current.tables.len(), current.views.len()),
+        (6, 42, 56)
+    );
+    for before in &old.tables {
+        let after = current
+            .tables
+            .iter()
+            .find(|t| t.name == before.name)
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&before.columns)?,
+            serde_json::to_value(&after.columns[..before.columns.len()])?
+        );
+        if before.name != "aml_tron_contracts" {
+            assert_eq!(serde_json::to_value(before)?, serde_json::to_value(after)?);
+        }
+    }
+    let mut row = fixture("aml_tron_contracts", Network::Tron)?;
+    assert_eq!(row["raw_data_hash_verified"], 0);
+    assert_eq!(row["parameter_fields_verified"], 0);
+    assert!(row["transaction_index"].is_null());
+    row["parameter_fields_verified"] = json!(1);
+    assert!(aml_warehouse::semantics::validate_row(&current, "aml_tron_contracts", &row).is_err());
+    row["raw_data_hash_verified"] = json!(1);
+    assert!(aml_warehouse::semantics::validate_row(&current, "aml_tron_contracts", &row).is_err());
+    row["transaction_index"] = json!(0);
+    row["proto_contract_type"] = json!(1);
+    row["contract_type"] = json!("TransferContract");
+    row["type_url"] = json!("type.googleapis.com/protocol.TransferContract");
+    row["parameter_value_hex"] = json!("abcd");
+    aml_warehouse::semantics::validate_row(&current, "aml_tron_contracts", &row)?;
+    row["proto_contract_type"] = json!(11);
+    assert!(aml_warehouse::semantics::validate_row(&current, "aml_tron_contracts", &row).is_err());
+    let mut logs = fixture("aml_tron_logs", Network::Tron)?;
+    logs["topics"] = json!(["aa"]);
+    assert!(aml_warehouse::semantics::validate_row(&current, "aml_tron_logs", &logs).is_err());
+    let mut internals = fixture("aml_tron_internals", Network::Tron)?;
+    internals["call_value_info_json"] = json!("{}");
+    assert!(
+        aml_warehouse::semantics::validate_row(&current, "aml_tron_internals", &internals).is_err()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires a fresh disposable ClickHouse fixture"]
+async fn interrupted_tron_v6_resumes_and_rejects_applied_drift() -> Result<()> {
+    let db = Http::new()?;
+    let database = "warehouse_tron_v6_resume";
+    let network = Network::Tron;
+    install_v4(&db, database, network).await?;
+    for sql in aml_warehouse::visibility_schema::statements(
+        database,
+        &aml_warehouse::visibility_schema::sql_template()?,
+    )? {
+        db.execute(&sql).await?;
+    }
+    let v5 = aml_warehouse::visibility_contract()?;
+    let mut ledger = fixture("aml_schema_migrations", network)?;
+    ledger["migration_id"] = json!(v5.migration_id);
+    ledger["schema_version"] = json!(5);
+    ledger["checksum"] = json!(v5.checksum()?);
+    ledger["revision"] = json!(5);
+    db.raw(database, "aml_schema_migrations", &ledger).await?;
+    let mut identity = fixture("aml_warehouse_identity", network)?;
+    identity["schema_version"] = json!(5);
+    identity["checksum"] = json!(v5.checksum()?);
+    identity["revision"] = json!(5);
+    db.raw(database, "aml_warehouse_identity", &identity)
+        .await?;
+    struct StopAtValue<'a>(&'a Http);
+    impl Connection for StopAtValue<'_> {
+        async fn execute(&self, sql: &str) -> Result<()> {
+            ensure!(
+                !sql.contains("ADD COLUMN IF NOT EXISTS `parameter_value_hex`"),
+                "injected partial v6 DDL"
+            );
+            self.0.execute(sql).await
+        }
+        async fn query(&self, sql: &str) -> Result<Vec<String>> {
+            self.0.query(sql).await
+        }
+    }
+    assert!(
+        aml_warehouse::initialize(&StopAtValue(&db), database, network)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        db.query(&format!(
+            "SELECT toString(max(schema_version)) FROM {database}.aml_schema_migrations"
+        ))
+        .await?,
+        vec!["5"]
+    );
+    let installed = aml_warehouse::initialize(&db, database, network).await?;
+    assert_eq!(
+        (
+            installed.schema_version,
+            installed.table_count,
+            installed.view_count
+        ),
+        (6, 42, 56)
+    );
+    assert!(
+        !aml_warehouse::initialize(&db, database, network)
+            .await?
+            .newly_applied
+    );
+    let mut forged = fixture("aml_tron_contracts", network)?;
+    forged["parameter_fields_verified"] = json!(1);
+    assert!(
+        db.raw(database, "aml_tron_contracts", &forged)
+            .await
+            .is_err(),
+        "database must reject unsupported proof claims too"
+    );
+    db.execute(&format!("DROP VIEW {database}.aml_tron_logs_canonical"))
+        .await?;
+    assert!(
+        aml_warehouse::validate(&db, database, network)
+            .await
+            .is_err()
+    );
+    assert!(
+        aml_warehouse::initialize(&db, database, network)
+            .await
+            .is_err(),
+        "applied drift must not be silently repaired"
+    );
+    Ok(())
+}
 #[derive(Clone)]
 struct Http {
     client: reqwest::Client,
@@ -21,7 +163,11 @@ struct Http {
 impl Http {
     fn new() -> Result<Self> {
         Ok(Self {
-            client: reqwest::Client::new(),
+            // Schema checks can spend longer than the fixture server's HTTP
+            // keep-alive timeout computing contract checksums between requests.
+            client: reqwest::Client::builder()
+                .pool_max_idle_per_host(0)
+                .build()?,
             url: std::env::var("WAREHOUSE_TEST_URL")?,
         })
     }
@@ -99,8 +245,8 @@ fn snapshots_and_confirmation_depth_are_exact_and_not_finality() -> Result<()> {
         "955e0c5ff2e6bb7000793e66408312f4d0172d026f15f328a9431ee050b568ec"
     );
     let c = aml_warehouse::current_contract()?;
-    assert_eq!((c.version, c.tables.len(), c.views.len()), (5, 39, 53));
-    assert_eq!(c.tables.iter().map(|t| t.columns.len()).sum::<usize>(), 682);
+    assert_eq!((c.version, c.tables.len(), c.views.len()), (6, 42, 56));
+    assert_eq!(c.tables.iter().map(|t| t.columns.len()).sum::<usize>(), 739);
     let sql = aml_warehouse::visibility_schema::sql_template()?;
     assert!(!sql.contains("DROP ") && !sql.contains("TRUNCATE "));
     Ok(())
@@ -279,7 +425,7 @@ async fn upgrade_visibility_reorg_and_derived_invalidation_on_four_networks() ->
                 summary.table_count,
                 summary.view_count
             ),
-            (5, 39, 53)
+            (6, 42, 56)
         );
         assert_eq!(
             db.request(&format!(

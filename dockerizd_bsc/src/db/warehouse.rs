@@ -7,6 +7,7 @@ use serde_json::Value;
 pub struct Warehouse {
     client: reqwest::Client,
     config: ClickHouseConfig,
+    shared: super::Client,
 }
 
 impl Warehouse {
@@ -16,13 +17,29 @@ impl Warehouse {
                 .timeout(std::time::Duration::from_secs(20))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
+            shared: super::database_client(&config),
             config,
         })
     }
 
+    pub(crate) async fn intelligence_snapshot(&self) -> Result<String> {
+        Ok(self.shared.query("SELECT toJSONString(tuple((SELECT max(revision) FROM aml_intelligence_claims),(SELECT max(revision) FROM aml_intelligence_sources),(SELECT max(revision) FROM aml_intelligence_reviews)))").fetch_one::<String>().await?)
+    }
+    pub async fn snapshot(&self) -> Result<aml_warehouse::visibility::Snapshot> {
+        aml_warehouse::visibility::capture(
+            &self.shared,
+            self.config.database(),
+            aml_warehouse::Network::Bsc,
+        )
+        .await
+    }
+    pub async fn unchanged(&self, snapshot: &aml_warehouse::visibility::Snapshot) -> Result<()> {
+        aml_warehouse::visibility::unchanged(&self.shared, self.config.database(), snapshot).await
+    }
     pub async fn rows(&self, sql: &str, params: &[(&str, &str)]) -> Result<Vec<Value>> {
         let mut query = vec![
             ("database".to_owned(), self.config.database().to_owned()),
+            ("readonly".into(), "2".into()),
             ("max_execution_time".into(), "15".into()),
             ("max_memory_usage".into(), "536870912".into()),
             ("max_result_rows".into(), "20000".into()),
@@ -40,7 +57,7 @@ impl Warehouse {
             .header("X-ClickHouse-User", self.config.user())
             .header("X-ClickHouse-Key", self.config.password())
             .query(&query)
-            .body(format!("{sql} FORMAT JSONEachRow"))
+            .body(format!("{} FORMAT JSONEachRow", super::read::expand(sql)))
             .send()
             .await
             .context("warehouse request failed")?;
@@ -69,38 +86,6 @@ impl Warehouse {
     }
 
     pub async fn insert(&self, table: &str, rows: &[Value]) -> Result<()> {
-        ensure!(
-            matches!(
-                table,
-                "intelligence_claims" | "token_metadata" | "token_metadata_jobs"
-            ),
-            "table is not writable by this component"
-        );
-        if rows.is_empty() {
-            return Ok(());
-        }
-        let body = rows
-            .iter()
-            .map(serde_json::to_string)
-            .collect::<Result<Vec<_>, _>>()?
-            .join("\n");
-        let response = self
-            .client
-            .post(self.config.endpoint())
-            .header("X-ClickHouse-User", self.config.user())
-            .header("X-ClickHouse-Key", self.config.password())
-            .query(&[
-                ("database", self.config.database()),
-                ("query", &format!("INSERT INTO {table} FORMAT JSONEachRow")),
-            ])
-            .body(body)
-            .send()
-            .await?;
-        ensure!(
-            response.status().is_success(),
-            "warehouse insert failed: {}",
-            response.text().await?.chars().take(300).collect::<String>()
-        );
-        Ok(())
+        super::records::store(&self.shared, table, rows).await
     }
 }

@@ -6,7 +6,6 @@ WORKDIR /build/dockerizd_bsc
 ENV CARGO_HTTP_MULTIPLEXING=false CARGO_NET_RETRY=10 CARGO_HTTP_TIMEOUT=600
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-COPY sql ./sql
 COPY web ./web
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
@@ -30,6 +29,7 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifi
 COPY --from=builder /out/ /usr/local/bin/
 WORKDIR /app
 ENV RUST_BACKTRACE=1 TZ=UTC
+RUN mkdir -p /var/lock/bsc && chown ${APP_UID}:${APP_GID} /var/lock/bsc
 USER ${APP_UID}:${APP_GID}
 STOPSIGNAL SIGTERM
 CMD ["bsc_schema"]

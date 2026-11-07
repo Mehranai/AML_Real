@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use arz_axum_for_services::config::AppConfig;
+use arz_axum_for_services::db::Client;
 use arz_axum_for_services::tasks::exposure_task::run_all_exposure_scans;
-use clickhouse::Client;
 
 #[tokio::main]
 async fn main() -> Result<()> {

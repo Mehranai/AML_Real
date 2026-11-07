@@ -129,4 +129,4 @@ shared view عمومی `aml_intelligence_claims_active` عوض نشده است؛
 برای کنترل انتشار ناقص review از reader این ماژول استفاده می‌کند. workerهای آینده
 بیت‌کوین باید همین کنترل و snapshot را مصرف کنند.
 
-[نتایج اعتبارسنجی](INTELLIGENCE_VALIDATION.md)، [کارهای باز](../TODO_BITCOIN.md).
+[آزمون‌های جاری](../docs/TESTING.md)، [کارهای باز](../TODO_LIST.md).

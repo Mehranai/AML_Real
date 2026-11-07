@@ -13,9 +13,10 @@ use tokio::{task::JoinSet, time::sleep};
 
 use crate::config::{AppConfig, IngestionConfig, ReceiptFetchMode, TraceMode};
 
-use super::model::{RpcBlock, RpcBlockTrace, RpcReceipt};
+use super::model::{RpcBlock, RpcBlockTrace, RpcReceipt, SourceEvidence};
 
 pub(crate) struct FetchedBlock {
+    pub source: SourceEvidence,
     pub block: RpcBlock,
     pub receipts: Vec<RpcReceipt>,
     pub traces: Option<Vec<RpcBlockTrace>>,
@@ -125,6 +126,7 @@ impl CanonicalRpcClient {
         if value.is_null() {
             return Err(RpcFetchError::BlockUnavailable { block_number });
         }
+        let source_block = value.clone();
         let block: RpcBlock = decode("eth_getBlockByNumber", value)?;
         let receipts = match self.settings.receipt_fetch_mode {
             ReceiptFetchMode::Block => self.fetch_block_receipts(block_number).await?,
@@ -149,16 +151,20 @@ impl CanonicalRpcClient {
             TraceMode::Required => Some(self.fetch_block_traces(block_number).await?),
         };
         Ok(FetchedBlock {
+            source: SourceEvidence {
+                block: source_block,
+                receipts: receipts.clone(),
+                traces: traces.clone(),
+            },
             block,
-            receipts,
-            traces,
+            receipts: decode("eth_getBlockReceipts", json!(receipts))?,
+            traces: traces
+                .map(|v| decode("debug_traceBlockByNumber", json!(v)))
+                .transpose()?,
         })
     }
 
-    async fn fetch_block_traces(
-        &self,
-        block_number: u64,
-    ) -> Result<Vec<RpcBlockTrace>, RpcFetchError> {
+    async fn fetch_block_traces(&self, block_number: u64) -> Result<Vec<Value>, RpcFetchError> {
         let value = self
             .call_value(
                 "debug_traceBlockByNumber",
@@ -178,10 +184,7 @@ impl CanonicalRpcClient {
         decode("debug_traceBlockByNumber", value)
     }
 
-    async fn fetch_block_receipts(
-        &self,
-        block_number: u64,
-    ) -> Result<Vec<RpcReceipt>, RpcFetchError> {
+    async fn fetch_block_receipts(&self, block_number: u64) -> Result<Vec<Value>, RpcFetchError> {
         let value = self
             .call_value(
                 "eth_getBlockReceipts",
@@ -199,7 +202,7 @@ impl CanonicalRpcClient {
     async fn fetch_transaction_receipts(
         &self,
         transactions: &[super::model::RpcTransaction],
-    ) -> Result<Vec<RpcReceipt>, RpcFetchError> {
+    ) -> Result<Vec<Value>, RpcFetchError> {
         let mut receipts = Vec::with_capacity(transactions.len());
         for chunk in transactions.chunks(self.settings.receipt_concurrency) {
             let mut tasks = JoinSet::new();
@@ -215,10 +218,7 @@ impl CanonicalRpcClient {
         Ok(receipts)
     }
 
-    async fn fetch_transaction_receipt(
-        &self,
-        tx_hash: String,
-    ) -> Result<RpcReceipt, RpcFetchError> {
+    async fn fetch_transaction_receipt(&self, tx_hash: String) -> Result<Value, RpcFetchError> {
         let value = self
             .call_value("eth_getTransactionReceipt", json!([tx_hash]))
             .await?;

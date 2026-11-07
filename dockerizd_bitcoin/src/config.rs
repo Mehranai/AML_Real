@@ -32,11 +32,13 @@ pub fn origin(raw: &str) -> Result<reqwest::Url> {
     Ok(url)
 }
 pub fn http(timeout: u64) -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
+    Ok(http_builder(timeout).build()?)
+}
+pub(crate) fn http_builder(timeout: u64) -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
         .timeout(Duration::from_secs(timeout))
         .connect_timeout(Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::none())
-        .build()?)
 }
 
 #[derive(Clone)]

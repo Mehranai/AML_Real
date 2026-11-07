@@ -15,8 +15,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 for tool in docker jq sha256sum; do command -v "$tool" >/dev/null || { echo "Required: $tool" >&2; exit 1; }; done
-images=(aml-whole-gateway:local aml-analytical-node:local tron-aml-service:local ethereum-aml-service:local clickhouse/clickhouse-server:23.8 neo4j:5.26-community)
-files=(aml-whole-gateway_local.tar aml-analytical-node_local.tar tron-aml-service_local.tar ethereum-aml-service_local.tar clickhouse-server_23.8.tar neo4j_5.26-community.tar)
+clickhouse_image=${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:23.8.16.16}
+images=(aml-whole-gateway:local aml-analytical-node:local tron-aml-service:local ethereum-aml-service:local "$clickhouse_image" neo4j:5.26-community)
+files=(aml-whole-gateway_local.tar aml-analytical-node_local.tar tron-aml-service_local.tar ethereum-aml-service_local.tar clickhouse-server_23.8.16.16.tar neo4j_5.26-community.tar)
 if $include_bsc; then images+=(bsc-aml-service:local); files+=(bsc-aml-service_local.tar); fi
 if $include_bitcoin; then images+=(bitcoin-aml-service:local); files+=(bitcoin-aml-service_local.tar); fi
 for image in "${images[@]}"; do docker image inspect "$image" >/dev/null; done

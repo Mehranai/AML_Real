@@ -1,248 +1,175 @@
-use std::collections::{HashMap, VecDeque};
-
+//! Bounded observed directed paths. No allocation or fund-continuity assertion.
+use crate::{
+    db::{Client, now_ms},
+    models::tron::exposure::{AddressExposureRow, ExposurePathEvidence},
+};
 use anyhow::{Result, ensure};
-use chrono::Utc;
-use clickhouse::Client;
+use num_bigint::BigUint;
 use serde::Deserialize;
-
-use crate::models::tron::exposure::AddressExposureRow;
-use crate::services::tron::exposure::scorer::edge_exposure_score;
-
-const MAX_EXPANDED_ADDRESSES: usize = 50_000;
-const MAX_EDGES_PER_ADDRESS: u64 = 2_000;
-
-#[derive(Debug, Deserialize, clickhouse::Row)]
-struct ExposureEdgeRow {
+use std::collections::{HashMap, VecDeque};
+const MAX_EDGES_PER_ADDRESS: usize = 2000;
+#[derive(Deserialize, clickhouse::Row)]
+struct Edge {
+    relationship_id: String,
     to_address: String,
-    token_address: String,
+    asset_id: String,
     tx_hash: String,
     block_number: u64,
+    transaction_index: u32,
     timestamp: u64,
-    amount_share: f64,
+    amount: String,
     service_mediated: u8,
 }
-
-#[derive(Debug)]
-struct ExposureAggregate {
-    hop_distance: u8,
-    exposure_score: f64,
-    path_count: u32,
-    last_tx_hash: String,
-    last_seen_block: u64,
-    amount_share: f64,
-    time_weight: f64,
-    service_mediated: u8,
+struct Step {
+    address: String,
+    score: f64,
+    hops: u8,
+    position: Option<(u64, u32)>,
+    path: ExposurePathEvidence,
 }
-
 pub async fn propagate_exposure(
-    clickhouse: &Client,
-    seed_address: &str,
+    client: &Client,
+    seed: &str,
     max_hops: u8,
-    propagation_run_id: &str,
+    run: &str,
 ) -> Result<Vec<AddressExposureRow>> {
     let max_hops = max_hops.clamp(1, 10);
-    let now_unix_ms = Utc::now().timestamp_millis().max(0) as u64;
-    let mut best_scores = HashMap::<(String, String, u64), f64>::new();
-    let mut queue = VecDeque::<(String, f64, u8, Option<(String, u64)>)>::from([(
-        seed_address.to_string(),
-        1.0,
-        0,
-        None,
-    )]);
-    let mut aggregates = HashMap::<String, ExposureAggregate>::new();
-    let mut expanded = 0usize;
-
-    while let Some((current, current_score, hops, arrival)) = queue.pop_front() {
-        if hops >= max_hops {
+    let now = now_ms();
+    let mut queue = VecDeque::from([Step {
+        address: seed.into(),
+        score: 1.0,
+        hops: 0,
+        position: None,
+        path: ExposurePathEvidence {
+            subjects: vec![seed.into()],
+            ..Default::default()
+        },
+    }]);
+    let mut best = HashMap::<(String, String, u64, u32), f64>::new();
+    let mut aggregates = HashMap::<String, AddressExposureRow>::new();
+    let mut expanded = 0;
+    while let Some(step) = queue.pop_front() {
+        if step.hops >= max_hops {
             continue;
         }
-        ensure!(
-            expanded < MAX_EXPANDED_ADDRESSES,
-            "exposure expansion limit reached; refusing to publish a partial run as complete"
-        );
         expanded += 1;
-
-        for edge in load_outgoing_edges(clickhouse, &current, arrival.as_ref()).await? {
-            if edge.to_address.is_empty()
-                || edge.to_address == current
-                || edge.to_address == seed_address
-            {
+        ensure!(
+            expanded <= 50000,
+            "exposure expansion limit; partial run not published"
+        );
+        let edges = load_edges(client, &step.address).await?;
+        let eligible = edges
+            .iter()
+            .filter(|e| {
+                step.position
+                    .is_none_or(|p| (e.block_number, e.transaction_index) > p)
+                    && (step.path.asset_id.is_empty() || e.asset_id == step.path.asset_id)
+            })
+            .collect::<Vec<_>>();
+        let mut totals = HashMap::<&str, BigUint>::new();
+        for e in &eligible {
+            *totals.entry(&e.asset_id).or_default() += e.amount.parse::<BigUint>()?;
+        }
+        for e in eligible {
+            if e.to_address.is_empty() || step.path.subjects.contains(&e.to_address) {
                 continue;
             }
-
-            let next_hop = hops + 1;
-            let time_weight = time_weight(now_unix_ms, edge.timestamp);
-            let next_score = edge_exposure_score(
-                current_score,
-                edge.amount_share,
-                time_weight,
-                edge.service_mediated == 1,
+            let total = totals[&e.asset_id.as_str()].to_string().parse::<f64>()?;
+            let share = if total > 0.0 {
+                (e.amount.parse::<f64>()? / total).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let weight = time_weight(now, e.timestamp);
+            let score = super::scorer::edge_exposure_score(
+                step.score,
+                share,
+                weight,
+                e.service_mediated == 1,
             );
-            let aggregate =
-                aggregates
-                    .entry(edge.to_address.clone())
-                    .or_insert(ExposureAggregate {
-                        hop_distance: next_hop,
-                        exposure_score: next_score,
-                        path_count: 0,
-                        last_tx_hash: edge.tx_hash.clone(),
-                        last_seen_block: edge.block_number,
-                        amount_share: edge.amount_share,
-                        time_weight,
-                        service_mediated: edge.service_mediated,
-                    });
-
-            aggregate.path_count = aggregate.path_count.saturating_add(1);
-
-            if next_score > aggregate.exposure_score {
-                aggregate.hop_distance = next_hop;
-                aggregate.exposure_score = next_score;
-                aggregate.last_tx_hash = edge.tx_hash.clone();
-                aggregate.last_seen_block = edge.block_number;
-                aggregate.amount_share = edge.amount_share;
-                aggregate.time_weight = time_weight;
-                aggregate.service_mediated = edge.service_mediated;
+            let mut path = step.path.clone();
+            path.subjects.push(e.to_address.clone());
+            path.relationship_ids.push(e.relationship_id.clone());
+            path.tx_hashes.push(e.tx_hash.clone());
+            path.asset_id = e.asset_id.clone();
+            path.amount_raw = e.amount.clone();
+            if path.first_transfer_unix_ms == 0 {
+                path.first_transfer_unix_ms = e.timestamp;
             }
-
+            path.last_transfer_unix_ms = e.timestamp;
+            let candidate = AddressExposureRow {
+                source_address: seed.into(),
+                exposed_address: e.to_address.clone(),
+                hop_distance: step.hops + 1,
+                exposure_score: score,
+                path_count: 0,
+                last_tx_hash: e.tx_hash.clone(),
+                last_seen_block: e.block_number,
+                exposure_type: if e.service_mediated == 1 {
+                    "SERVICE_MEDIATED"
+                } else {
+                    "RECEIVED_FROM_SEED"
+                }
+                .into(),
+                best_path_amount_share: share,
+                best_path_time_weight: weight,
+                service_mediated: e.service_mediated,
+                propagation_run_id: run.into(),
+                best_path: path.clone(),
+            };
+            let row = aggregates
+                .entry(e.to_address.clone())
+                .or_insert_with(|| candidate.clone());
+            let count = row.path_count.saturating_add(1);
+            if score > row.exposure_score {
+                *row = candidate;
+            }
+            row.path_count = count;
             let key = (
-                edge.to_address.clone(),
-                edge.token_address.clone(),
-                edge.block_number,
+                e.to_address.clone(),
+                e.asset_id.clone(),
+                e.block_number,
+                e.transaction_index,
             );
-            let previous_best = best_scores.get(&key).copied().unwrap_or_default();
-            // A service's pooled outgoing funds cannot be attributed to this seed.
-            if may_expand(edge.service_mediated) && next_score > previous_best {
+            if may_expand(e.service_mediated) && score > best.get(&key).copied().unwrap_or(0.0) {
                 ensure!(
-                    best_scores.len() < 100_000 || best_scores.contains_key(&key),
-                    "exposure state limit reached; refusing partial publication"
+                    best.len() < 100000 || best.contains_key(&key),
+                    "exposure state limit; partial run not published"
                 );
-                best_scores.insert(key, next_score);
-                queue.push_back((
-                    edge.to_address,
-                    next_score,
-                    next_hop,
-                    Some((edge.token_address, edge.block_number)),
-                ));
+                best.insert(key, score);
+                queue.push_back(Step {
+                    address: e.to_address.clone(),
+                    score,
+                    hops: step.hops + 1,
+                    position: Some((e.block_number, e.transaction_index)),
+                    path,
+                });
             }
         }
     }
-
-    let mut rows = aggregates
-        .into_iter()
-        .map(|(exposed_address, aggregate)| AddressExposureRow {
-            source_address: seed_address.to_string(),
-            exposed_address,
-            hop_distance: aggregate.hop_distance,
-            exposure_score: aggregate.exposure_score,
-            path_count: aggregate.path_count,
-            last_tx_hash: aggregate.last_tx_hash,
-            last_seen_block: aggregate.last_seen_block,
-            exposure_type: if aggregate.service_mediated == 1 {
-                "SERVICE_MEDIATED".to_string()
-            } else {
-                "DIRECTED_FUND_FLOW".to_string()
-            },
-            best_path_amount_share: aggregate.amount_share,
-            best_path_time_weight: aggregate.time_weight,
-            service_mediated: aggregate.service_mediated,
-            propagation_run_id: propagation_run_id.to_string(),
-        })
-        .collect::<Vec<_>>();
-
-    rows.sort_by(|left, right| {
-        right
-            .exposure_score
-            .partial_cmp(&left.exposure_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| left.hop_distance.cmp(&right.hop_distance))
-            .then_with(|| left.exposed_address.cmp(&right.exposed_address))
+    let mut rows = aggregates.into_values().collect::<Vec<_>>();
+    rows.sort_by(|a, b| {
+        b.exposure_score
+            .total_cmp(&a.exposure_score)
+            .then(a.exposed_address.cmp(&b.exposed_address))
     });
-
     Ok(rows)
 }
-
+async fn load_edges(client: &Client, address: &str) -> Result<Vec<Edge>> {
+    let rows=client.query("SELECT r.relationship_id AS relationship_id,ifNull(r.to_address,'') AS to_address,r.asset_id AS asset_id,r.tx_hash AS tx_hash,r.block_number AS block_number,r.transaction_index AS transaction_index,r.block_timestamp_unix_ms AS timestamp,toString(r.amount_raw) AS amount,toUInt8(ifNull(r.to_address,'') IN (SELECT address FROM exchange_addresses WHERE is_active=1)) AS service_mediated FROM aml_address_relationships_canonical AS r WHERE r.network_id='tron:mainnet' AND r.from_address=? AND r.transfer_type IN ('native_transfer','trc10_transfer','trc20_transfer') AND r.amount_raw>0 ORDER BY r.block_number,r.transaction_index,r.event_index,r.event_sub_index LIMIT ?").bind(address).bind((MAX_EDGES_PER_ADDRESS+1) as u64).fetch_all::<Edge>().await?;
+    ensure!(
+        rows.len() <= MAX_EDGES_PER_ADDRESS,
+        "exposure edge limit; partial run not published"
+    );
+    Ok(rows)
+}
 fn may_expand(service_mediated: u8) -> bool {
     service_mediated == 0
 }
-
-async fn load_outgoing_edges(
-    clickhouse: &Client,
-    address: &str,
-    arrival: Option<&(String, u64)>,
-) -> Result<Vec<ExposureEdgeRow>> {
-    let (has_arrival, asset, after_block) = match arrival {
-        Some((asset, block)) => (1u8, asset.as_str(), *block),
-        None => (0, "", 0),
-    };
-    let mut rows = clickhouse
-        .query(
-            r#"
-            WITH token_totals AS
-            (
-                SELECT
-                    token_address,
-                    sum(toFloat64(amount)) AS total_amount
-                FROM address_relationships_canonical
-                WHERE from_address = ?
-                GROUP BY token_address
-            ),
-            exchange_wallets AS
-            (
-                SELECT address
-                FROM exchange_addresses FINAL
-                WHERE is_active = 1
-            )
-            SELECT
-                ar.to_address AS to_address,
-                ar.token_address AS token_address,
-                ar.tx_hash AS tx_hash,
-                ar.block_number AS block_number,
-                ar.timestamp AS timestamp,
-                if(
-                    totals.total_amount > 0,
-                    least(toFloat64(ar.amount) / totals.total_amount, 1.0),
-                    0.0
-                ) AS amount_share,
-                toUInt8(exchange_wallets.address != '') AS service_mediated
-            FROM address_relationships_canonical AS ar
-            INNER JOIN token_totals AS totals
-                ON totals.token_address = ar.token_address
-            LEFT JOIN exchange_wallets
-                ON exchange_wallets.address = ar.to_address
-            WHERE ar.from_address = ?
-              AND ar.transfer_type IN ('native_transfer', 'trc10_transfer', 'trc20_transfer')
-              AND (? = 0 OR (ar.token_address = ? AND ar.block_number > ?))
-            ORDER BY ar.block_number DESC, ar.tx_hash ASC
-            LIMIT ?
-            "#,
-        )
-        .bind(address)
-        .bind(address)
-        .bind(has_arrival)
-        .bind(asset)
-        .bind(after_block)
-        .bind(MAX_EDGES_PER_ADDRESS + 1)
-        .fetch_all::<ExposureEdgeRow>()
-        .await?;
-    ensure!(
-        rows.len() <= MAX_EDGES_PER_ADDRESS as usize,
-        "exposure edge limit reached; refusing to publish a partial run as complete"
-    );
-    if !rows.is_empty() {
-        // Validate only this bounded batch, not a set containing the entire chain's block numbers.
-        let blocks = rows.iter().map(|row| row.block_number).collect::<Vec<_>>();
-        let complete = clickhouse.query("SELECT block_number FROM ingested_blocks FINAL WHERE chain='tron' AND ingestion_status='COMPLETE' AND block_number IN ?")
-            .bind(blocks).fetch_all::<u64>().await?.into_iter().collect::<std::collections::HashSet<_>>();
-        rows.retain(|row| complete.contains(&row.block_number));
-    }
-    Ok(rows)
-}
-
-fn time_weight(now_unix_ms: u64, event_unix_ms: u64) -> f64 {
-    const HALF_LIFE_MS: f64 = 180.0 * 24.0 * 60.0 * 60.0 * 1_000.0;
-
-    let age_ms = now_unix_ms.saturating_sub(event_unix_ms) as f64;
-    0.5_f64.powf(age_ms / HALF_LIFE_MS).clamp(0.05, 1.0)
+fn time_weight(now: u64, event: u64) -> f64 {
+    0.5_f64
+        .powf(now.saturating_sub(event) as f64 / (180.0 * 24.0 * 60.0 * 60.0 * 1000.0))
+        .clamp(0.05, 1.0)
 }
 
 #[cfg(test)]

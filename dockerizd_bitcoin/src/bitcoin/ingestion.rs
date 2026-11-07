@@ -45,7 +45,7 @@ pub async fn commit(
     warehouse::write_block(
         db,
         old,
-        &warehouse::LegacyBlock {
+        &warehouse::BlockHeader {
             block_height: height,
             block_hash: block["hash"].as_str().unwrap().into(),
             parent_hash: block["previousblockhash"].as_str().unwrap_or("").into(),
@@ -58,7 +58,6 @@ pub async fn commit(
             observed,
             start,
             source_id: "bitcoin_core_rpc",
-            legacy_fence: None,
         },
     )
     .await
@@ -184,7 +183,6 @@ pub(crate) async fn run_owned(
         "invalid ingestion range"
     );
     db.ready().await?;
-    warehouse::migration_ready(&db).await?;
     if forced.is_none() {
         failures::recover_interrupted(&db, policy).await?;
         failures::settle_published(&db, &db.state().await?).await?;

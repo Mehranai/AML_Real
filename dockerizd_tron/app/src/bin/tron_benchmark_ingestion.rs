@@ -2,13 +2,13 @@ use std::env;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
+use arz_axum_for_services::db::Client;
 use arz_axum_for_services::{
     config::AppConfig,
     db::tron_schema::validate_tron_schema,
     services::{loader::LoaderTron, tron::performance::run_historical_benchmark},
     utils::tron_address::normalize_tron_address,
 };
-use clickhouse::Client;
 
 const MAX_BENCHMARK_BLOCKS: u64 = 10_000;
 
@@ -19,7 +19,8 @@ async fn main() -> Result<()> {
     let admin_client = Client::default()
         .with_url(&config.clickhouse_url)
         .with_user(&config.clickhouse_user)
-        .with_password(&config.clickhouse_pass);
+        .with_password(&config.clickhouse_pass)
+        .with_database(&config.clickhouse_db_tron);
 
     validate_tron_schema(&admin_client).await?;
 

@@ -1,10 +1,7 @@
+use crate::db::Client;
 use anyhow::Context;
-use chrono::Utc;
-use clickhouse::Client;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-
-use crate::models::tron::modules::{IngestedBlockRow, IngestionFailureRow};
 
 #[derive(Debug, thiserror::Error)]
 #[error(
@@ -20,12 +17,6 @@ pub struct FinalizedHashConflict {
 struct StoredBlockState {
     block_hash: String,
     ingestion_status: String,
-}
-
-#[derive(Debug, Deserialize, clickhouse::Row)]
-struct StoredFailureState {
-    attempt_count: u32,
-    first_failed_at_unix_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,107 +76,9 @@ pub async fn should_ingest_block(
     ))
 }
 
-pub async fn record_processing_block(
-    clickhouse: &Client,
-    block_number: u64,
-    block_hash: String,
-    parent_hash: String,
-    block_timestamp: u64,
-    transaction_count: u32,
-) -> anyhow::Result<()> {
-    record_block_state(
-        clickhouse,
-        block_number,
-        block_hash,
-        parent_hash,
-        block_timestamp,
-        transaction_count,
-        "PROCESSING",
-        String::new(),
-    )
-    .await
-}
-
-pub async fn record_failed_block(
-    clickhouse: &Client,
-    block_number: u64,
-    block_hash: String,
-    parent_hash: String,
-    block_timestamp: u64,
-    transaction_count: u32,
-    error_message: String,
-) -> anyhow::Result<()> {
-    record_block_state(
-        clickhouse,
-        block_number,
-        block_hash,
-        parent_hash,
-        block_timestamp,
-        transaction_count,
-        "FAILED",
-        truncate_error(&error_message),
-    )
-    .await
-}
-
-pub async fn record_ingested_block(
-    clickhouse: &Client,
-    block_number: u64,
-    block_hash: String,
-    parent_hash: String,
-    block_timestamp: u64,
-    transaction_count: u32,
-) -> anyhow::Result<()> {
-    record_block_state(
-        clickhouse,
-        block_number,
-        block_hash,
-        parent_hash,
-        block_timestamp,
-        transaction_count,
-        "COMPLETE",
-        String::new(),
-    )
-    .await?;
-    resolve_ingestion_failures(clickhouse, block_number).await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn record_block_state(
-    clickhouse: &Client,
-    block_number: u64,
-    block_hash: String,
-    parent_hash: String,
-    block_timestamp: u64,
-    transaction_count: u32,
-    ingestion_status: &str,
-    error_message: String,
-) -> anyhow::Result<()> {
-    let row = IngestedBlockRow {
-        chain: "tron".to_string(),
-        block_number,
-        block_hash,
-        parent_hash,
-        block_timestamp,
-        transaction_count,
-        finality_status: "SOLID".to_string(),
-        ingestion_status: ingestion_status.to_string(),
-        error_message,
-        indexed_at_unix_ms: now_unix_ms(),
-    };
-    let mut insert = clickhouse
-        .insert::<IngestedBlockRow>("ingested_blocks")
-        .await?;
-
-    insert.write(&row).await?;
-    insert.end().await?;
-
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments)]
 pub async fn record_ingestion_failure(
-    clickhouse: &Client,
+    client: &Client,
     block_number: u64,
     block_hash: &str,
     tx_hash: &str,
@@ -194,106 +87,53 @@ pub async fn record_ingestion_failure(
     error_message: &str,
     retryable: bool,
 ) -> anyhow::Result<()> {
-    let failure_id = failure_id(block_number, tx_hash, stage);
-    let existing = clickhouse
-        .query(
-            r#"
-            SELECT attempt_count, first_failed_at_unix_ms
-            FROM ingestion_failures FINAL
-            WHERE chain = 'tron'
-              AND failure_id = ?
-            LIMIT 1
-            "#,
+    let id = failure_id(block_number, tx_hash, stage);
+    let old = client
+        .rows(
+            "aml_ingestion_failures",
+            &format!("failure_id={}", aml_warehouse::publication::literal(&id)),
         )
-        .bind(&failure_id)
-        .fetch_optional::<StoredFailureState>()
-        .await
-        .with_context(|| {
-            format!("failed to load ingestion failure state for block {block_number}")
-        })?;
-    let now = now_unix_ms();
-    let (attempt_count, first_failed_at_unix_ms) = existing.map_or((1, now), |row| {
-        (
-            row.attempt_count.saturating_add(1),
-            row.first_failed_at_unix_ms,
-        )
-    });
-    let row = IngestionFailureRow {
-        failure_id,
-        chain: "tron".to_string(),
-        block_number,
-        block_hash: block_hash.to_string(),
-        tx_hash: tx_hash.to_string(),
-        stage: stage.to_string(),
-        error_class: error_class.to_string(),
-        error_message: truncate_error(error_message),
-        retryable: u8::from(retryable),
-        attempt_count,
-        status: "OPEN".to_string(),
-        first_failed_at_unix_ms,
-        last_failed_at_unix_ms: now,
-        resolved_at_unix_ms: 0,
-    };
-    let mut insert = clickhouse
-        .insert::<IngestionFailureRow>("ingestion_failures")
-        .await?;
-
-    insert.write(&row).await?;
-    insert.end().await?;
-
-    Ok(())
+        .await?
+        .pop();
+    let now = crate::db::now_ms();
+    let hash =
+        |s: &str| aml_warehouse::values::normalize_hash(aml_warehouse::Network::Tron, s).ok();
+    let previous = old.as_ref();
+    let data = serde_json::json!({"failure_id":id,"block_number":block_number,"block_hash":hash(block_hash),"tx_hash":hash(tx_hash),"operation":stage,"status":if retryable{"retry"}else{"dead_letter"},"attempts":previous.and_then(|v|v["attempts"].as_u64()).unwrap_or(0).saturating_add(1).min(u32::MAX as u64),"error_code":error_class,"error_message":truncate_error(error_message),"next_attempt_unix_ms":if retryable{now.saturating_add(1000)}else{0},"retryable":u8::from(retryable),"first_failed_at_unix_ms":previous.and_then(|v|v["first_failed_at_unix_ms"].as_u64()).unwrap_or(now),"last_failed_at_unix_ms":now,"resolved_at_unix_ms":null,"raw_evidence_json":serde_json::json!({"block_hash":block_hash,"tx_hash":tx_hash,"stage":stage}).to_string()});
+    let row = crate::db::row(
+        "aml_ingestion_failures",
+        data,
+        client.revision("aml_ingestion_failures").await?,
+        now,
+    )?;
+    client.insert_rows("aml_ingestion_failures", &[row]).await
 }
-
+/// An empty stage list is reserved for a fully republished block. Header-only
+/// verification must not resolve transaction/receipt or publication failures.
 pub async fn resolve_ingestion_failures(
-    clickhouse: &Client,
+    client: &Client,
     block_number: u64,
+    stages: &[&str],
 ) -> anyhow::Result<()> {
-    let failures = clickhouse
-        .query(
-            r#"
-            SELECT
-                failure_id,
-                chain,
-                block_number,
-                block_hash,
-                tx_hash,
-                stage,
-                error_class,
-                error_message,
-                retryable,
-                attempt_count,
-                status,
-                first_failed_at_unix_ms,
-                last_failed_at_unix_ms,
-                resolved_at_unix_ms
-            FROM ingestion_failures FINAL
-            WHERE chain = 'tron'
-              AND block_number = ?
-              AND status = 'OPEN'
-            "#,
-        )
-        .bind(block_number)
-        .fetch_all::<IngestionFailureRow>()
-        .await
-        .with_context(|| format!("failed to load open failures for block {block_number}"))?;
-
-    if failures.is_empty() {
-        return Ok(());
+    let mut filter = format!("block_number={block_number} AND status!='resolved'");
+    if !stages.is_empty() {
+        filter.push_str(&format!(
+            " AND operation IN ({})",
+            stages
+                .iter()
+                .map(|stage| aml_warehouse::publication::literal(stage))
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
     }
-
-    let resolved_at_unix_ms = now_unix_ms();
-    let mut insert = clickhouse
-        .insert::<IngestionFailureRow>("ingestion_failures")
-        .await?;
-
-    for mut failure in failures {
-        failure.status = "RESOLVED".to_string();
-        failure.resolved_at_unix_ms = resolved_at_unix_ms;
-        insert.write(&failure).await?;
+    let failures = client.rows("aml_ingestion_failures", &filter).await?;
+    for mut row in failures {
+        row["status"] = serde_json::json!("resolved");
+        row["resolved_at_unix_ms"] = serde_json::json!(crate::db::now_ms());
+        row["next_attempt_unix_ms"] = serde_json::json!(0);
+        row["revision"] = serde_json::json!(client.revision("aml_ingestion_failures").await?);
+        client.insert_rows("aml_ingestion_failures", &[row]).await?;
     }
-
-    insert.end().await?;
-
     Ok(())
 }
 
@@ -304,10 +144,6 @@ fn failure_id(block_number: u64, tx_hash: &str, stage: &str) -> String {
 
 fn truncate_error(error: &str) -> String {
     error.chars().take(4096).collect()
-}
-
-fn now_unix_ms() -> u64 {
-    Utc::now().timestamp_millis().max(0) as u64
 }
 
 #[cfg(test)]

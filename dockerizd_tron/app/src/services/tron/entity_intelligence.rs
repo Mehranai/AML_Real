@@ -1,17 +1,14 @@
 use std::sync::Arc;
 
+use crate::db::Client;
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
-use clickhouse::Client;
 use nanoid::nanoid;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::models::tron::exchange::{AddressEntityRow, ExchangeAddressRow};
-use crate::models::tron::exposure::ExposureSeedRow;
 use crate::models::tron::intelligence::{
-    AddressClusterClaimRow, AddressClusterMembershipRow, ClusterVersionRow, EntityLabelClaimRow,
-    IntelligenceReviewRow, IntelligenceSourceRow,
+    AddressClusterClaimRow, EntityLabelClaimRow, IntelligenceReviewRow, IntelligenceSourceRow,
 };
 use crate::utils::tron_address::normalize_tron_address;
 
@@ -108,7 +105,7 @@ pub struct ActiveClusterMembership {
     pub address_role: String,
     pub confidence: f32,
     pub source_claim_id: String,
-    pub cluster_version: u32,
+    pub cluster_version: String,
     pub display_name: String,
 }
 
@@ -154,22 +151,11 @@ pub struct ClusterClaimEvidence {
     pub created_at_unix_ms: u64,
 }
 
-#[derive(Debug, Deserialize, clickhouse::Row)]
-struct CurrentProjectionSource {
-    source: String,
-}
-
-#[derive(Debug, Deserialize, clickhouse::Row)]
-struct ClusterProjectionAnchor {
-    entity_id: String,
-    exchange_name: String,
-    confidence: f32,
-}
-
 pub async fn register_intelligence_source(
     clickhouse: &Client,
     input: IntelligenceSourceInput,
 ) -> Result<IntelligenceSourceRow> {
+    let _lock = crate::db::records::operational_lock(&clickhouse)?;
     validate_non_empty("source_id", &input.source_id)?;
     validate_identifier("source_id", &input.source_id)?;
     validate_non_empty("source_name", &input.source_name)?;
@@ -205,11 +191,7 @@ pub async fn register_intelligence_source(
         created_by: input.created_by,
         created_at_unix_ms: now_unix_ms(),
     };
-    let mut insert = clickhouse
-        .insert::<IntelligenceSourceRow>("intelligence_sources")
-        .await?;
-    insert.write(&row).await?;
-    insert.end().await?;
+    crate::db::records::source(clickhouse, serde_json::to_value(&row)?).await?;
 
     Ok(row)
 }
@@ -218,6 +200,7 @@ pub async fn submit_entity_label(
     clickhouse: &Client,
     input: EntityLabelSubmission,
 ) -> Result<EntityLabelClaimRow> {
+    let _lock = crate::db::records::operational_lock(&clickhouse)?;
     let address = normalize_tron_address(&input.address)
         .ok_or_else(|| anyhow!("invalid TRON address: {}", input.address))?;
     validate_non_empty("entity_name", &input.entity_name)?;
@@ -279,11 +262,7 @@ pub async fn submit_entity_label(
         review_status: PENDING.to_string(),
         created_at_unix_ms: now_unix_ms(),
     };
-    let mut insert = clickhouse
-        .insert::<EntityLabelClaimRow>("entity_labels")
-        .await?;
-    insert.write(&row).await?;
-    insert.end().await?;
+    crate::db::records::claim(clickhouse, serde_json::to_value(&row)?, false).await?;
 
     Ok(row)
 }
@@ -292,6 +271,7 @@ pub async fn submit_cluster_claim(
     clickhouse: &Client,
     mut row: AddressClusterClaimRow,
 ) -> Result<()> {
+    let _lock = crate::db::records::operational_lock(&clickhouse)?;
     row.address = normalize_tron_address(&row.address)
         .ok_or_else(|| anyhow!("invalid TRON address: {}", row.address))?;
     validate_non_empty("cluster_id", &row.cluster_id)?;
@@ -305,11 +285,7 @@ pub async fn submit_cluster_claim(
     row.address_role = normalize_role(&row.address_role)?;
     row.review_status = PENDING.to_string();
 
-    let mut insert = clickhouse
-        .insert::<AddressClusterClaimRow>("address_cluster_claims")
-        .await?;
-    insert.write(&row).await?;
-    insert.end().await?;
+    crate::db::records::claim(clickhouse, serde_json::to_value(&row)?, true).await?;
     Ok(())
 }
 
@@ -317,6 +293,7 @@ pub async fn submit_cluster_claims(
     clickhouse: &Client,
     mut rows: Vec<AddressClusterClaimRow>,
 ) -> Result<usize> {
+    let _lock = crate::db::records::operational_lock(&clickhouse)?;
     if rows.is_empty() {
         return Ok(0);
     }
@@ -344,13 +321,9 @@ pub async fn submit_cluster_claims(
     }
 
     let row_count = rows.len();
-    let mut insert = clickhouse
-        .insert::<AddressClusterClaimRow>("address_cluster_claims")
-        .await?;
     for row in &rows {
-        insert.write(row).await?;
+        crate::db::records::claim(clickhouse, serde_json::to_value(row)?, true).await?;
     }
-    insert.end().await?;
     Ok(row_count)
 }
 
@@ -358,14 +331,20 @@ pub async fn review_intelligence_subject(
     clickhouse: Arc<Client>,
     input: IntelligenceReviewInput,
 ) -> Result<IntelligenceReviewRow> {
+    let _lock = crate::db::records::operational_lock(&clickhouse)?;
     let subject_type = normalize_enum(
         "subject_type",
         &input.subject_type,
         &[ENTITY_LABEL_SUBJECT, CLUSTER_CLAIM_SUBJECT],
     )?;
-    let decision = normalize_enum("decision", &input.decision, &[APPROVED, REJECTED])?;
+    let decision = normalize_enum(
+        "decision",
+        &input.decision,
+        &[APPROVED, REJECTED, "REVOKED"],
+    )?;
     validate_non_empty("subject_id", &input.subject_id)?;
     validate_non_empty("reviewer", &input.reviewer)?;
+    validate_non_empty("reason", &input.reason)?;
 
     let row = IntelligenceReviewRow {
         review_id: format!("tron_review_{}", nanoid!(20)),
@@ -379,19 +358,7 @@ pub async fn review_intelligence_subject(
         created_at_unix_ms: now_unix_ms(),
     };
 
-    match subject_type.as_str() {
-        ENTITY_LABEL_SUBJECT => {
-            let claim = load_entity_claim(&clickhouse, &row.subject_id).await?;
-            insert_review(&clickhouse, &row).await?;
-            project_entity_review(&clickhouse, &claim, &row).await?;
-        }
-        CLUSTER_CLAIM_SUBJECT => {
-            let claim = load_cluster_claim(&clickhouse, &row.subject_id).await?;
-            insert_review(&clickhouse, &row).await?;
-            project_cluster_review(&clickhouse, &claim, &row).await?;
-        }
-        _ => unreachable!(),
-    }
+    crate::db::records::review(&clickhouse, serde_json::to_value(&row)?).await?;
 
     Ok(row)
 }
@@ -400,6 +367,7 @@ pub async fn load_wallet_intelligence(
     clickhouse: Arc<Client>,
     address: &str,
 ) -> Result<WalletIntelligence> {
+    let read_fence = crate::db::client::ReadFence::capture(&clickhouse).await?;
     let active_entity = clickhouse
         .query(
             r#"
@@ -451,7 +419,7 @@ pub async fn load_wallet_intelligence(
             (
                 SELECT
                     cluster_id,
-                    argMax(display_name, version) AS display_name
+                    argMax(display_name, revision) AS display_name
                 FROM cluster_versions FINAL
                 WHERE chain = 'tron'
                 GROUP BY cluster_id
@@ -476,6 +444,7 @@ pub async fn load_wallet_intelligence(
             .filter(|claim| claim.review_status == PENDING)
             .count();
 
+    read_fence.unchanged(&clickhouse).await?;
     Ok(WalletIntelligence {
         address: address.to_string(),
         active_entity,
@@ -507,380 +476,6 @@ async fn require_active_source(clickhouse: &Client, source_id: &str) -> Result<(
         ));
     }
     Ok(())
-}
-
-async fn insert_review(clickhouse: &Client, row: &IntelligenceReviewRow) -> Result<()> {
-    let mut insert = clickhouse
-        .insert::<IntelligenceReviewRow>("intelligence_reviews")
-        .await?;
-    insert.write(row).await?;
-    insert.end().await?;
-    Ok(())
-}
-
-async fn load_entity_claim(clickhouse: &Client, label_id: &str) -> Result<EntityLabelClaimRow> {
-    clickhouse
-        .query(
-            r#"
-            SELECT
-                label_id,
-                chain,
-                address,
-                entity_id,
-                entity_name,
-                entity_type,
-                address_role,
-                confidence,
-                risk_percent,
-                source,
-                source_record_id,
-                supersedes_label_id,
-                submitted_by,
-                case_id,
-                evidence_refs,
-                review_status,
-                created_at_unix_ms
-            FROM entity_labels FINAL
-            WHERE chain = 'tron' AND label_id = ?
-            LIMIT 1
-            "#,
-        )
-        .bind(label_id)
-        .fetch_optional::<EntityLabelClaimRow>()
-        .await?
-        .ok_or_else(|| anyhow!("entity label {label_id:?} does not exist"))
-}
-
-async fn load_cluster_claim(clickhouse: &Client, claim_id: &str) -> Result<AddressClusterClaimRow> {
-    clickhouse
-        .query(
-            r#"
-            SELECT
-                claim_id,
-                chain,
-                address,
-                cluster_id,
-                cluster_type,
-                address_role,
-                claim_method,
-                confidence,
-                source,
-                source_record_id,
-                evidence_tx_hashes,
-                evidence_addresses,
-                evidence_json,
-                supersedes_claim_id,
-                review_status,
-                created_by,
-                created_at_unix_ms
-            FROM address_cluster_claims FINAL
-            WHERE chain = 'tron' AND claim_id = ?
-            LIMIT 1
-            "#,
-        )
-        .bind(claim_id)
-        .fetch_optional::<AddressClusterClaimRow>()
-        .await?
-        .ok_or_else(|| anyhow!("cluster claim {claim_id:?} does not exist"))
-}
-
-async fn project_entity_review(
-    clickhouse: &Client,
-    claim: &EntityLabelClaimRow,
-    review: &IntelligenceReviewRow,
-) -> Result<()> {
-    let approved = review.decision == APPROVED;
-    if approved
-        || projection_matches(
-            clickhouse,
-            "address_entity",
-            &claim.address,
-            &claim.label_id,
-        )
-        .await?
-    {
-        let mut insert = clickhouse
-            .insert::<AddressEntityRow>("address_entity")
-            .await?;
-        insert
-            .write(&AddressEntityRow {
-                address: claim.address.clone(),
-                entity_id: claim.entity_id.clone(),
-                entity_name: claim.entity_name.clone(),
-                entity_type: claim.entity_type.clone(),
-                confidence: claim.confidence,
-                source: claim.label_id.clone(),
-                is_active: u8::from(approved),
-            })
-            .await?;
-        insert.end().await?;
-    }
-
-    if is_exchange_entity_type(&claim.entity_type)
-        && (approved
-            || projection_matches(
-                clickhouse,
-                "exchange_addresses",
-                &claim.address,
-                &format!("entity_label:{}", claim.label_id),
-            )
-            .await?)
-    {
-        // اینجا در clickhouse ذخیره می شود
-        // address:
-        //     TXYZ...
-        //     entity_id:
-        //         tron:centralized_exchange:binance
-        // exchange_name:
-        //     Binance
-        // address_role:
-        //     HOT
-        // confidence:
-        // 0.99
-        // detection_source:
-        //     entity_label:abc...
-        //     is_active:
-        // 1
-        insert_exchange_projection(
-            clickhouse,
-            ExchangeAddressRow {
-                address: claim.address.clone(),
-                entity_id: claim.entity_id.clone(),
-                exchange_name: claim.entity_name.clone(),
-                address_role: claim.address_role.clone(),
-                confidence: claim.confidence,
-                detection_source: format!("entity_label:{}", claim.label_id),
-                first_seen_block: 0,
-                last_seen_block: 0,
-                is_active: u8::from(approved),
-            },
-        )
-        .await?;
-    }
-
-    if claim.risk_percent > 0
-        && (approved || current_exposure_seed_matches(clickhouse, claim).await?)
-    {
-        let mut insert = clickhouse
-            .insert::<ExposureSeedRow>("exposure_seeds")
-            .await?;
-        insert
-            .write(&ExposureSeedRow {
-                address: claim.address.clone(),
-                entity_name: claim.entity_name.clone(),
-                entity_type: claim.entity_type.clone(),
-                risk_level: claim.risk_percent,
-                source: claim.source.clone(),
-                source_label_id: claim.label_id.clone(),
-                is_active: u8::from(approved),
-            })
-            .await?;
-        insert.end().await?;
-    }
-
-    Ok(())
-}
-
-async fn project_cluster_review(
-    clickhouse: &Client,
-    claim: &AddressClusterClaimRow,
-    review: &IntelligenceReviewRow,
-) -> Result<()> {
-    let next_version = clickhouse
-        .query(
-            r#"
-            SELECT toUInt32(ifNull(max(version), 0) + 1)
-            FROM cluster_versions
-            WHERE chain = 'tron' AND cluster_id = ?
-            "#,
-        )
-        .bind(&claim.cluster_id)
-        .fetch_one::<u32>()
-        .await?;
-    let approved = review.decision == APPROVED;
-    let other_active_members = clickhouse
-        .query(
-            r#"
-            SELECT count()
-            FROM address_cluster_memberships FINAL
-            WHERE chain = 'tron'
-              AND cluster_id = ?
-              AND address != ?
-              AND is_active = 1
-            "#,
-        )
-        .bind(&claim.cluster_id)
-        .bind(&claim.address)
-        .fetch_one::<u64>()
-        .await?;
-
-    let membership = AddressClusterMembershipRow {
-        chain: "tron".to_string(),
-        address: claim.address.clone(),
-        cluster_id: claim.cluster_id.clone(),
-        cluster_type: claim.cluster_type.clone(),
-        address_role: claim.address_role.clone(),
-        confidence: claim.confidence,
-        source_claim_id: claim.claim_id.clone(),
-        review_id: review.review_id.clone(),
-        cluster_version: next_version,
-        is_active: u8::from(approved),
-        created_at_unix_ms: review.created_at_unix_ms,
-    };
-    let mut membership_insert = clickhouse
-        .insert::<AddressClusterMembershipRow>("address_cluster_memberships")
-        .await?;
-    membership_insert.write(&membership).await?;
-    membership_insert.end().await?;
-
-    let display_name = cluster_display_name(clickhouse, claim).await?;
-    let version = ClusterVersionRow {
-        chain: "tron".to_string(),
-        cluster_id: claim.cluster_id.clone(),
-        version: next_version,
-        cluster_type: claim.cluster_type.clone(),
-        display_name,
-        change_type: if approved {
-            "MEMBER_APPROVED".to_string()
-        } else {
-            "MEMBER_REJECTED".to_string()
-        },
-        change_reason: review.reason.clone(),
-        source_claim_ids: vec![claim.claim_id.clone()],
-        active_member_count: other_active_members + u64::from(approved),
-        created_by: review.reviewer.clone(),
-        created_at_unix_ms: review.created_at_unix_ms,
-    };
-    let mut version_insert = clickhouse
-        .insert::<ClusterVersionRow>("cluster_versions")
-        .await?;
-    version_insert.write(&version).await?;
-    version_insert.end().await?;
-
-    project_cluster_exchange_address(clickhouse, claim, approved).await
-}
-
-async fn project_cluster_exchange_address(
-    clickhouse: &Client,
-    claim: &AddressClusterClaimRow,
-    approved: bool,
-) -> Result<()> {
-    let detection_source = format!("cluster_claim:{}", claim.claim_id);
-    if !approved
-        && !projection_matches(
-            clickhouse,
-            "exchange_addresses",
-            &claim.address,
-            &detection_source,
-        )
-        .await?
-    {
-        return Ok(());
-    }
-
-    let anchor = load_cluster_projection_anchor(clickhouse, &claim.evidence_addresses).await?;
-    let Some(anchor) = anchor else {
-        return Ok(());
-    };
-    insert_exchange_projection(
-        clickhouse,
-        ExchangeAddressRow {
-            address: claim.address.clone(),
-            entity_id: anchor.entity_id,
-            exchange_name: anchor.exchange_name,
-            address_role: claim.address_role.clone(),
-            confidence: claim.confidence.min(anchor.confidence),
-            detection_source,
-            first_seen_block: 0,
-            last_seen_block: 0,
-            is_active: u8::from(approved),
-        },
-    )
-    .await
-}
-
-async fn insert_exchange_projection(clickhouse: &Client, row: ExchangeAddressRow) -> Result<()> {
-    let mut insert = clickhouse
-        .insert::<ExchangeAddressRow>("exchange_addresses")
-        .await?;
-    insert.write(&row).await?;
-    insert.end().await?;
-    Ok(())
-}
-
-async fn projection_matches(
-    clickhouse: &Client,
-    table: &str,
-    address: &str,
-    expected_source: &str,
-) -> Result<bool> {
-    let source_column = match table {
-        "address_entity" => "source",
-        "exchange_addresses" => "detection_source",
-        _ => return Err(anyhow!("unsupported projection table {table}")),
-    };
-    let sql =
-        format!("SELECT {source_column} AS source FROM {table} FINAL WHERE address = ? LIMIT 1");
-    let current = clickhouse
-        .query(&sql)
-        .bind(address)
-        .fetch_optional::<CurrentProjectionSource>()
-        .await?;
-    Ok(current.is_some_and(|row| row.source == expected_source))
-}
-
-async fn current_exposure_seed_matches(
-    clickhouse: &Client,
-    claim: &EntityLabelClaimRow,
-) -> Result<bool> {
-    let source_label_id = clickhouse
-        .query(
-            r#"
-            SELECT source_label_id
-            FROM exposure_seeds FINAL
-            WHERE address = ?
-            LIMIT 1
-            "#,
-        )
-        .bind(&claim.address)
-        .fetch_optional::<String>()
-        .await?;
-    Ok(source_label_id.as_deref() == Some(claim.label_id.as_str()))
-}
-
-async fn load_cluster_projection_anchor(
-    clickhouse: &Client,
-    evidence_addresses: &[String],
-) -> Result<Option<ClusterProjectionAnchor>> {
-    if evidence_addresses.is_empty() {
-        return Ok(None);
-    }
-    clickhouse
-        .query(
-            r#"
-            SELECT entity_id, exchange_name, confidence
-            FROM exchange_addresses FINAL
-            WHERE address IN ? AND is_active = 1
-            ORDER BY confidence DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(evidence_addresses)
-        .fetch_optional::<ClusterProjectionAnchor>()
-        .await
-        .map_err(Into::into)
-}
-
-async fn cluster_display_name(
-    clickhouse: &Client,
-    claim: &AddressClusterClaimRow,
-) -> Result<String> {
-    Ok(
-        load_cluster_projection_anchor(clickhouse, &claim.evidence_addresses)
-            .await?
-            .map(|anchor| format!("{} {} cluster", anchor.exchange_name, claim.address_role))
-            .unwrap_or_else(|| claim.cluster_id.clone()),
-    )
 }
 
 async fn load_entity_claim_evidence(
@@ -1047,13 +642,6 @@ fn slug(value: &str) -> String {
         }
     }
     result.trim_matches('_').to_string()
-}
-
-fn is_exchange_entity_type(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "exchange" | "centralized_exchange" | "dex" | "custodial_exchange"
-    )
 }
 
 fn now_unix_ms() -> u64 {

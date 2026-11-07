@@ -1,18 +1,6 @@
-use clickhouse::Row;
 use serde::Serialize;
 
-#[derive(Debug, Clone, Row, Serialize)]
-pub struct ExposureSeedRow {
-    pub address: String,
-    pub entity_name: String,
-    pub entity_type: String,
-    pub risk_level: u8,
-    pub source: String,
-    pub source_label_id: String,
-    pub is_active: u8,
-}
-
-#[derive(Debug, Clone, Row, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AddressExposureRow {
     pub source_address: String,
     pub exposed_address: String,
@@ -26,4 +14,16 @@ pub struct AddressExposureRow {
     pub best_path_time_weight: f64,
     pub service_mediated: u8,
     pub propagation_run_id: String,
+    pub best_path: ExposurePathEvidence,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ExposurePathEvidence {
+    pub subjects: Vec<String>,
+    pub relationship_ids: Vec<String>,
+    pub tx_hashes: Vec<String>,
+    pub asset_id: String,
+    pub amount_raw: String,
+    pub first_transfer_unix_ms: u64,
+    pub last_transfer_unix_ms: u64,
 }

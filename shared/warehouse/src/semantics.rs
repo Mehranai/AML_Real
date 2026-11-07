@@ -200,6 +200,9 @@ fn expression(rule: &Rule) -> Result<String> {
         ),
         "json" => format!("isValidJSON({c})"),
         "hex_bytes" => format!("match({c},'^(?:[0-9a-f]{{2}})*$')"),
+        "hex_topics" => format!("arrayAll(x -> match(x,'^[0-9a-f]{{64}}$'), {c})"),
+        "json_array" => format!("isValidJSON({c}) AND JSONType({c})='Array'"),
+        "tron_contract_proof" => "(raw_data_hash_verified=0 OR (isNotNull(transaction_index) AND isNotNull(proto_contract_type) AND isNotNull(type_url) AND isNotNull(parameter_value_hex) AND endsWith(type_url,concat('/protocol.',contract_type)))) AND (parameter_fields_verified=0 OR (raw_data_hash_verified=1 AND proto_contract_type IN (1,2,31)))".into(),
         "evidence" => evidence_expression(&c),
         "review_actor" => format!("review_status='pending' OR length({c})>0"),
         "bitcoin_transaction" => format!(
@@ -297,6 +300,12 @@ pub fn validate_row(contract: &Contract, table_name: &str, row: &Value) -> Resul
                 .rules
                 .iter()
                 .filter(|_| contract.version >= 5),
+        )
+        .chain(
+            crate::tron_schema::migration()?
+                .rules
+                .iter()
+                .filter(|_| contract.version >= 6),
         )
         .filter(|r| r.table == table_name)
     {
@@ -452,6 +461,45 @@ fn validate_rule(network: Network, rule: &Rule, value: &Value, row: &Value) -> R
         }
         "json" => {
             serde_json::from_str::<Value>(text()?)?;
+        }
+        "json_array" => ensure!(
+            serde_json::from_str::<Value>(text()?)?.is_array(),
+            "JSON array required"
+        ),
+        "hex_topics" => {
+            for topic in value.as_array().context("topic array required")? {
+                let topic = topic.as_str().context("topic string required")?;
+                ensure!(
+                    topic.len() == 64
+                        && topic
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                    "canonical 32-byte topic required"
+                );
+            }
+        }
+        "tron_contract_proof" => {
+            if row["raw_data_hash_verified"] == 1 {
+                ensure!(
+                    row["transaction_index"].is_u64()
+                        && row["proto_contract_type"].is_u64()
+                        && row["parameter_value_hex"].is_string()
+                        && row["type_url"]
+                            .as_str()
+                            .is_some_and(|url| url.ends_with(&format!(
+                                "/protocol.{}",
+                                row["contract_type"].as_str().unwrap_or("")
+                            ))),
+                    "contract proof context missing"
+                );
+            }
+            if row["parameter_fields_verified"] == 1 {
+                ensure!(
+                    row["raw_data_hash_verified"] == 1
+                        && matches!(row["proto_contract_type"].as_u64(), Some(1 | 2 | 31)),
+                    "parameter proof requires a verified supported contract"
+                );
+            }
         }
         "hex_bytes" => ensure!(
             text()?.len() % 2 == 0

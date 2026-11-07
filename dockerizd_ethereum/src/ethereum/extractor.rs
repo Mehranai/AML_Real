@@ -43,6 +43,11 @@ pub struct ExtractedBlock {
     pub semantic_events: Vec<SemanticAmlEventRow>,
     pub token_discoveries: Vec<TokenMetadataDiscoveryRow>,
     pub token_jobs: Vec<TokenMetadataJobRow>,
+    pub source_block: serde_json::Value,
+    pub source_transactions: Vec<serde_json::Value>,
+    pub source_receipts: Vec<serde_json::Value>,
+    pub source_traces: Vec<serde_json::Value>,
+    pub block_credits: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,7 +144,16 @@ pub fn extract_block(
     let mut semantic_events = Vec::new();
     let mut discovered_tokens = HashMap::<String, TokenStandard>::new();
 
-    for transaction in transactions {
+    for (position, transaction) in transactions.iter().enumerate() {
+        ensure!(
+            transaction.transaction_index == Some(position as u64),
+            "missing or inconsistent original transaction position"
+        );
+        ensure!(
+            transaction.block_hash == Some(block_hash)
+                && transaction.block_number == Some(block_number),
+            "transaction source block identity mismatch"
+        );
         let tx_hash = transaction.tx_hash();
         let receipt = receipts_by_hash
             .remove(&tx_hash)
@@ -152,13 +166,15 @@ pub fn extract_block(
         )?;
 
         let transaction_index = to_u32(
-            transaction.transaction_index.unwrap_or_default(),
+            transaction
+                .transaction_index
+                .context("original transaction index missing")?,
             "transaction index",
         )?;
         let input = transaction.input();
         let input_selector = input.get(..4).map(hex_bytes).unwrap_or_default();
         let status = u8::from(receipt.status());
-        let fee_paid = U256::from(receipt.gas_used) * U256::from(receipt.effective_gas_price);
+        let fee_paid = total_fee_paid(receipt, transaction.transaction_type() == Some(3))?;
         let destination = transaction.to().or(receipt.contract_address);
         let relationship_start = relationship_rows.len();
         let mut observed_movements = Vec::new();
@@ -218,13 +234,13 @@ pub fn extract_block(
             }
         }
 
-        for (receipt_log_index, log) in receipt.logs().iter().enumerate() {
+        for log in receipt.logs() {
             ensure!(
                 !log.removed,
                 "removed log returned for finalized block {block_number}"
             );
             let log_index = to_u32(
-                log.log_index.unwrap_or(receipt_log_index as u64),
+                log.log_index.context("original block log index missing")?,
                 "log index",
             )?;
             log_rows.push(EvmLogRow {
@@ -334,24 +350,11 @@ pub fn extract_block(
         "block {block_number} returned receipts that do not belong to its transactions"
     );
 
-    if let Some(withdrawals) = &block.withdrawals {
-        for withdrawal in withdrawals.iter() {
-            let withdrawal_index = to_u32(withdrawal.index, "withdrawal index")?;
-            relationship_rows.push(relationship_row(CanonicalTransfer::new(
-                network.clone(),
-                block_hash,
-                block_number,
-                block_timestamp_unix_ms,
-                TransferOrigin::validator_withdrawal(withdrawal_index),
-                AddressId::parse_evm(network.clone(), &format!("{:#x}", Address::ZERO))?,
-                AddressId::parse_evm(network.clone(), &format!("{:#x}", withdrawal.address))?,
-                AssetId::native_eth(network.clone()),
-                None,
-                withdrawal.amount_wei(),
-                TransferKind::ValidatorWithdrawal,
-            )?));
-        }
-    }
+    let block_credits=block.withdrawals.as_ref().into_iter().flatten().map(|w|serde_json::json!({
+        "withdrawal_index":w.index.to_string(),"validator_index":w.validator_index.to_string(),
+        "to_address":format!("{:#x}",w.address),"amount_raw":w.amount_wei().to_string(),
+        "asset_id":"native:ETH","event_type":"validator_withdrawal"
+    })).collect();
 
     let token_discoveries = discovered_tokens
         .iter()
@@ -399,6 +402,11 @@ pub fn extract_block(
         semantic_events,
         token_discoveries,
         token_jobs,
+        source_block: serde_json::to_value(block)?,
+        source_transactions: transactions.iter().map(serde_json::to_value).collect::<Result<_,_>>()?,
+        source_receipts: receipts.iter().map(serde_json::to_value).collect::<Result<_,_>>()?,
+        source_traces: traces.unwrap_or(&[]).iter().map(|t| Ok(serde_json::json!({"tx_hash":format!("{:#x}",t.tx_hash),"transaction_index":t.transaction_index,"root":serde_json::to_value(&t.root)?}))).collect::<anyhow::Result<_>>()?,
+        block_credits,
     })
 }
 
@@ -711,6 +719,28 @@ fn hex_bytes(bytes: &[u8]) -> String {
     format!("0x{}", alloy::hex::encode(bytes))
 }
 
+fn total_fee_paid(receipt: &TransactionReceipt, blob_transaction: bool) -> anyhow::Result<U256> {
+    let execution = U256::from(receipt.gas_used)
+        .checked_mul(U256::from(receipt.effective_gas_price))
+        .context("execution fee exceeds UInt256")?;
+    let blob = match (receipt.blob_gas_used, receipt.blob_gas_price) {
+        (Some(used), Some(price)) => {
+            ensure!(
+                !blob_transaction || used > 0,
+                "blob receipt has no blob gas usage"
+            );
+            U256::from(used)
+                .checked_mul(U256::from(price))
+                .context("blob fee exceeds UInt256")?
+        }
+        (None, None) if !blob_transaction => U256::ZERO,
+        _ => anyhow::bail!("blob receipt requires both blobGasUsed and blobGasPrice"),
+    };
+    execution
+        .checked_add(blob)
+        .context("total transaction fee exceeds UInt256")
+}
+
 fn to_u32(value: u64, field: &str) -> anyhow::Result<u32> {
     u32::try_from(value).with_context(|| format!("{field} {value} exceeds UInt32"))
 }
@@ -736,6 +766,32 @@ mod tests {
 
     fn encoded_word(value: U256) -> [u8; 32] {
         value.to_be_bytes()
+    }
+
+    #[test]
+    fn total_fee_includes_blob_charges_even_for_failed_execution() {
+        let mut receipt: alloy::rpc::types::TransactionReceipt =
+            serde_json::from_value(serde_json::json!({
+                "transactionHash":format!("0x{}", "1".repeat(64)),"transactionIndex":"0x0",
+                "blockHash":format!("0x{}", "2".repeat(64)),"blockNumber":"0x1",
+                "from":format!("0x{}", "1".repeat(40)),"to":format!("0x{}", "2".repeat(40)),
+                "contractAddress":null,"type":"0x3","status":"0x0","gasUsed":"0x5208",
+                "cumulativeGasUsed":"0x5208","effectiveGasPrice":"0x2","blobGasUsed":"0x20000",
+                "blobGasPrice":"0x3","logs":[],"logsBloom":format!("0x{}", "0".repeat(512))
+            }))
+            .unwrap();
+        assert_eq!(
+            super::total_fee_paid(&receipt, true).unwrap(),
+            U256::from(435216)
+        );
+        receipt.blob_gas_price = None;
+        assert!(super::total_fee_paid(&receipt, true).is_err());
+        receipt.blob_gas_used = None;
+        assert!(super::total_fee_paid(&receipt, true).is_err());
+        assert_eq!(
+            super::total_fee_paid(&receipt, false).unwrap(),
+            U256::from(42000)
+        );
     }
 
     #[test]

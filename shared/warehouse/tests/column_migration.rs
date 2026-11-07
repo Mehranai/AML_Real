@@ -138,7 +138,7 @@ async fn v1_upgrade_preserves_every_table_and_enforces_identical_column_rules_on
             "v1 requires the schema job, not a silent read upgrade"
         );
         let summary = initialize(&db, &database, network).await?;
-        assert_eq!(summary.schema_version, 5);
+        assert_eq!(summary.schema_version, 6);
         assert!(summary.newly_applied);
         assert!(!initialize(&db, &database, network).await?.newly_applied);
         validate(&db, &database, network).await?;
@@ -168,14 +168,14 @@ async fn v1_upgrade_preserves_every_table_and_enforces_identical_column_rules_on
                 "SELECT toString(count()) FROM {database}.aml_schema_migrations FINAL"
             ))
             .await?,
-            "4"
+            "5"
         );
         assert_eq!(
             db.scalar(&format!(
                 "SELECT toString(schema_version) FROM {database}.aml_warehouse_identity FINAL"
             ))
             .await?,
-            "4"
+            "5"
         );
         let shape=db.query(&format!("SELECT replaceAll(create_table_query,'{database}.','warehouse.') FROM system.tables WHERE database='{database}' AND engine!='View' ORDER BY name")).await?;
         shapes.push(shape);
@@ -403,7 +403,7 @@ async fn v2_core_upgrade_preserves_original_columns_and_unknown_lifecycle_on_fou
             );
             before.push((sql.clone(), db.request(&sql).await?));
         }
-        assert_eq!(initialize(&db, &database, network).await?.schema_version, 5);
+        assert_eq!(initialize(&db, &database, network).await?.schema_version, 6);
         for (sql, rows) in before {
             assert_eq!(db.request(&sql).await?, rows, "v2 source values changed");
         }

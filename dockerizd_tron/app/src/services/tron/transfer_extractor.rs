@@ -26,6 +26,7 @@ pub enum TransferKind {
     Native,
     Trc10,
     Trc20,
+    Trc721,
     Internal,
 }
 
@@ -35,6 +36,7 @@ impl TransferKind {
             Self::Native => "native_transfer",
             Self::Trc10 => "trc10_transfer",
             Self::Trc20 => "trc20_transfer",
+            Self::Trc721 => "trc721_transfer",
             Self::Internal => "internal_transfer",
         }
     }
@@ -48,6 +50,10 @@ pub struct ExtractedTransfer {
     pub to_address: String,
     pub amount: UInt256,
     pub kind: TransferKind,
+    pub token_id: Option<UInt256>,
+    pub source_index: u32,
+    pub source_sub_index: u32,
+    pub source_kind: &'static str,
 }
 
 impl ExtractedTransfer {
@@ -148,47 +154,89 @@ pub fn extract_contract_transfers(tx: &Value, tx_hash: &str) -> Vec<ExtractedTra
 
 pub fn extract_trc20_transfers(receipt: &Value, tx_hash: &str) -> Result<Vec<ExtractedTransfer>> {
     let mut transfers = Vec::new();
-
     for (log_index, log) in receipt["log"].as_array().into_iter().flatten().enumerate() {
-        let Some(topics) = log["topics"].as_array().filter(|topics| topics.len() >= 3) else {
+        let Some(topics) = log["topics"].as_array() else {
             continue;
         };
-        let topic0 = topics[0]
-            .as_str()
+        let topic0 = topics
+            .first()
+            .and_then(Value::as_str)
             .unwrap_or_default()
             .trim_start_matches("0x")
             .trim_start_matches("0X");
-
         if !topic0.eq_ignore_ascii_case(STANDARD_TRANSFER_TOPIC) {
             continue;
         }
-
-        let Some(asset_id) = log["address"].as_str().and_then(normalize_tron_address) else {
-            continue;
+        anyhow::ensure!(
+            matches!(topics.len(), 3 | 4),
+            "malformed token Transfer log topics at {log_index}"
+        );
+        let asset_id = log["address"]
+            .as_str()
+            .and_then(normalize_tron_address)
+            .context("invalid token log emitter")?;
+        let indexed_address = |topic: &Value| -> Result<String> {
+            let raw = topic
+                .as_str()
+                .context("topic string required")?
+                .trim_start_matches("0x")
+                .trim_start_matches("0X");
+            let bytes = hex::decode(raw)?;
+            anyhow::ensure!(
+                bytes.len() == 32 && bytes[..12].iter().all(|b| *b == 0),
+                "invalid indexed token address"
+            );
+            normalize_tron_address(&hex::encode(&bytes[12..])).context("invalid indexed address")
         };
-        let Some(from_address) = topics[1].as_str().and_then(normalize_tron_address) else {
-            continue;
+        let from_address = indexed_address(&topics[1])?;
+        let to_address = indexed_address(&topics[2])?;
+        let nft = topics.len() == 4;
+        let token_id = if nft {
+            Some(parse_uint256_hex(
+                topics[3].as_str().context("NFT token ID missing")?,
+            )?)
+        } else {
+            None
         };
-        let Some(to_address) = topics[2].as_str().and_then(normalize_tron_address) else {
-            continue;
+        let data = log["data"]
+            .as_str()
+            .unwrap_or("")
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
+        anyhow::ensure!(
+            if nft {
+                data.is_empty()
+            } else {
+                data.len() == 64
+            },
+            "malformed Transfer event data at {log_index}"
+        );
+        let amount = if nft {
+            UInt256::from(1u64)
+        } else {
+            parse_uint256_hex(data)
+                .with_context(|| format!("invalid TRC20 amount at log index {log_index}"))?
         };
-        let amount = parse_uint256_hex(log["data"].as_str().unwrap_or("0x0"))
-            .with_context(|| format!("invalid TRC20 amount at log index {log_index}"))?;
-
         if amount == UInt256::ZERO {
             continue;
         }
-
         transfers.push(ExtractedTransfer {
             transfer_id: format!("{tx_hash}:log:{log_index}"),
             asset_id,
             from_address,
             to_address,
             amount,
-            kind: TransferKind::Trc20,
+            kind: if nft {
+                TransferKind::Trc721
+            } else {
+                TransferKind::Trc20
+            },
+            token_id,
+            source_index: log_index.try_into()?,
+            source_sub_index: 0,
+            source_kind: "log",
         });
     }
-
     Ok(transfers)
 }
 
@@ -388,6 +436,13 @@ fn new_transfer(
         from_address,
         to_address,
         amount: UInt256::from(amount),
+        token_id: None,
+        source_index: source
+            .source_index
+            .try_into()
+            .expect("bounded source index"),
+        source_sub_index: source.value_index.try_into().expect("bounded value index"),
+        source_kind: source.name,
         kind,
     }
 }

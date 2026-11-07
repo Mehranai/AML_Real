@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::db::Client;
 use anyhow::{Context, ensure};
-use clickhouse::{Client, Row};
+use clickhouse::Row;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -188,6 +189,8 @@ pub struct WalletInvestigation {
     pub data_coverage: DataCoverage,
     pub neo4j_projection: ProjectionSummary,
     pub risk_engine: RiskAssessmentOutput,
+    pub block_credits: Vec<serde_json::Value>,
+    pub source_snapshot: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,6 +241,7 @@ pub struct PathSearchResult {
     pub expanded_addresses: usize,
     pub truncated: bool,
     pub neo4j_projection: ProjectionSummary,
+    pub source_snapshot: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -247,6 +251,7 @@ pub struct PlatformStatus {
     pub transaction_count: u64,
     pub relationship_count: u64,
     pub semantic_event_count: u64,
+    pub source_snapshot: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, Row)]
@@ -452,6 +457,12 @@ impl InvestigationService {
         requested_limit: Option<u64>,
         project_to_neo4j: bool,
     ) -> anyhow::Result<WalletInvestigation> {
+        let source = aml_warehouse::visibility::capture(
+            &self.clickhouse,
+            self.clickhouse.database(),
+            aml_warehouse::Network::Ethereum,
+        )
+        .await?;
         let limit = requested_limit
             .unwrap_or(DEFAULT_EDGE_LIMIT)
             .clamp(1, MAX_EDGE_LIMIT);
@@ -475,6 +486,9 @@ impl InvestigationService {
             self.load_data_coverage(),
         )?;
         let risk_engine = self.risk_engine.assess(address).await?;
+        let block_credits = self.load_block_credits(address, limit).await?;
+        aml_warehouse::visibility::unchanged(&self.clickhouse, self.clickhouse.database(), &source)
+            .await?;
         let graph = build_wallet_graph(address, edges, limit as usize);
 
         let projection = if project_to_neo4j {
@@ -490,6 +504,8 @@ impl InvestigationService {
         let top_counterparties = counterparties(address, &graph.edges, 25);
 
         Ok(WalletInvestigation {
+            block_credits,
+            source_snapshot: source.value(),
             api_version: "1.0",
             network_id: self.network_id.clone(),
             address: address.to_string(),
@@ -563,6 +579,12 @@ impl InvestigationService {
         project_to_neo4j: bool,
     ) -> anyhow::Result<PathSearchResult> {
         ensure!(source != target, "source and target addresses must differ");
+        let snapshot = aml_warehouse::visibility::capture(
+            &self.clickhouse,
+            self.clickhouse.database(),
+            aml_warehouse::Network::Ethereum,
+        )
+        .await?;
         let max_hops = requested_max_hops.unwrap_or(6).clamp(1, 10);
         let path_limit = requested_limit
             .unwrap_or(DEFAULT_PATH_LIMIT)
@@ -669,7 +691,14 @@ impl InvestigationService {
             ProjectionSummary::default()
         };
 
+        aml_warehouse::visibility::unchanged(
+            &self.clickhouse,
+            self.clickhouse.database(),
+            &snapshot,
+        )
+        .await?;
         Ok(PathSearchResult {
+            source_snapshot: snapshot.value(),
             network_id: self.network_id.clone(),
             source: source.to_string(),
             target: target.to_string(),
@@ -685,15 +714,21 @@ impl InvestigationService {
     }
 
     pub async fn status(&self) -> anyhow::Result<PlatformStatus> {
+        let snapshot = aml_warehouse::visibility::capture(
+            &self.clickhouse,
+            self.clickhouse.database(),
+            aml_warehouse::Network::Ethereum,
+        )
+        .await?;
         let checkpoint = self.load_checkpoint().await?;
         let row = self
             .clickhouse
             .query(
                 r#"
                 SELECT
-                    (SELECT count() FROM transactions_canonical WHERE network_id = ?) AS transaction_count,
-                    (SELECT count() FROM address_relationships_canonical WHERE network_id = ?) AS relationship_count,
-                    (SELECT count() FROM semantic_aml_events_canonical WHERE network_id = ?) AS semantic_event_count
+                    (SELECT count() FROM eth_transactions WHERE network_id = ?) AS transaction_count,
+                    (SELECT count() FROM eth_relationships WHERE network_id = ?) AS relationship_count,
+                    (SELECT count() FROM eth_events WHERE network_id = ?) AS semantic_event_count
                 "#,
             )
             .bind(&self.network_id)
@@ -703,7 +738,14 @@ impl InvestigationService {
             .await
             .context("failed to load Ethereum platform status")?;
 
+        aml_warehouse::visibility::unchanged(
+            &self.clickhouse,
+            self.clickhouse.database(),
+            &snapshot,
+        )
+        .await?;
         Ok(PlatformStatus {
+            source_snapshot: snapshot.value(),
             network_id: self.network_id.clone(),
             last_synced_block: checkpoint,
             transaction_count: row.transaction_count.unwrap_or_default(),
@@ -733,7 +775,7 @@ impl InvestigationService {
                     token_id,
                     toString(amount) AS amount,
                     transfer_type
-                FROM address_relationships_canonical
+                FROM eth_relationships
                 WHERE network_id = ?
                   AND (from_address = ? OR to_address = ?)
                 ORDER BY block_timestamp_unix_ms DESC, block_number DESC, relationship_id
@@ -763,7 +805,7 @@ impl InvestigationService {
                     uniqExact(if(from_address = ?, to_address, from_address)) AS unique_counterparties,
                     min(block_timestamp_unix_ms) AS first_seen_unix_ms,
                     max(block_timestamp_unix_ms) AS last_seen_unix_ms
-                FROM address_relationships_canonical
+                FROM eth_relationships
                 WHERE network_id = ?
                   AND (from_address = ? OR to_address = ?)
                 "#,
@@ -786,7 +828,7 @@ impl InvestigationService {
                     count() AS transaction_count,
                     countIf(status_known = 1 AND status = 0) AS failed_transactions,
                     countIf(input_data != '' AND input_data != '0x') AS contract_calls
-                FROM transactions_canonical
+                FROM eth_transactions
                 WHERE network_id = ?
                   AND (from_address = ? OR to_address = ? OR contract_address = ?)
                 "#,
@@ -810,7 +852,7 @@ impl InvestigationService {
                     countIf(event_type = 'bridge_transfer') AS bridge_events,
                     countIf(startsWith(event_type, 'mixer_')) AS mixer_events,
                     countIf(startsWith(event_type, 'liquidity_')) AS liquidity_events
-                FROM semantic_aml_events_canonical
+                FROM eth_events
                 WHERE network_id = ? AND subject_address = ?
                 "#,
             )
@@ -850,7 +892,7 @@ impl InvestigationService {
                     countIf(to_address = ?) AS inbound_transfers,
                     countIf(from_address = ?) AS outbound_transfers,
                     count() AS transfer_count
-                FROM address_relationships_canonical
+                FROM eth_relationships
                 WHERE network_id = ?
                   AND (from_address = ? OR to_address = ?)
                 GROUP BY asset_id, token_id
@@ -912,7 +954,7 @@ impl InvestigationService {
                     amount_out,
                     confidence,
                     evidence_json
-                FROM semantic_aml_events_canonical
+                FROM eth_events
                 WHERE network_id = ? AND subject_address = ?
                 ORDER BY block_timestamp_unix_ms DESC, event_id
                 LIMIT ?
@@ -970,8 +1012,8 @@ impl InvestigationService {
                     l.source_record_id AS source_record_id,
                     l.review_status AS review_status,
                     l.evidence_refs AS evidence_refs
-                FROM address_entities_active AS e
-                INNER JOIN (SELECT * FROM entity_labels FINAL) AS l
+                FROM eth_entities AS e
+                INNER JOIN (SELECT * FROM eth_labels) AS l
                     ON e.network_id = l.network_id AND e.address = l.address
                     AND e.source_label_id = l.label_id
                 WHERE e.network_id = ? AND e.address = ? AND l.review_status = 'APPROVED'
@@ -1011,7 +1053,7 @@ impl InvestigationService {
             .query(
                 r#"
                 SELECT cluster_id, entity_id, membership_type, confidence
-                FROM address_cluster_memberships_active
+                FROM eth_memberships
                 WHERE network_id = ? AND address = ?
                 ORDER BY confidence DESC, cluster_id
                 LIMIT 25
@@ -1063,14 +1105,14 @@ impl InvestigationService {
                     path_addresses,
                     relationship_ids,
                     tx_hashes
-                FROM address_exposure_best_paths
+                FROM eth_exposure_paths
                 WHERE network_id = ?
                   AND subject_address = ?
                   AND direction != 'SEED'
                   AND run_id = ?
                   AND (seed_address, seed_entity_id) IN
                   (
-                      SELECT address, entity_id FROM address_entities_active
+                      SELECT address, entity_id FROM eth_entities
                       WHERE network_id = ? AND is_exposure_seed = 1 AND risk_level > 0
                   )
                 ORDER BY exposure_score DESC, hop_count
@@ -1121,7 +1163,7 @@ impl InvestigationService {
                 FROM
                 (
                     SELECT *
-                    FROM ingested_blocks
+                    FROM eth_blocks
                     WHERE network_id = ?
                     ORDER BY updated_at DESC
                     LIMIT 1 BY network_id, block_number
@@ -1160,13 +1202,39 @@ impl InvestigationService {
         })
     }
 
+    async fn load_block_credits(
+        &self,
+        address: &str,
+        limit: u64,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        #[derive(Deserialize, Row)]
+        struct Credit {
+            block_number: u64,
+            block_hash: String,
+            block_timestamp_unix_ms: u64,
+            credit: String,
+        }
+        let rows=self.clickhouse.query("SELECT block_number,block_hash,block_timestamp_unix_ms,credit FROM aml_ingested_blocks_canonical ARRAY JOIN JSONExtractArrayRaw(raw_evidence_json,'withdrawals') AS credit WHERE network_id='eip155:1' AND JSONExtractString(credit,'to_address')=? ORDER BY block_number DESC LIMIT ?").bind(address).bind(limit).fetch_all::<Credit>().await?;
+        rows.into_iter()
+            .map(|r| {
+                let mut v: serde_json::Value = serde_json::from_str(&r.credit)?;
+                v["block_number"] = serde_json::json!(r.block_number);
+                v["block_hash"] = serde_json::json!(r.block_hash);
+                v["block_timestamp_unix_ms"] = serde_json::json!(r.block_timestamp_unix_ms);
+                v["source_scope"] = serde_json::json!("block");
+                v["tx_hash"] = serde_json::Value::Null;
+                Ok(v)
+            })
+            .collect()
+    }
+
     async fn load_checkpoint(&self) -> anyhow::Result<u64> {
         let checkpoint = self
             .clickhouse
             .query(
                 r#"
                 SELECT last_synced_block
-                FROM sync_state
+                FROM eth_sync
                 WHERE network_id = ?
                 ORDER BY updated_at DESC
                 LIMIT 1

@@ -153,6 +153,8 @@ pub struct ProtocolContractRow {
 
 #[derive(Debug, Clone, Row, Serialize, Deserialize)]
 pub struct TokenMetadataRow {
+    pub observed_block: u64,
+    pub observed_block_hash: String,
     pub network_id: String,
     pub token_address: String,
     pub token_standard: String,

@@ -69,7 +69,7 @@ pub fn apply(contract: &mut Contract) -> Result<()> {
     contract.validate()
 }
 pub fn sql_template() -> Result<String> {
-    let contract = crate::current_contract()?;
+    let contract = crate::contract::visibility_contract()?;
     let m = migration()?;
     let mut sql = format!(
         "-- Generated visibility upgrade; do not edit.\n-- Migration: {}\n-- Checksum: {}\n\n",

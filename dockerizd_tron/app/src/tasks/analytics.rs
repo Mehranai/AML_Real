@@ -5,9 +5,9 @@ use std::{
     time::Duration,
 };
 
+use crate::db::Client;
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
-use clickhouse::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -232,6 +232,10 @@ async fn cycle(settings: &Settings, client: Arc<Client>, progress: &mut Progress
         block_hash(&client, end).await?.as_ref() == Some(&hash),
         "analysis boundary changed during discovery; cursor not advanced"
     );
+    {
+        let _lock = crate::db::records::operational_lock(&client)?;
+        crate::db::records::publish_clusters(&client).await?;
+    }
     progress.last_cluster_block = Some(end);
     progress.last_cluster_hash = Some(hash);
     atomic_json(&settings.directory.join("progress.json"), progress)?;

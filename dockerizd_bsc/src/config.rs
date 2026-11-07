@@ -412,6 +412,17 @@ pub struct ClickHouseConfig {
 }
 
 impl ClickHouseConfig {
+    #[cfg(test)]
+    pub(crate) fn fixture(endpoint: &str, user: &str, password: &str, database: &str) -> Self {
+        aml_warehouse::contract::identifier(database).unwrap();
+        Self {
+            endpoint: Url::parse(endpoint).unwrap(),
+            user: user.into(),
+            password: password.into(),
+            database: database.into(),
+        }
+    }
+
     pub fn from_env() -> Result<Self, ConfigError> {
         let local = load_env_file(Path::new(".env"))?;
         Self::from_lookup(|key| {

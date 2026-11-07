@@ -113,4 +113,4 @@ The Bitcoin panel shows candidate, confidence, storage source, transaction/outpo
 details and scope. Export saves the central snapshot; reopening restores its
 evidence. This is distinct from exporting a complete downloadable case file.
 
-[Validation](SEMANTICS_VALIDATION.md) · [Remaining work](../TODO_BITCOIN.md)
+[Validation](../docs/TESTING.md) · [Remaining work](../TODO_LIST.md)

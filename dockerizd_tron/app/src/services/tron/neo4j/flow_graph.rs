@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
-use clickhouse::Client;
+use crate::db::Client;
 use serde::Deserialize;
 
 use super::client::Neo4jClient;
@@ -122,7 +122,7 @@ struct ExchangeMetadataRow {
     address_role: String,
     confidence: f32,
     #[serde(rename = "last_seen_block")]
-    _last_seen_block: u64,
+    _last_seen_block: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, clickhouse::Row)]
@@ -148,6 +148,7 @@ pub async fn build_wallet_flow_graph(
     depth: u8,
     per_address_limit: u64,
 ) -> anyhow::Result<WalletFlowGraph> {
+    let read_fence = crate::db::client::ReadFence::capture(&clickhouse).await?;
     if let Some(neo4j) = neo4j {
         neo4j.ensure_schema().await?;
     }
@@ -243,6 +244,7 @@ pub async fn build_wallet_flow_graph(
         },
     };
 
+    read_fence.unchanged(&clickhouse).await?;
     Ok(WalletFlowGraph {
         address: address.to_string(),
         depth,
@@ -265,6 +267,7 @@ pub async fn build_wallet_path_graph(
     per_address_limit: Option<u64>,
     direction: Option<&str>,
 ) -> anyhow::Result<WalletPathGraph> {
+    let read_fence = crate::db::client::ReadFence::capture(&clickhouse).await?;
     if let Some(neo4j) = neo4j {
         neo4j.ensure_schema().await?;
     }
@@ -366,6 +369,7 @@ pub async fn build_wallet_path_graph(
         imported_exchange_interactions: 0,
     };
 
+    read_fence.unchanged(&clickhouse).await?;
     Ok(WalletPathGraph {
         address: source_address.to_string(),
         source_address: source_address.to_string(),

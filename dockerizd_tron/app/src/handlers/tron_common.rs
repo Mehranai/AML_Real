@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use crate::db::Client;
 use axum::{
     Json,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use clickhouse::Client;
 use serde_json::json;
 
 use crate::{

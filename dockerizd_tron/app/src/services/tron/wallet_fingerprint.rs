@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::db::Client;
 use anyhow::Context;
 use chrono::{TimeZone, Timelike, Utc};
-use clickhouse::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::services::tron::observation_window::{normalize_window_days, window_start_unix_ms};
@@ -134,7 +134,7 @@ struct ExchangeIdentityRow {
     confidence: f32,
     source: String,
     #[serde(rename = "last_seen_block")]
-    _last_seen_block: u64,
+    _last_seen_block: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, clickhouse::Row)]
@@ -172,6 +172,7 @@ pub async fn build_wallet_fingerprint(
     top_counterparties: Option<usize>,
     max_events: Option<u64>,
 ) -> anyhow::Result<WalletFingerprint> {
+    let read_fence = crate::db::client::ReadFence::capture(&clickhouse).await?;
     let window_days = normalize_window_days(window_days);
     let top_counterparties = top_counterparties.unwrap_or(25).clamp(1, 100);
     let sampled_event_limit = max_events.unwrap_or(20_000).clamp(100, 250_000);
@@ -224,6 +225,7 @@ pub async fn build_wallet_fingerprint(
         classify_wallet(&identity, &flows, &behavior);
     let behavior_flags = build_behavior_flags(&flows, &behavior);
 
+    read_fence.unchanged(&clickhouse).await?;
     Ok(WalletFingerprint {
         address: address.to_string(),
         window_days,

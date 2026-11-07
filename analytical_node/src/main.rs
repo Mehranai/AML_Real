@@ -770,7 +770,69 @@ fn annotate_source_validity(data: &mut Value, current: Option<&Value>) {
             "limitations":["Historical snapshot: its source is changed or could not be verified. Run a new investigation before using current risk."]});
     }
 }
+fn apply_tron_source_validity(data: &mut Value, current: Option<&Value>) {
+    let valid = |v: &Value| {
+        v["network_id"] == "tron:mainnet"
+            && v["source_snapshot"]["contract"] == "canonical_v1"
+            && v["source_snapshot"]["network_id"] == "tron:mainnet"
+            && v["source_snapshot"]["snapshot_id"]
+                .as_str()
+                .is_some_and(|s| s.len() == 64)
+            && v["operational_snapshot"]["contract"] == "tron_operational_v1"
+            && v["operational_snapshot"]["network_id"] == "tron:mainnet"
+            && v["operational_snapshot"]["snapshot_id"]
+                .as_str()
+                .is_some_and(|s| s.len() == 64)
+    };
+    let status = if !valid(data) || current.is_none_or(|c| !valid(c)) {
+        "unverified"
+    } else if current.unwrap()["source_snapshot"] != data["source_snapshot"]
+        || current.unwrap()["operational_snapshot"] != data["operational_snapshot"]
+    {
+        "stale"
+    } else {
+        "current"
+    };
+    data["source_validity"] = json!({"status":status,"checked_at_unix_ms":now(),"current_risk_usable":status=="current","historical_evidence_preserved":true});
+    if status != "current" && data["risk_engine"].is_object() {
+        if !data["historical_risk_engine"].is_object() {
+            data["historical_risk_engine"] = data["risk_engine"].clone();
+        }
+        data["risk_engine"] = json!({"risk_score":null,"risk_level":"UNKNOWN","signals":[],"policy_version":"source_snapshot_invalid","limitations":["TRON chain or operational evidence changed or cannot be verified; create a new investigation."]});
+    }
+}
 async fn refresh_source_validity(app: &App, data: &mut Value, network: &str) {
+    if network == "tron" {
+        let current = async {
+            let upstream = app
+                .upstreams
+                .get(network)
+                .context("missing TRON upstream")?;
+            let mut response = app
+                .http
+                .get(format!("{upstream}/status"))
+                .header("x-aml-service-key", &app.key)
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await?;
+            ensure!(
+                response.status().is_success(),
+                "TRON source status unavailable"
+            );
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
+                ensure!(
+                    bytes.len() + chunk.len() <= 65536,
+                    "TRON status exceeds bound"
+                );
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok::<Value, anyhow::Error>(serde_json::from_slice(&bytes)?)
+        }
+        .await;
+        apply_tron_source_validity(data, current.as_ref().ok());
+        return;
+    }
     if network != "bitcoin" {
         return;
     }
@@ -966,16 +1028,23 @@ async fn export(
             "Investigation not found or expired",
         ))?;
     let mut result = json!({"investigation":data});
-    if result["investigation"]["network"] == "bitcoin" {
+    let network = result["investigation"]["network"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
+    if matches!(network.as_str(), "bitcoin" | "tron") {
         let mut snapshot = app
             .store
             .read(&id, &owner.hash, now())
             .await
             .map_err(internal)?
             .ok_or(Failure(StatusCode::NOT_FOUND, "Investigation not found"))?;
-        refresh_source_validity(&app, &mut snapshot, "bitcoin").await;
+        refresh_source_validity(&app, &mut snapshot, &network).await;
         result["source_validity"] = snapshot["source_validity"].clone();
         result["risk_engine"] = snapshot["risk_engine"].clone();
+        if snapshot["historical_risk_engine"].is_object() {
+            result["historical_risk_engine"] = snapshot["historical_risk_engine"].clone();
+        }
     }
     Ok(response(result, owner))
 }
@@ -1284,3 +1353,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod tron_operations_tests;

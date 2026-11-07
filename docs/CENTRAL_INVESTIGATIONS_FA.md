@@ -10,10 +10,12 @@ Main VM: Nginx Gateway
     |         |---- one central Neo4j
     |         |---- TRON API ---- TRON ClickHouse
     |         |---- Ethereum API ---- Ethereum ClickHouse
+    |         |---- BSC API ---- BSC ClickHouse
+    |         |---- Bitcoin API ---- Bitcoin ClickHouse
     |
 Browser renders the returned graph
 
-Each chain VM: own node/RPC -> ingestion -> canonical ClickHouse evidence
+Each chain VM: prepared external RPC -> ingestion -> canonical ClickHouse evidence
 ```
 
 فقط VM اصلی Neo4j دارد. شبکه‌ها داده مرجع را در ClickHouse خود نگه می‌دارند و JSON گراف، fingerprint،
@@ -21,8 +23,9 @@ Each chain VM: own node/RPC -> ingestion -> canonical ClickHouse evidence
 سرویس مرکزی قبل از تحویل پاسخ به مرورگر، یک snapshot از خروجی شبکه و گراف آن در Neo4j ثبت می‌کند.
 اگر ذخیره مرکزی شکست بخورد، درخواست موفق اعلام نمی‌شود؛ گراف قبلی در صفحه باقی می‌ماند.
 
-TRON، Ethereum و BSC به این مسیر متصل‌اند. BSC با network_id برابر eip155:56 و upstream مستقل
-روی پورت 6001 کار می‌کند؛ راهنمای آن در dockerizd_bsc/docs/VM_READINESS_FA.md است.
+هر چهار شبکه به این مسیر متصل‌اند. upstreamهای مستقل BSC و Bitcoin روی
+پورت‌های 6001 و 6101 هستند. [راهنمای VM](VM_SETUP_FA.md) و
+[وضعیت واقعی همسان‌سازی](PROJECT_STATUS_FA.md) مرجع استقرار جاری‌اند.
 یکی بودن Neo4j به‌خودی‌خود به معنی تشخیص خودکار ارتباط یک bridge بین دو شبکه نیست.
 برای آن، اثبات تطابق رویداد مبدأ و مقصد و decoder هر bridge همچنان لازم است.
 
@@ -121,7 +124,8 @@ TRON فعلاً exposure دریافتی منتشرشده از seed را به ص�
 ## اجرای Linux
 
 از ریشه مخزن، فایل محیط هر VM را از نمونه خودش بسازید.
-در VMهای شبکه، رمز ClickHouse، RPC، API_BIND_ADDRESS، AML_SERVICE_AUTH_REQUIRED=true و کلید مشترک AML_SERVICE_KEY تنظیم شوند.
+در VMهای شبکه، رمز ClickHouse، RPC، bind و service auth هر adapter طبق
+[VM_SETUP](VM_SETUP_FA.md) و کلید مشترک AML_SERVICE_KEY تنظیم شوند.
 در VM اصلی:
 
 ```dotenv
@@ -129,6 +133,8 @@ AML_BIND_ADDRESS=10.20.0.10
 AML_PORT=8080
 AML_TRON_UPSTREAM=http://10.20.0.21:4001
 AML_ETHEREUM_UPSTREAM=http://10.20.0.22:5001
+AML_BSC_UPSTREAM=http://10.20.0.23:6001
+AML_BITCOIN_UPSTREAM=http://10.20.0.24:6101
 AML_SERVICE_KEY=REPLACE_WITH_AT_LEAST_32_RANDOM_CHARACTERS
 NEO4J_PASSWORD=REPLACE_WITH_A_STRONG_PASSWORD
 AML_GRAPH_TTL_HOURS=24
@@ -138,6 +144,8 @@ AML_GRAPH_TTL_HOURS=24
 # هر دستور روی VM مربوط به خودش
 bash scripts/vm.sh tron up --build
 bash scripts/vm.sh ethereum up --build
+bash scripts/vm.sh bsc up --build
+bash scripts/vm.sh bitcoin up --build
 bash scripts/vm.sh main up --build
 bash scripts/vm.sh main check
 bash scripts/smoke-test.sh --main-url http://10.20.0.10:8080
@@ -148,10 +156,9 @@ bash scripts/smoke-test.sh --main-url http://10.20.0.10:8080
 برای انتقال آفلاین، image جدید aml-analytical-node:local هم باید همراه سایر imageها صادر و وارد شود؛
 scripts/export-images.sh آن را شامل می‌شود. archive قدیمی deployment-artifacts خودکار به‌روز نمی‌شود.
 
-اگر نسخه قبلی را اجرا می‌کردید، کانتینر Neo4j قدیمی هر Chain VM را با نام دقیق آن متوقف کنید.
-با docker ps -a و docker inspect مالکیت Compose آن را بررسی کنید؛ volume قدیمی را تا backup و تصمیم درباره انتقال داده نگه دارید.
-سرویس‌های جدید شبکه Neo4j ایجاد نمی‌کنند. endpointهای قدیمی neo4j/import با HTTP 410 به مسیر مرکزی ارجاع می‌دهند.
-کد و ابزارهای legacy داخل شبکه‌ها برای سازگاری باقی‌اند ولی بخشی از مسیر عملیاتی جدید نیستند.
+این راهنما برای استقرار تازه با database/volume خالی است؛ سرویس‌های شبکه
+Neo4j محلی ایجاد نمی‌کنند. endpointهای قدیمی neo4j/import مسیر عملیاتی
+تحقیق نیستند؛ ورود از API مرکزی انجام می‌شود.
 
 ## دسترسی و نگهداری
 
@@ -178,8 +185,8 @@ Backup جداگانه از volume مرکزی، مانیتورینگ فضای د�
 - gateway/tests/browser.mjs: تست یکپارچه با Neo4j واقعی Docker و شواهد ساختگی مشخص.
 
 ```text
-GET  /api/{tron|ethereum|bsc}/wallet/{address}/investigation
-GET  /api/{tron|ethereum|bsc}/wallet/{source}/paths/{target}
+GET  /api/{tron|ethereum|bsc|bitcoin}/wallet/{address}/investigation
+GET  /api/{tron|ethereum|bsc|bitcoin}/wallet/{source}/paths/{target}
 GET  /api/investigations?before=<timestamp>
 GET  /api/investigations/{id}
 POST /api/investigations/{id}/export

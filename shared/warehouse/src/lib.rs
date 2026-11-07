@@ -1,5 +1,5 @@
 //! The same versioned warehouse contract is embedded by all four adapters.
-//! Legacy objects are deliberately outside this namespace during migration.
+//! Each network keeps its own ClickHouse database and runtime.
 pub mod analytics;
 pub mod analytics_schema;
 pub mod contract;
@@ -9,6 +9,7 @@ pub mod migration;
 pub mod publication;
 pub mod relationships;
 pub mod semantics;
+pub mod tron_schema;
 pub mod types;
 pub mod values;
 pub mod visibility;
@@ -16,7 +17,7 @@ pub mod visibility_schema;
 
 pub use contract::{
     Contract, analytics_contract, baseline_contract, column_contract, core_contract,
-    current_contract,
+    current_contract, visibility_contract,
 };
 pub use migration::{Connection, SchemaSummary, initialize, validate};
 pub use types::{Network, RawAmount, UnixMillis};

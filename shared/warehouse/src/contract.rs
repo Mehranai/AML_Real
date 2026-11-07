@@ -70,32 +70,67 @@ pub fn identifier(value: &str) -> Result<()> {
     );
     Ok(())
 }
+// These definitions are embedded in the binary. Cache only their validated
+// construction; callers receive owned copies and database checks remain live.
+fn cached_contract(
+    cache: &std::sync::OnceLock<Contract>,
+    build: impl FnOnce() -> Result<Contract>,
+) -> Result<Contract> {
+    if let Some(contract) = cache.get() {
+        return Ok(contract.clone());
+    }
+    let contract = build()?;
+    Ok(cache.get_or_init(|| contract).clone())
+}
 pub fn current_contract() -> Result<Contract> {
-    let mut contract = analytics_contract()?;
-    crate::visibility_schema::apply(&mut contract)?;
-    Ok(contract)
+    static CACHE: std::sync::OnceLock<Contract> = std::sync::OnceLock::new();
+    cached_contract(&CACHE, || {
+        let mut contract = visibility_contract()?;
+        crate::tron_schema::apply(&mut contract)?;
+        Ok(contract)
+    })
+}
+pub fn visibility_contract() -> Result<Contract> {
+    static CACHE: std::sync::OnceLock<Contract> = std::sync::OnceLock::new();
+    cached_contract(&CACHE, || {
+        let mut contract = analytics_contract()?;
+        crate::visibility_schema::apply(&mut contract)?;
+        Ok(contract)
+    })
 }
 pub fn analytics_contract() -> Result<Contract> {
-    let mut contract = core_contract()?;
-    crate::analytics_schema::apply(&mut contract)?;
-    Ok(contract)
+    static CACHE: std::sync::OnceLock<Contract> = std::sync::OnceLock::new();
+    cached_contract(&CACHE, || {
+        let mut contract = core_contract()?;
+        crate::analytics_schema::apply(&mut contract)?;
+        Ok(contract)
+    })
 }
 pub fn core_contract() -> Result<Contract> {
-    let mut contract = column_contract()?;
-    crate::core_schema::apply(&mut contract)?;
-    Ok(contract)
+    static CACHE: std::sync::OnceLock<Contract> = std::sync::OnceLock::new();
+    cached_contract(&CACHE, || {
+        let mut contract = column_contract()?;
+        crate::core_schema::apply(&mut contract)?;
+        Ok(contract)
+    })
 }
 pub fn column_contract() -> Result<Contract> {
-    let mut contract = baseline_contract()?;
-    crate::semantics::upgrade_contract(&mut contract)?;
-    contract.validate()?;
-    Ok(contract)
+    static CACHE: std::sync::OnceLock<Contract> = std::sync::OnceLock::new();
+    cached_contract(&CACHE, || {
+        let mut contract = baseline_contract()?;
+        crate::semantics::upgrade_contract(&mut contract)?;
+        contract.validate()?;
+        Ok(contract)
+    })
 }
 pub fn baseline_contract() -> Result<Contract> {
-    let contract: Contract =
-        serde_json::from_str(CONTRACT_JSON).context("invalid embedded warehouse contract")?;
-    contract.validate()?;
-    Ok(contract)
+    static CACHE: std::sync::OnceLock<Contract> = std::sync::OnceLock::new();
+    cached_contract(&CACHE, || {
+        let contract: Contract =
+            serde_json::from_str(CONTRACT_JSON).context("invalid embedded warehouse contract")?;
+        contract.validate()?;
+        Ok(contract)
+    })
 }
 impl Contract {
     /// Reviewable SQL artifact generated from the single immutable definition.

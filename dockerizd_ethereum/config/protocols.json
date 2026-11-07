@@ -1,0 +1,30 @@
+[
+  {
+    "network_id": "eip155:1",
+    "contract_address": "0x99c9fc46f92e8a1c0dec1b1747d010903e884be1",
+    "protocol": "optimism_standard_bridge",
+    "protocol_type": "bridge",
+    "contract_role": "l1_standard_bridge",
+    "remote_network_id": "eip155:10",
+    "remote_contract_address": "0x4200000000000000000000000000000000000010",
+    "decoder": "op_standard_bridge_v1",
+    "source": "https://docs.optimism.io/app-developers/tutorials/bridging/deposit-transactions",
+    "confidence": 1.0,
+    "enabled": 1,
+    "created_at_unix_ms": 1786492800000
+  },
+  {
+    "network_id": "eip155:1",
+    "contract_address": "0x12d66f87a04a9e220cbfe5c899a8d260a3a0d1d3",
+    "protocol": "tornado_cash",
+    "protocol_type": "mixer",
+    "contract_role": "eth_0_1_pool",
+    "remote_network_id": "",
+    "remote_contract_address": "",
+    "decoder": "tornado_cash_v1",
+    "source": "curated_ethereum_protocol_registry",
+    "confidence": 1.0,
+    "enabled": 1,
+    "created_at_unix_ms": 1787961600000
+  }
+]

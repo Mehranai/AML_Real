@@ -2,10 +2,10 @@ use std::fs;
 
 use anyhow::{Context, Result, anyhow};
 use arz_axum_for_services::config::AppConfig;
+use arz_axum_for_services::db::Client;
 use arz_axum_for_services::services::tron::entity_intelligence::{
     IntelligenceSourceInput, register_intelligence_source,
 };
-use clickhouse::Client;
 
 #[tokio::main]
 async fn main() -> Result<()> {

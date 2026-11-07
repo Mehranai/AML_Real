@@ -8,6 +8,7 @@ x-ethereum-environment: &ethereum-environment
   ETH_RPC_URL: ${ETH_RPC_URL:?Set ETH_RPC_URL in .env}
   ETH_EXPECTED_CHAIN_ID: ${ETH_EXPECTED_CHAIN_ID:-1}
   ETH_NETWORK_ID: ${ETH_NETWORK_ID:-eip155:1}
+  ETHEREUM_WRITER_LOCK_DIR: /var/lock/ethereum
   ETH_START_BLOCK: ${ETH_START_BLOCK:-0}
   ETH_FINALITY_TAG: ${ETH_FINALITY_TAG:-finalized}
   ETH_POLL_INTERVAL_SECONDS: ${ETH_POLL_INTERVAL_SECONDS:-12}
@@ -59,6 +60,7 @@ x-ethereum-service: &ethereum-service
   cap_drop:
     - ALL
   environment: *ethereum-environment
+  volumes: ["ethereum_writer_lock:/var/lock/ethereum"]
   networks:
     - ethereum-backend
   logging: *json-logging
@@ -66,7 +68,7 @@ x-ethereum-service: &ethereum-service
 
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:23.8
+    image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:23.8.16.16}
     restart: unless-stopped
     ports:
       - "${DATABASE_BIND_ADDRESS:-127.0.0.1}:${CLICKHOUSE_HTTP_PORT:-28123}:8123"
@@ -166,6 +168,8 @@ services:
       retries: 3
       start_period: 20s
 volumes:
+  ethereum_writer_lock:
+    name: aml_ethereum_writer_lock
   clickhouse_data:
 
 

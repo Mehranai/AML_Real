@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use crate::db::Client;
 use anyhow::Context;
 use chrono::Utc;
-use clickhouse::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::services::tron::observation_window::{
@@ -114,6 +114,7 @@ pub async fn build_wallet_activity(
     window_days: Option<u16>,
     semantic_event_limit: Option<u64>,
 ) -> anyhow::Result<WalletActivity> {
+    let read_fence = crate::db::client::ReadFence::capture(&clickhouse).await?;
     let window_days = normalize_window_days(window_days);
     let semantic_event_limit = semantic_event_limit.unwrap_or(100).clamp(1, 500);
     let generated_at_unix_ms = Utc::now().timestamp_millis().max(0) as u64;
@@ -139,6 +140,7 @@ pub async fn build_wallet_activity(
     let mut summary = summarize_trend(&trend);
     summary.semantic_event_count = semantic_event_count;
 
+    read_fence.unchanged(&clickhouse).await?;
     Ok(WalletActivity {
         address: address.to_string(),
         window_days,
