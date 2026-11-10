@@ -1,3 +1,5 @@
+<div dir="rtl" lang="fa">
+
 # ساخت دستی پنج VM و آماده‌سازی استقرار
 
 VMها را خودتان در Proxmox، VMware، VirtualBox یا hypervisor موجود می‌سازید.
@@ -61,6 +63,8 @@ Netplan نام NIC را با `ip -br address` و gateway واقعی را با `i
 
 ۴. SSH با کلید، کاربر sudo، ساعت همگام‌شده و فضای دیسک را آماده کنید:
 
+<div dir="ltr">
+
 ```bash
 sudo apt update
 sudo apt install -y ca-certificates curl git jq openssl apache2-utils
@@ -71,6 +75,8 @@ timedatectl status
 df -h
 ```
 
+</div>
+
 ۵. Docker Engine، Buildx و Compose v2 را طبق
 [راهنمای رسمی Ubuntu در Docker](https://docs.docker.com/engine/install/ubuntu/)
 از مخزن رسمی نصب کنید. استفاده از package نصب‌شدهٔ قدیمی Compose v1 کافی
@@ -78,6 +84,8 @@ df -h
 اگر کاربر عضو گروه `docker` شد، یک بار از SSH خارج و دوباره وارد شوید.
 دستورهای زیر برای Ubuntu 24.04 تازه با مخزن رسمی Docker هستند. عضویت در
 گروه `docker` اختیار مدیریتی روی میزبان می‌دهد. آن را به حساب اپراتور محدود کنید.
+
+<div dir="ltr">
 
 ```bash
 sudo install -d -m 0755 /etc/apt/keyrings
@@ -96,15 +104,21 @@ docker compose version
 docker buildx version
 ```
 
+</div>
+
 ## ۳. دریافت یک نسخهٔ یکسان کد
 
 روی هر پنج VM یک commit/release یکسان از مخزن قرار دهید:
+
+<div dir="ltr">
 
 ```bash
 git clone https://github.com/Mehranai/AML_Real.git "$HOME/AML_Real"
 cd "$HOME/AML_Real"
 git rev-parse HEAD
 ```
+
+</div>
 
 هش کامل commit را از نسخهٔ پذیرفته‌شده بردارید. اگر آن نسخه آخرین commit
 شاخه نیست، روی هر پنج VM با `git checkout --detach COMMIT_SHA` همان نسخه
@@ -113,10 +127,14 @@ git rev-parse HEAD
 فقط env مربوط به role همان VM را از نمونه کپی کنید؛ فایل نمونه را به‌جای
 تنظیمات واقعی استفاده نکنید. برای نمونه روی Ethereum:
 
+<div dir="ltr">
+
 ```bash
 cp dockerizd_ethereum/.env.example dockerizd_ethereum/.env
 chmod 600 dockerizd_ethereum/.env
 ```
+
+</div>
 
 | role | فایل نمونه → فایل خصوصی |
 |---|---|
@@ -190,6 +208,8 @@ Bitcoin به RPC اصلی unpruned و امکان resolve prevout نیاز دار
 
 در `.env` این موارد را وارد کنید:
 
+<div dir="ltr">
+
 ```dotenv
 AML_BIND_ADDRESS=10.20.0.10
 AML_PORT=8080
@@ -201,9 +221,13 @@ AML_BASIC_AUTH_REALM=AML-Restricted
 AML_HTPASSWD_FILE=./gateway/auth/users.htpasswd
 ```
 
+</div>
+
 `AML_SERVICE_KEY` مشترک و `NEO4J_PASSWORD` قوی را هم اضافه کنید؛ مقدارهای
 بالا را در فایل env موجود ویرایش کنید، فایل را با این snippet ناقص جایگزین
 نکنید. حساب پنل را بسازید. رمز به شکل تعاملی پرسیده می‌شود.
+
+<div dir="ltr">
 
 ```bash
 htpasswd -cB gateway/auth/users.htpasswd amladmin
@@ -211,6 +235,8 @@ sudo chown root:101 gateway/auth/users.htpasswd
 sudo chmod 640 gateway/auth/users.htpasswd
 chmod 600 .env
 ```
+
+</div>
 
 تنظیمات Neo4j مرکزی در Compose است. هیچ Neo4j دیگری روی چهار chain VM
 راه‌اندازی نکنید. برای دسترسی کاربران خارج از شبکهٔ خصوصی، TLS و کنترل
@@ -225,11 +251,15 @@ SSH را فقط از شبکهٔ مدیریت و API هر chain را فقط از 
 در backend مبتنی بر iptables می‌توانید helper موجود
 `deployment/vm-firewall.sh` را روی **هر chain VM** نصب کنید. نمونهٔ TRON:
 
+<div dir="ltr">
+
 ```bash
 sudo install -m 0755 deployment/vm-firewall.sh /usr/local/sbin/aml-vm-firewall
 sudo sh -c 'printf "MAIN_IP=10.20.0.10\nAPI_PORT=4001\n" > /etc/aml-vm-firewall.env'
 sudo /usr/local/sbin/aml-vm-firewall
 ```
+
+</div>
 
 روی سه VM دیگر API_PORT را 5001، 6001 و 6101 قرار دهید. این helper فقط chain
 اختصاصی پروژه را در DOCKER-USER مدیریت می‌کند؛ برای ماندگاری آن پس از
@@ -245,6 +275,8 @@ restart Docker/VM یک systemd oneshot با `After=docker.service network-online
 
 نمونهٔ واحد systemd برای backend مبتنی بر iptables. بعد از آزمون اجرای
 دستی helper، آن را روی همان VM شبکه نصب کنید.
+
+<div dir="ltr">
 
 ```ini
 # /etc/systemd/system/aml-vm-firewall.service
@@ -264,11 +296,17 @@ RemainAfterExit=yes
 WantedBy=docker.service
 ```
 
+</div>
+
+<div dir="ltr">
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now aml-vm-firewall.service
 sudo systemctl status aml-vm-firewall.service
 ```
+
+</div>
 
 ## ۷. ترتیب اجرا و تحویل
 
@@ -276,6 +314,8 @@ sudo systemctl status aml-vm-firewall.service
 
 روی هر VM شبکه فقط یکی از نام‌های `tron`، `ethereum`، `bsc` یا `bitcoin`
 را انتخاب کنید. چهار بار روی چهار میزبان اجرا می‌شود.
+
+<div dir="ltr">
 
 ```bash
 cd "$HOME/AML_Real"
@@ -288,6 +328,8 @@ bash scripts/vm.sh "$role" probe
 bash scripts/vm.sh "$role" db --query 'SELECT network_id, schema_version, checksum FROM aml_warehouse_identity FINAL'
 ```
 
+</div>
+
 خروجی صحیح شامل یک هویت شبکه و schema version برابر ۶ است. در نصب
 تازه، API ممکن است سالم و checkpoint هنوز خالی باشد. اگر schema job موفق
 نشده، پیش از شروع worker علت را از `logs` پیدا کنید. probe را برای هر
@@ -295,12 +337,16 @@ bash scripts/vm.sh "$role" db --query 'SELECT network_id, schema_version, checks
 
 ### ۷.۲ شروع دریافت و سنجش پیشرفت
 
+<div dir="ltr">
+
 ```bash
 bash scripts/vm.sh "$role" up
 bash scripts/vm.sh "$role" check-runtime
 bash scripts/vm.sh "$role" db --query 'SELECT network_id, initialized, start_block, last_block_number, observed_rpc_height, revision FROM aml_sync_state_current'
 bash scripts/vm.sh "$role" db --query 'SELECT block_number, status, attempts, error_code FROM aml_ingestion_failures_current ORDER BY last_failed_at_unix_ms DESC LIMIT 10'
 ```
+
+</div>
 
 `check-runtime` را پس از سالم‌شدن کانتینرها اجرا کنید. برای صحت داده،
 چند بار فاصلهٔ head مشاهده‌شده و آخرین بلاک منتشرشده را ثبت کنید و
@@ -314,6 +360,8 @@ bash scripts/vm.sh "$role" db --query 'SELECT block_number, status, attempts, er
 ابتدا از Main، `/ready` هر چهار API را روی IP خصوصی خودش امتحان کنید.
 در صورت استفاده از IP نمونه:
 
+<div dir="ltr">
+
 ```bash
 for origin in http://10.20.0.21:4001 http://10.20.0.22:5001 http://10.20.0.23:6001 http://10.20.0.24:6101; do
   curl --fail --silent --show-error --connect-timeout 5 "$origin/ready"
@@ -325,6 +373,8 @@ curl --fail --silent --show-error http://10.20.0.10:8080/health
 curl --fail --silent --show-error --user amladmin http://10.20.0.10:8080/ready
 ```
 
+</div>
+
 مرورگر را با کاربر Basic Auth باز کنید. در هر شبکه یک آدرس با دادهٔ
 واقعاً منتشرشده انتخاب کنید. تحقیق Wallet و Paths را اجرا کنید،
 شبکه و ارتفاع شاهد را ببینید، Export و سپس بازگشایی را امتحان کنید.
@@ -335,6 +385,8 @@ curl --fail --silent --show-error --user amladmin http://10.20.0.10:8080/ready
 ایجاد اولیهٔ فایل به کار ببرید. وضعیت تحویل webhook فقط در صورت تنظیم
 گیرندهٔ عملیاتی آزموده می‌شود.
 
+<div dir="ltr">
+
 ```bash
 sudo htpasswd -B gateway/auth/users.htpasswd amlreviewer
 sudo chown root:101 gateway/auth/users.htpasswd
@@ -343,7 +395,11 @@ sudo chmod 640 gateway/auth/users.htpasswd
 docker compose --project-name aml-main --env-file .env up -d --no-deps --force-recreate gateway
 ```
 
+</div>
+
 ### ۷.۴ توقف، به‌روزرسانی و معیار تحویل
+
+<div dir="ltr">
 
 ```bash
 bash scripts/vm.sh "$role" pause-ingestion  # API و DB برقرار می‌مانند
@@ -351,6 +407,8 @@ bash scripts/vm.sh "$role" resume           # ادامه از checkpoint فعل�
 bash scripts/vm.sh "$role" logs
 bash scripts/vm.sh "$role" ps
 ```
+
+</div>
 
 برای توقف کامل سرویس‌های یک role، `bash scripts/vm.sh ROLE down` را اجرا
 کنید. volume با این فرمان حفظ می‌شود. برای انتشار بعدی یک commit مشخص
@@ -385,3 +443,5 @@ VMها `scripts/import-images.sh DIRECTORY` را اجرا کنید. بستهٔ i
 TLS و کنترل نقش‌ها، ثبت رویداد عملیاتی، پایش lag و ظرفیت و تأیید بازبین است.
 وضعیت هر مورد در [فهرست پذیرش](../TODO_LIST.md) آمده است.
 [راهنمای استفاده پس از بالا آمدن](USAGE_FA.md)
+
+</div>

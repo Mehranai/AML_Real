@@ -1,3 +1,5 @@
+<div dir="rtl" lang="fa">
+
 # راهنمای پایگاه دادهٔ AML
 
 اگر می‌خواهید بدانید یک تراکنش کجا ثبت شده، از ClickHouse همان شبکه شروع کنید. اگر می‌خواهید تحقیق ذخیره‌شده، هشدار یا پرونده را باز کنید، مرجع Neo4j مرکزی است.
@@ -75,11 +77,17 @@
 
 روی VM همان شبکه، از ریشهٔ مخزن، CLI فقط‌خواندنی پروژه را باز کنید. `bitcoin` را برای شبکهٔ دیگر با `tron`، `ethereum` یا `bsc` جایگزین کنید.
 
+<div dir="ltr">
+
 ```bash
 bash scripts/vm.sh bitcoin db
 ```
 
+</div>
+
 ابتدا هویت و نقطهٔ انتشار را ببینید. فقط وقتی `initialized=1` است، دامنهٔ بلاک منتشرشده را تفسیر کنید.
+
+<div dir="ltr">
 
 ```sql
 SELECT network_id, schema_version, checksum
@@ -90,7 +98,11 @@ SELECT network_id, initialized, start_block, last_block_number,
 FROM aml_sync_state_current;
 ```
 
+</div>
+
 تعریف واقعی ستون‌ها را بررسی کنید. `default_kind` و `default_expression` می‌گویند ClickHouse در DDL برای مقدار غایب چه تعریفی دارد. اعتبار کاربردی هر رکورد را قواعد انتشار و کنترل ورودی تعیین می‌کنند. [مرجع رسمی system.columns](https://clickhouse.com/docs/reference/system-tables/columns)
+
+<div dir="ltr">
 
 ```sql
 SELECT position, name, type, default_kind, default_expression
@@ -100,7 +112,11 @@ WHERE database = currentDatabase()
 ORDER BY position;
 ```
 
+</div>
+
 یک نمونهٔ کوچک از تراکنش و پایه‌های انتقال را بخوانید. روی دیتابیس بزرگ، برای بررسی عملی یک بازهٔ ارتفاع یا هش مشخص هم اضافه کنید.
+
+<div dir="ltr">
 
 ```sql
 SELECT block_number, tx_hash, status, asset_id, toString(amount_raw) AS raw
@@ -114,7 +130,11 @@ FROM aml_address_relationships_canonical
 ORDER BY block_number DESC LIMIT 10;
 ```
 
+</div>
+
 در بیت‌کوین، ردیف ورودی به خروجی قبلی اشاره می‌کند. شناسهٔ دقیق خروجی، جفت هش تراکنش و `vout` است. برای جست‌وجوی یک ورودی خرج‌کننده، هر دو جزء را در شرط بگذارید.
+
+<div dir="ltr">
 
 ```sql
 SELECT tx_hash, output_index AS vout, address, value_sats, script_type
@@ -127,11 +147,15 @@ FROM aml_bitcoin_inputs_canonical
 ORDER BY block_number DESC LIMIT 10;
 ```
 
+</div>
+
 یک تراکنش چندورودی و چندخروجی نشان می‌دهد چه چیزهایی خرج و ایجاد شده‌اند. گراف پروژه آدرس یا اسکریپت را به گره تراکنش وصل می‌کند و مقدار هر پایه را حفظ می‌کند. انتساب یک ورودی مشخص به یک خروجی مشخص از همین گراف نتیجه نمی‌شود.
 
 روی اتریوم و BSC، برای یافتن لاگ یک رویداد، از تراکنش، آدرس قرارداد،
 `log_index` و اولین topic کمک بگیرید. `data` با ABI قرارداد تفسیر
 می‌شود. روی ترون از view جداگانهٔ لاگ و منابع استفاده کنید.
+
+<div dir="ltr">
 
 ```sql
 SELECT block_number, tx_hash, log_index, address, topics[1] AS signature, data
@@ -148,7 +172,11 @@ FROM aml_tron_resources_canonical
 ORDER BY block_number DESC LIMIT 10;
 ```
 
+</div>
+
 برای بررسی خطای دریافت یا نداشتن تحلیل جاری، این viewها نقطهٔ شروع‌اند. جدول ارزیابی ممکن است برای کیف پول موردنظر خالی باشد و نتیجهٔ تحقیق زنده در پاسخ API یا snapshot ذخیره‌شدهٔ Neo4j موجود باشد.
+
+<div dir="ltr">
 
 ```sql
 SELECT block_number, status, attempts, retryable, error_code
@@ -159,6 +187,8 @@ SELECT subject_id, as_of_block, source_revision, risk_level, risk_score
 FROM aml_wallet_risk_assessments_visible
 ORDER BY as_of_block DESC LIMIT 10;
 ```
+
+</div>
 
 ## ۵. مدل Neo4j و معنی propertyها
 
@@ -185,9 +215,15 @@ ORDER BY as_of_block DESC LIMIT 10;
 
 روی Main از داخل کانتینر Neo4j وارد `cypher-shell` شوید و رمز Neo4j را در prompt وارد کنید. دستور زیر نام کاربری را تعیین می‌کند و رمز در خط فرمان قرار نمی‌گیرد. نمونه‌ها فقط خواندنی هستند.
 
+<div dir="ltr">
+
 ```bash
 docker compose --project-name aml-main --env-file .env exec neo4j cypher-shell -u neo4j
 ```
+
+</div>
+
+<div dir="ltr">
 
 ```cypher
 MATCH (i:Investigation)
@@ -202,4 +238,8 @@ RETURN c.id, c.status, e.sequence, e.kind
 ORDER BY e.at_ms DESC LIMIT 10;
 ```
 
+</div>
+
 دسترسی مستقیم DBA به Neo4j در سطح پایگاه است. برای کار روزمره از پنل و API استفاده کنید تا محدودیت مالک تحقیق، واگذاری هشدار و دسترسی بازبین اجرا شود.
+
+</div>
