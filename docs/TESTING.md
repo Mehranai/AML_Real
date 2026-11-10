@@ -54,7 +54,9 @@ checkpoint و پنهان‌بودن facts نیمه‌تمام را کنترل م
 بیت‌کوین نیز از دیتابیس خالی و RPC نمونه شروع می‌شود و restart، prevout،
 graph/path، مقدار دقیق و reorg را بررسی می‌کند؛ به دیتابیس قدیمی نیاز ندارد.
 آن تست حساب `bitcoin_test` با رمز `bitcoin-test-only` و database تازهٔ
-`bitcoin_aml` می‌خواهد و متغیر `BITCOIN_TEST_CLICKHOUSE_URL` را می‌خواند.
+`bitcoin_aml` می‌خواهد. علاوه بر `BITCOIN_TEST_CLICKHOUSE_URL`،
+دایرکتوری موقت و قابل نوشتن `BITCOIN_WRITER_LOCK_DIR` را هم مشخص کنید.
+آزمون برای اسکن و replay از همین دایرکتوری در subprocess استفاده می‌کند.
 برای آن کانتینر تازهٔ جدا بسازید؛ حساب فوق به‌صورت خودکار توسط image تنظیم
 می‌شود و نیازی به CREATE USER در کانتینر آزمون مشترک نیست:
 
@@ -64,6 +66,7 @@ docker run -d --name aml-bitcoin-test -p 127.0.0.1:18142:8123 \
   clickhouse/clickhouse-server:23.8.16.16
 # پس از پاسخ موفق /ping با همان حساب آزمایشی:
 BITCOIN_TEST_CLICKHOUSE_URL=http://127.0.0.1:18142 \
+  BITCOIN_WRITER_LOCK_DIR="$(mktemp -d)" \
   cargo test --manifest-path dockerizd_bitcoin/Cargo.toml --test clickhouse_pipeline \
   -- --ignored --test-threads=1
 docker rm --force --volumes aml-bitcoin-test
@@ -822,6 +825,8 @@ exposure/replay. تست paths ترون نبود network_id را آشکار کر�
 | TRON | `cargo test --locked --manifest-path dockerizd_tron/app/Cargo.toml --test analytics_pipeline -- --ignored --nocapture --test-threads=1` |
 
 نام فایل‌ها `bitcoin.json`، `ethereum.json`، `bsc.json` و `tron.json` است.
+این چهار فایل را از همان commit مرکز بسازید تا نسخه و هش سیاست ریسک،
+به‌خصوص در snapshot بیت‌کوین، با نسخهٔ اجراشده در مرکز یکسان باشد.
 این‌ها خروجی موقت تست‌اند و commit نمی‌شوند. سپس فقط با **Neo4j موقت و خالی**:
 
 ```bash

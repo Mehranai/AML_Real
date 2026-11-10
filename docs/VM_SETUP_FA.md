@@ -76,8 +76,21 @@ df -h
 از مخزن رسمی نصب کنید. استفاده از package نصب‌شدهٔ قدیمی Compose v1 کافی
 نیست؛ Dockerfileها از additional build contexts استفاده می‌کنند.
 اگر کاربر عضو گروه `docker` شد، یک بار از SSH خارج و دوباره وارد شوید.
+دستورهای زیر برای Ubuntu 24.04 تازه با مخزن رسمی Docker هستند. عضویت در
+گروه `docker` اختیار مدیریتی روی میزبان می‌دهد. آن را به حساب اپراتور محدود کنید.
 
 ```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+codename=$( . /etc/os-release; printf '%s' "${UBUNTU_CODENAME:-$VERSION_CODENAME}" )
+printf 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: %s\nComponents: stable\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/docker.asc\n' \
+  "$codename" "$(dpkg --print-architecture)" | sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+# از SSH خارج شوید و دوباره وارد شوید
 docker version
 docker compose version
 docker buildx version
@@ -92,6 +105,10 @@ git clone https://github.com/Mehranai/AML_Real.git "$HOME/AML_Real"
 cd "$HOME/AML_Real"
 git rev-parse HEAD
 ```
+
+هش کامل commit را از نسخهٔ پذیرفته‌شده بردارید. اگر آن نسخه آخرین commit
+شاخه نیست، روی هر پنج VM با `git checkout --detach COMMIT_SHA` همان نسخه
+را checkout کنید و خروجی `git rev-parse HEAD` را مقایسه کنید.
 
 فقط env مربوط به role همان VM را از نمونه کپی کنید؛ فایل نمونه را به‌جای
 تنظیمات واقعی استفاده نکنید. برای نمونه روی Ethereum:
@@ -112,6 +129,10 @@ chmod 600 dockerizd_ethereum/.env
 برای ساخت service key می‌توانید `openssl rand -hex 32` اجرا کنید. همان
 `AML_SERVICE_KEY` را در پنج env وارد کنید. رمز ClickHouse هر VM و رمز Neo4j
 مستقل باشند. نمونه‌های `change-me` یا `replace-with...` را باقی نگذارید.
+پنج نسخهٔ برنامه را از یک commit بسازید. مرکز، ارزیابی بیت‌کوین با
+سیاست ناسازگار را رد می‌کند. برای خطای
+`Bitcoin persisted risk differs from the central policy or evidence`
+نسخهٔ image آداپتور بیت‌کوین و Main و تازگی snapshot را بررسی کنید.
 
 ## ۴. تنظیم chain VMها
 
@@ -122,11 +143,16 @@ chmod 600 dockerizd_ethereum/.env
 | شروع دریافت | `TRON_START_BLOCK` | `ETH_START_BLOCK` | `BSC_INGEST_START_BLOCK` | `BITCOIN_START_BLOCK` |
 | رمز DB | `CLICKHOUSE_PASSWORD` | `CLICKHOUSE_PASSWORD` | `BSC_CLICKHOUSE_PASSWORD` | `BITCOIN_CLICKHOUSE_PASSWORD` |
 | DB محلی | `tron_db` | `ethereum_aml` | `bsc_aml` | `bitcoin_aml` |
+| پورت API | `TRON_API_PORT=4001` | `ETHEREUM_API_PORT=5001` | `BSC_API_PORT=6001` | `BITCOIN_API_PORT=6101` |
 
 IP bind را IP خصوصی همان VM بگذارید. bind دیتابیس در TRON/Ethereum/Bitcoin
 با `DATABASE_BIND_ADDRESS=127.0.0.1` و در BSC با
 `DOCKER_BIND_ADDRESS=127.0.0.1` محلی می‌ماند. Main به ClickHouse مستقیم وصل
 نمی‌شود؛ upstream آن API هر شبکه است.
+برای این آموزش نام‌های پیش‌فرض دیتابیس را حفظ کنید تا فرمان `vm.sh ROLE db`
+به همان دیتابیس وصل شود. روی BSC خط `BSC_INGEST_START_BLOCK` در نمونه
+comment است. برای تعیین تاریخچه آن را فعال و مقدار واقعی را وارد کنید.
+مقدار start برای هر شبکه یک ارتفاع مستقل است.
 
 برای عملیات ING-2، image همین نسخه را با `bash scripts/vm.sh ROLE up --build`
 بسازید؛ binary قدیمی فرمان‌های maintenance جدید را ندارد. `ROLE` نام همان
@@ -153,6 +179,12 @@ Bitcoin به RPC اصلی unpruned و امکان resolve prevout نیاز دار
 `txindex=1` نیاز داشته باشد. Ethereum/BSC برای internal flow به trace مناسب
 نیاز دارند؛ `auto` به معنی پوشش کامل نیست. جزئیات اختصاصی در README هر شبکه
 و محدودیت‌های فعلی در [وضعیت پروژه](PROJECT_STATUS_FA.md) آمده‌اند.
+برای RPC بیت‌کوین بدون احراز هویت، `BITCOIN_RPC_USER` و
+`BITCOIN_RPC_PASSWORD` را هر دو خالی بگذارید. برای RPC احراز هویت‌شده هر دو را
+از ارائه‌دهنده بگیرید. تنظیم سخت‌گیرانهٔ BSC با `BSC_MODE=production`،
+`BSC_TRACE_MODE=required` و `BSC_REQUIRE_BLOCK_RECEIPTS=true` به RPC دارای
+این قابلیت‌ها نیاز دارد. Ethereum با `ETH_FINALITY_TAG=finalized` به
+پشتیبانی این tag نیاز دارد. probe را با URL عملیاتی هر نقش اجرا کنید.
 
 ## ۵. تنظیم VM اصلی
 
@@ -171,7 +203,7 @@ AML_HTPASSWD_FILE=./gateway/auth/users.htpasswd
 
 `AML_SERVICE_KEY` مشترک و `NEO4J_PASSWORD` قوی را هم اضافه کنید؛ مقدارهای
 بالا را در فایل env موجود ویرایش کنید، فایل را با این snippet ناقص جایگزین
-نکنید. حساب پنل را بسازید؛ password تعاملی پرسیده می‌شود:
+نکنید. حساب پنل را بسازید. رمز به شکل تعاملی پرسیده می‌شود.
 
 ```bash
 htpasswd -cB gateway/auth/users.htpasswd amladmin
@@ -206,23 +238,133 @@ restart Docker/VM یک systemd oneshot با `After=docker.service network-online
 مستقیم است، قواعد معادل را طبق سیاست شبکه اجرا و از یک میزبان غیرمجاز
 ردشدن دسترسی را آزمون کنید. تغییر firewall را با دسترسی console/SSH مدیریت
 انجام دهید.
+قاعدهٔ helper روی رابطی اعمال می‌شود که مسیر شبکهٔ Main از آن می‌گذرد.
+اگر میزبان از رابط دیگری به API قابل دسترسی است، کنترل همان مسیر را هم
+با فایروال یا ACL شبکه و آزمون دسترسی بررسی کنید.
+[جزئیات فایروال Docker](https://docs.docker.com/engine/network/packet-filtering-firewalls/)
+
+نمونهٔ واحد systemd برای backend مبتنی بر iptables. بعد از آزمون اجرای
+دستی helper، آن را روی همان VM شبکه نصب کنید.
+
+```ini
+# /etc/systemd/system/aml-vm-firewall.service
+[Unit]
+Description=Restrict published AML chain API to Main
+Wants=network-online.target
+Requires=docker.service
+After=docker.service network-online.target
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/aml-vm-firewall
+RemainAfterExit=yes
+
+[Install]
+WantedBy=docker.service
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now aml-vm-firewall.service
+sudo systemctl status aml-vm-firewall.service
+```
 
 ## ۷. ترتیب اجرا و تحویل
 
-ابتدا چهار chain VM را با `--api-only` بالا بیاورید و schema/API را بررسی
-کنید؛ سپس ingest/workers را روشن کنید و در آخر Main را بالا بیاورید:
+### ۷.۱ نصب خالی، API و آزمون RPC
+
+روی هر VM شبکه فقط یکی از نام‌های `tron`، `ethereum`، `bsc` یا `bitcoin`
+را انتخاب کنید. چهار بار روی چهار میزبان اجرا می‌شود.
 
 ```bash
-# روی هر VM، role خودش را جایگزین کنید.
-bash scripts/vm.sh tron up --build --api-only
-bash scripts/vm.sh tron check-schema
-bash scripts/vm.sh tron check
-bash scripts/vm.sh tron up
-bash scripts/vm.sh tron check-runtime
-# پس از آماده‌شدن چهار شبکه، روی Main:
+cd "$HOME/AML_Real"
+role=tron  # مقدار درست همین VM را بگذارید
+bash scripts/vm.sh "$role" up --build --api-only
+bash scripts/vm.sh "$role" ps
+bash scripts/vm.sh "$role" check-schema
+bash scripts/vm.sh "$role" check
+bash scripts/vm.sh "$role" probe
+bash scripts/vm.sh "$role" db --query 'SELECT network_id, schema_version, checksum FROM aml_warehouse_identity FINAL'
+```
+
+خروجی صحیح شامل یک هویت شبکه و schema version برابر ۶ است. در نصب
+تازه، API ممکن است سالم و checkpoint هنوز خالی باشد. اگر schema job موفق
+نشده، پیش از شروع worker علت را از `logs` پیدا کنید. probe را برای هر
+شبکه جداگانه با آدرس RPC نهایی موفق کنید.
+
+### ۷.۲ شروع دریافت و سنجش پیشرفت
+
+```bash
+bash scripts/vm.sh "$role" up
+bash scripts/vm.sh "$role" check-runtime
+bash scripts/vm.sh "$role" db --query 'SELECT network_id, initialized, start_block, last_block_number, observed_rpc_height, revision FROM aml_sync_state_current'
+bash scripts/vm.sh "$role" db --query 'SELECT block_number, status, attempts, error_code FROM aml_ingestion_failures_current ORDER BY last_failed_at_unix_ms DESC LIMIT 10'
+```
+
+`check-runtime` را پس از سالم‌شدن کانتینرها اجرا کنید. برای صحت داده،
+چند بار فاصلهٔ head مشاهده‌شده و آخرین بلاک منتشرشده را ثبت کنید و
+نمونهٔ تراکنش را با RPC مقایسه کنید. فاصله در شروع catch-up طبیعی است.
+توقف ارتفاع همراه با retry یا dead-letter نیاز به بررسی RPC و log دارد.
+دستورهای توقف و ادامهٔ worker، `pause-ingestion` و `resume` هستند.
+[عیب‌یابی ingest و repair](USAGE_FA.md)
+
+### ۷.۳ راه‌اندازی Main و آزمون کاربر
+
+ابتدا از Main، `/ready` هر چهار API را روی IP خصوصی خودش امتحان کنید.
+در صورت استفاده از IP نمونه:
+
+```bash
+for origin in http://10.20.0.21:4001 http://10.20.0.22:5001 http://10.20.0.23:6001 http://10.20.0.24:6101; do
+  curl --fail --silent --show-error --connect-timeout 5 "$origin/ready"
+  printf '\n'
+done
 bash scripts/vm.sh main up --build
 bash scripts/vm.sh main check-runtime
+curl --fail --silent --show-error http://10.20.0.10:8080/health
+curl --fail --silent --show-error --user amladmin http://10.20.0.10:8080/ready
 ```
+
+مرورگر را با کاربر Basic Auth باز کنید. در هر شبکه یک آدرس با دادهٔ
+واقعاً منتشرشده انتخاب کنید. تحقیق Wallet و Paths را اجرا کنید،
+شبکه و ارتفاع شاهد را ببینید، Export و سپس بازگشایی را امتحان کنید.
+یک آدرس یا تراکنش آزمون را به Watchlist اضافه کنید و زمان بررسی بعدی
+و نتیجهٔ آن را ببینید. یک پروندهٔ آزمایشی با تحقیق ذخیره‌شده بسازید و
+گردش بازبینی و دانلود گزارش را با دو حساب جدا بررسی کنید.
+برای بازبین دوم، فرمان زیر را روی Main اجرا کنید. `-c` را فقط هنگام
+ایجاد اولیهٔ فایل به کار ببرید. وضعیت تحویل webhook فقط در صورت تنظیم
+گیرندهٔ عملیاتی آزموده می‌شود.
+
+```bash
+sudo htpasswd -B gateway/auth/users.htpasswd amlreviewer
+sudo chown root:101 gateway/auth/users.htpasswd
+sudo chmod 640 gateway/auth/users.htpasswd
+# پس از به‌روزرسانی فایل mount شده، Gateway را با فایل جدید بسازید
+docker compose --project-name aml-main --env-file .env up -d --no-deps --force-recreate gateway
+```
+
+### ۷.۴ توقف، به‌روزرسانی و معیار تحویل
+
+```bash
+bash scripts/vm.sh "$role" pause-ingestion  # API و DB برقرار می‌مانند
+bash scripts/vm.sh "$role" resume           # ادامه از checkpoint فعلی
+bash scripts/vm.sh "$role" logs
+bash scripts/vm.sh "$role" ps
+```
+
+برای توقف کامل سرویس‌های یک role، `bash scripts/vm.sh ROLE down` را اجرا
+کنید. volume با این فرمان حفظ می‌شود. برای انتشار بعدی یک commit مشخص
+را در هر پنج VM هماهنگ کنید، قبل از تغییر نسخه پذیرش schema و بازیابی
+را روی محیط جدا بسنجید و همین ترتیب اجرا را تکرار کنید.
+
+| نشانه | بررسی اول |
+| --- | --- |
+| Compose متغیر الزامی می‌خواهد | فایل `.env` درست همان role و مقدار رمز یا service key را بررسی کنید |
+| API سالم است ولی داده خالی است | `initialized`، start، فعال‌بودن worker و log خطای RPC را ببینید |
+| Main از VM شبکه پاسخ نمی‌گیرد | IP و پورت bind، مسیر خصوصی، firewall و نشانی upstream را کنترل کنید |
+| پاسخ 401 یا 403 | احراز هویت پنل را از کلید سرویس بین VMها جدا بررسی کنید. پنج `AML_SERVICE_KEY` باید یکسان باشند |
+| خطای هویت یا checksum | با `check-schema` نسخه، نام دیتابیس و تعلق volume به همان شبکه را بررسی کنید |
+| ریسک `UNKNOWN` یا trace غایب | دامنهٔ دادهٔ منتشرشده، اعتبار منبع و قابلیت RPC را کنترل کنید |
 
 اگر build را روی یک ماشین سازنده انجام می‌دهید، هر پنج image برنامه را
 بسازید، سپس `scripts/export-images.sh --include-bsc --include-bitcoin` و روی
@@ -239,5 +381,7 @@ VMها `scripts/import-images.sh DIRECTORY` را اجرا کنید. بستهٔ i
 قرارداد مشترک باید موفق شود تا API و workerها شروع شوند. SQL بومی ترون
 دیگر mount نمی‌شود. روی استقرار تازه فقط `aml_*` ایجاد می‌شود؛ دیتابیس،
 هویت شبکه و volume هر VM مستقل‌اند. نصب از صفر و شکل یکسان در Docker
-آزموده شده است؛ پذیرش مسیر داده و VM واقعی در [TODO_LIST](../TODO_LIST.md) باقی است.
-راهنمای استفاده پس از بالا آمدن: [USAGE_FA](USAGE_FA.md).
+آزموده شده است. تحویل VM شامل آزمون روی RPC و دادهٔ هدف، آزمون بازیابی،
+TLS و کنترل نقش‌ها، ثبت رویداد عملیاتی، پایش lag و ظرفیت و تأیید بازبین است.
+وضعیت هر مورد در [فهرست پذیرش](../TODO_LIST.md) آمده است.
+[راهنمای استفاده پس از بالا آمدن](USAGE_FA.md)

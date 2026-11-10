@@ -157,3 +157,5 @@ downgrade نمی‌شود؛ نصب تازه volume تازه می‌خواهد. b
 برای هر role: `bash scripts/vm.sh ROLE check-schema`.
 ساخت موفق schema به معنی انتقال کامل IO یا پذیرش AML نیست.
 [ممیزی](../PROJECT_STATUS_FA.md)، [VM](../VM_SETUP_FA.md)، [تست](../TESTING.md).
+
+[آموزش خواندن داده و Neo4j](../DATABASE_GUIDE_FA.md) · [فرهنگ همهٔ ستون‌ها و viewها](DATA_DICTIONARY_FA.md)
