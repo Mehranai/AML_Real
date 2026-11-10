@@ -38,9 +38,10 @@ pub async fn store(client: &Client, kind: &str, v: Value) -> Result<()> {
     };
     let rev = client.revision(table).await?;
     let source = serde_json::to_string(&v)?;
+    let mut reviewed_claim = None;
     let data = match kind {
         "intelligence_sources" => {
-            json!({"source_id":v["source_id"],"source_name":v["source_name"],"source_type":v["source_type"],"reference_url":v["reference_url"],"trust_tier":v["trust_tier"],"license":"unspecified","is_active":v["is_active"],"created_by":v["created_by"],"metadata_json":"{}","raw_evidence_json":source})
+            json!({"source_id":v["source_id"],"source_name":v["source_name"],"source_type":v["source_type"],"reference_url":v["reference_url"],"trust_tier":v["trust_tier"],"license":v["license"].as_str().unwrap_or("unspecified"),"is_active":v["is_active"],"created_by":v["created_by"],"metadata_json":"{}","raw_evidence_json":source})
         }
         "entity_labels" => {
             json!({"claim_id":v["label_id"],"address":v["address"],"claim_kind":"label","entity_id":v["entity_id"],"entity_name":v["entity_name"],"entity_type":v["entity_type"],"address_role":text(&v,"address_role").to_ascii_lowercase(),"confidence":v["confidence"],"risk_level":v["risk_level"],"is_exposure_seed":v["is_exposure_seed"],"seed_category":v["seed_category"],"source_id":v["source_id"],"source_reference":v["source_record_id"],"evidence_refs":refs(&v["evidence_refs"]),"review_status":"pending","reviewed_by":"","review_note":"","valid_from_unix_ms":now,"valid_to_unix_ms":null,"source_record_id":nullable(&v,"source_record_id"),"supersedes_claim_id":nullable(&v,"supersedes_label_id"),"submitted_by":nullable(&v,"submitted_by"),"case_id":nullable(&v,"case_id"),"raw_evidence_json":source})
@@ -57,6 +58,18 @@ pub async fn store(client: &Client, kind: &str, v: Value) -> Result<()> {
                 .pop()
                 .context("review has no corresponding current claim")?;
             let decision = text(&v, "decision").to_ascii_lowercase();
+            if let Some(expected) = v["expected_revision"].as_u64() {
+                ensure!(
+                    decision == "revoked"
+                        && claim["claim_kind"] == "label"
+                        && claim["review_status"] == "approved"
+                        && claim["source_id"] == v["expected_source_id"]
+                        && (claim["revision"].as_u64() == Some(expected)
+                            || claim["revision"].as_str().and_then(|rev| rev.parse().ok())
+                                == Some(expected)),
+                    "revocation requires the current approved claim and matching revision"
+                );
+            }
             let claim_rev = client.revision("aml_intelligence_claims").await?;
             claim["review_status"] = json!(decision);
             claim["reviewed_by"] = v["reviewer"].clone();
@@ -67,9 +80,12 @@ pub async fn store(client: &Client, kind: &str, v: Value) -> Result<()> {
                 !text(&v, "reviewer").is_empty() && !text(&v, "reason").is_empty(),
                 "review actor/reason required"
             );
-            client
-                .insert_rows("aml_intelligence_claims", &[claim])
-                .await?;
+            aml_warehouse::semantics::validate_row(
+                &aml_warehouse::current_contract()?,
+                "aml_intelligence_claims",
+                &claim,
+            )?;
+            reviewed_claim = Some(claim);
             json!({"review_id":v["review_id"],"subject_type":"claim","subject_id":id,"decision":decision,"reviewed_by":v["reviewer"],"reason":v["reason"],"evidence_refs":refs(&v["evidence_refs"]),"subject_revision":claim_rev,"raw_evidence_json":source})
         }
         "address_entities" => {
@@ -100,6 +116,11 @@ pub async fn store(client: &Client, kind: &str, v: Value) -> Result<()> {
     client
         .insert_rows(table, &[row(table, data, rev, now)?])
         .await?;
+    if let Some(claim) = reviewed_claim {
+        client
+            .insert_rows("aml_intelligence_claims", &[claim])
+            .await?;
+    }
     if kind == "intelligence_reviews" || kind == "intelligence_sources" {
         for family in ["cluster", "exposure", "risk"] {
             client.invalidate_active(family).await?;

@@ -20,6 +20,286 @@ use fixture::{Rpc, scalar, setup, source};
 
 #[tokio::test]
 #[ignore = "requires a fresh disposable WAREHOUSE_TEST_URL"]
+async fn allbridge_reads_only_successful_canonical_tron_receipts() -> Result<()> {
+    use aml_chain_api::bridge::{self, Anchor, Lookup, Side, Window, allbridge};
+
+    let rpc = Rpc::start().await?;
+    let success = fixture::simple(11, 901);
+    let mut failed = fixture::simple(12, 902);
+    failed["ret"][0]["contractRet"] = json!("REVERT");
+    rpc.block(100, vec![success.clone(), failed.clone()]);
+    rpc.receipt(100, &success, false);
+    rpc.receipt(100, &failed, false);
+    let message = format!("0203{}", "a".repeat(60));
+    let log = json!({"address":"0a38028ed6146aa29c687c052b233131468b6635",
+        "topics":[allbridge::RECEIVE],
+        "data":format!("{:064x}{:064x}{:064x}{:064x}{message}", 99_000_000, 2025, 9, 1)});
+    {
+        let mut receipts = rpc.state.receipts.write().unwrap();
+        for tx in [&success, &failed] {
+            receipts.get_mut(tx["txID"].as_str().unwrap()).unwrap()["log"] = json!([log]);
+        }
+    }
+    let (config, client) = setup("bridge", &rpc).await?;
+    ingest_tron_range(Arc::new(LoaderTron::new(&config).await?), 100, 100).await?;
+    assert_eq!(
+        scalar(
+            &client,
+            "SELECT toString(count()) FROM aml_tron_logs_canonical"
+        )
+        .await?,
+        2
+    );
+    let anchor = |tx| {
+        bridge::lookup(
+            &*client,
+            client.database(),
+            Network::Tron,
+            tx,
+            Lookup::Transaction(Anchor { block_number: 100 }),
+        )
+    };
+    let hit = anchor(success["txID"].as_str().unwrap()).await?;
+    let [receipt] = hit.logs.as_slice() else {
+        anyhow::bail!("expected the successful TRON receipt")
+    };
+    assert!(allbridge::decode(Network::Tron, receipt).is_some());
+    assert!(
+        anchor(failed["txID"].as_str().unwrap())
+            .await?
+            .logs
+            .is_empty()
+    );
+    let peer = bridge::lookup(
+        &*client,
+        client.database(),
+        Network::Tron,
+        &format!("0x{message}"),
+        Lookup::AllbridgeOperation(Window {
+            side: Side::Relay,
+            from_ms: receipt.timestamp_ms,
+            to_ms: receipt.timestamp_ms,
+        }),
+    )
+    .await?;
+    assert_eq!(peer.source_snapshot, hit.source_snapshot);
+    assert_eq!(peer.logs.len(), 1);
+    assert_eq!(peer.logs[0].tx_hash, receipt.tx_hash);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires a fresh disposable WAREHOUSE_TEST_URL"]
+async fn maintenance_probe_dead_letter_frontier_and_historical_gap_repair() -> Result<()> {
+    use aml_warehouse::maintenance::{self, Command};
+    use arz_axum_for_services::operations;
+    let rpc = Rpc::start().await?;
+    let mut tx = fixture::simple(10, 771);
+    let correct = tx.clone();
+    tx["raw_data"]["contract"][0]["parameter"]["value"]["amount"] = json!(11);
+    rpc.block(100, vec![tx.clone()]);
+    rpc.receipt(100, &tx, false);
+    let (config, client) = setup("maintenance", &rpc).await?;
+    assert!(operations::probe(&config).await.is_err());
+    assert!(
+        ingest_tron_range(Arc::new(LoaderTron::new(&config).await?), 100, 100)
+            .await
+            .is_err()
+    );
+    assert!(maintenance::blocked(&*client, client.database(), Network::Tron, 100).await?);
+    rpc.block(100, vec![correct.clone()]);
+    rpc.receipt(100, &correct, false);
+    assert!(
+        ingest_tron_range(Arc::new(LoaderTron::new(&config).await?), 100, 100)
+            .await
+            .is_err()
+    );
+    let mut command = Command::parse(&[
+        "repair".into(),
+        "--from-block".into(),
+        "100".into(),
+        "--to-block".into(),
+        "100".into(),
+        "--max-blocks".into(),
+        "1".into(),
+    ])?;
+    assert!(operations::run(config.clone(), &command).await.is_err());
+    command.include_dead = true;
+    assert_eq!(
+        operations::run(config.clone(), &command).await?["status"],
+        "complete"
+    );
+    let tx = fixture::simple(12, 772);
+    rpc.block(101, vec![tx.clone()]);
+    rpc.receipt(101, &tx, false);
+    ingest_tron_range(Arc::new(LoaderTron::new(&config).await?), 101, 101).await?;
+    let probe = operations::probe(&config).await?;
+    assert_eq!(probe["status"], "ready");
+    assert_eq!(probe["samples"].as_array().unwrap().len(), 2);
+    assert_eq!(probe["full_history_verified"], false);
+    let before = publication::state(&*client, client.database(), Network::Tron).await?;
+    client
+        .query(
+            "ALTER TABLE aml_transactions DELETE WHERE block_number=100 SETTINGS mutations_sync=2",
+        )
+        .execute()
+        .await?;
+    assert_eq!(
+        maintenance::scan(
+            &*client,
+            client.database(),
+            Network::Tron,
+            100,
+            101,
+            2,
+            false
+        )
+        .await?["gaps"],
+        1
+    );
+    assert_eq!(
+        operations::run(config.clone(), &command).await?["status"],
+        "complete"
+    );
+    let after = publication::state(&*client, client.database(), Network::Tron).await?;
+    assert_eq!(after.last_block_number, before.last_block_number);
+    assert_eq!(after.last_block_hash, before.last_block_hash);
+    assert!(after.revision > before.revision);
+    assert_eq!(
+        scalar(
+            &client,
+            "SELECT toString(count()) FROM aml_transactions_canonical"
+        )
+        .await?,
+        2
+    );
+    rpc.state.blocks.write().unwrap().get_mut(&0).unwrap()["blockID"] = json!("f".repeat(64));
+    assert!(operations::probe(&config).await.is_err());
+    command.action = "replay".into();
+    assert!(operations::run(config, &command).await.is_err());
+    assert_eq!(
+        publication::state(&*client, client.database(), Network::Tron).await?,
+        after
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires a fresh disposable WAREHOUSE_TEST_URL"]
+async fn follow_resumes_published_prefix_after_rpc_outage_and_restart() -> Result<()> {
+    use arz_axum_for_services::tasks::fetch_loop::run_tron_loop;
+    use std::time::Duration;
+    async fn wait_tip(client: &arz_axum_for_services::db::Client, height: u64) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            loop {
+                if get_last_synced_block(client).await? == Some(height) {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await??;
+        Ok(())
+    }
+    let rpc = Rpc::start().await?;
+    let first = fixture::simple(11, 101);
+    rpc.block(100, vec![first.clone()]);
+    rpc.receipt(100, &first, false);
+    let (config, client) = setup("follow", &rpc).await?;
+    let run = config.clone();
+    let worker = tokio::spawn(async move { run_tron_loop(run).await });
+    wait_tip(&client, 100).await?;
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if rpc.state.head_calls.load(Ordering::SeqCst) >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await?;
+    assert!(!worker.is_finished());
+    let second = fixture::simple(12, 102);
+    let third = fixture::simple(13, 103);
+    rpc.receipt(101, &second, false);
+    rpc.receipt(102, &third, false);
+    rpc.state.receipt_status.store(503, Ordering::SeqCst);
+    *rpc.state.receipt_fault.write().unwrap() = third["txID"].as_str().unwrap().into();
+    rpc.block(101, vec![second]);
+    rpc.block(102, vec![third]);
+    wait_tip(&client, 101).await?;
+    tokio::time::timeout(Duration::from_secs(30),async {
+        loop {if scalar(&client,"SELECT toString(count()) FROM aml_ingestion_failures_current WHERE block_number=102 AND status!='resolved'").await?>0 {return Ok::<_,anyhow::Error>(());}
+            tokio::time::sleep(Duration::from_millis(50)).await;}
+    }).await??;
+    assert!(!worker.is_finished());
+    let calls = rpc.state.block_calls.read().unwrap().len();
+    rpc.state.receipt_fault.write().unwrap().clear();
+    wait_tip(&client, 102).await?;
+    assert!(
+        rpc.state.block_calls.read().unwrap()[calls..]
+            .iter()
+            .all(|&h| h == 0 || h >= 101),
+        "follow restarted from an already published prefix"
+    );
+    assert_eq!(
+        scalar(
+            &client,
+            "SELECT toString(count()) FROM aml_transactions_canonical"
+        )
+        .await?,
+        3
+    );
+    assert_eq!(
+        aml_warehouse::visibility::capture(&*client, client.database(), Network::Tron)
+            .await?
+            .value()["history_complete"],
+        false
+    );
+    worker.abort();
+    let _ = worker.await;
+    let fourth = fixture::simple(14, 104);
+    rpc.receipt(103, &fourth, false);
+    rpc.block(103, vec![fourth]);
+    let run = config.clone();
+    let worker = tokio::spawn(async move { run_tron_loop(run).await });
+    wait_tip(&client, 103).await?;
+    assert_eq!(
+        scalar(
+            &client,
+            "SELECT toString(count()) FROM aml_transactions_canonical"
+        )
+        .await?,
+        4
+    );
+    rpc.state.head_status.store(401, Ordering::SeqCst);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(20), worker)
+            .await??
+            .is_err()
+    );
+    assert_eq!(get_last_synced_block(&client).await?, Some(103));
+    rpc.state.head_status.store(0, Ordering::SeqCst);
+    rpc.state.blocks.write().unwrap().get_mut(&103).unwrap()["blockID"] = json!("f".repeat(64));
+    assert!(
+        tokio::time::timeout(Duration::from_secs(30), run_tron_loop(config))
+            .await?
+            .is_err()
+    );
+    assert_eq!(get_last_synced_block(&client).await?, Some(103));
+    assert_eq!(
+        scalar(
+            &client,
+            "SELECT toString(count()) FROM aml_transactions_canonical"
+        )
+        .await?,
+        4
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires a fresh disposable WAREHOUSE_TEST_URL"]
 async fn live_publication_keeps_exact_positions_nft_resources_and_existing_readers() -> Result<()> {
     let rpc = Rpc::start().await?;
     let success = fixture::salted(source::multi_transaction(), 1);
@@ -233,14 +513,34 @@ async fn invalid_transaction_or_receipt_never_partially_publishes_and_can_retry(
         .unwrap()
         .get_mut(repaired["txID"].as_str().unwrap())
         .unwrap()["id"] = json!("f".repeat(64));
+    let repair = aml_warehouse::maintenance::Command::parse(&[
+        "repair".into(),
+        "--from-block".into(),
+        "100".into(),
+        "--to-block".into(),
+        "100".into(),
+        "--max-blocks".into(),
+        "1".into(),
+        "--include-dead".into(),
+    ])?;
     assert!(
-        ingest_tron_range(Arc::new(LoaderTron::new(&config).await?), 100, 100)
+        arz_axum_for_services::operations::run(config.clone(), &repair)
             .await
             .is_err()
     );
     assert_eq!(get_last_synced_block(&client).await?, None);
     rpc.receipt(100, &repaired, false);
-    ingest_tron_range(Arc::new(LoaderTron::new(&config).await?), 100, 100).await?;
+    let repair = aml_warehouse::maintenance::Command::parse(&[
+        "repair".into(),
+        "--from-block".into(),
+        "100".into(),
+        "--to-block".into(),
+        "100".into(),
+        "--max-blocks".into(),
+        "1".into(),
+        "--include-dead".into(),
+    ])?;
+    arz_axum_for_services::operations::run(config.clone(), &repair).await?;
     assert_eq!(get_last_synced_block(&client).await?, Some(100));
     assert_eq!(
         scalar(
@@ -271,7 +571,11 @@ async fn invalid_transaction_or_receipt_never_partially_publishes_and_can_retry(
         0,
     )
     .await?;
-    ingest_tron_range(Arc::new(LoaderTron::new(&config).await?), 100, 100).await?;
+    assert!(
+        ingest_tron_range(Arc::new(LoaderTron::new(&config).await?), 100, 100)
+            .await
+            .is_err()
+    );
     assert_eq!(rpc.state.receipt_calls.load(Ordering::SeqCst), calls);
     assert_eq!(scalar(&client, "SELECT toString(count()) FROM aml_ingestion_failures_current WHERE operation='PROCESS_TX' AND status!='resolved'").await?, 1);
     assert_eq!(
@@ -359,7 +663,10 @@ async fn invalid_transaction_or_receipt_never_partially_publishes_and_can_retry(
     );
     // Restore the source, then resume in a fresh Loader and read the recovered data.
     rpc.block(101, vec![]);
-    ingest_tron_range(Arc::new(LoaderTron::new(&config).await?), 101, 101).await?;
+    let mut frontier = repair.clone();
+    frontier.from = Some(101);
+    frontier.to = Some(101);
+    arz_axum_for_services::operations::run(config.clone(), &frontier).await?;
     assert_eq!(get_last_synced_block(&client).await?, Some(101));
     assert_eq!(
         scalar(
@@ -404,6 +711,12 @@ async fn genesis_empty_blocks_and_unambiguous_legacy_trc10_keep_original_evidenc
     rpc.block(1, vec![]);
     let (config, client) = setup("genesis", &rpc).await?;
     ingest_tron_range(Arc::new(LoaderTron::new(&config).await?), 0, 1).await?;
+    let mut genesis_config = config.clone();
+    genesis_config.tron_start_block = 0;
+    let capability = arz_axum_for_services::operations::probe(&genesis_config).await?;
+    assert_eq!(capability["status"], "degraded");
+    assert_eq!(capability["samples"][0]["genesis_allocations_verified"], 1);
+    assert_eq!(capability["samples"][0]["receipts_verified"], 0);
     assert_eq!(rpc.state.receipt_calls.load(Ordering::SeqCst), 0);
     assert_eq!(scalar(&client,"SELECT toString(count()) FROM aml_transactions_canonical WHERE status='unknown' AND isNull(from_address) AND isNull(amount_raw)").await?,1);
     assert_eq!(
@@ -451,7 +764,17 @@ async fn genesis_empty_blocks_and_unambiguous_legacy_trc10_keep_original_evidenc
         name.to_ascii_uppercase(),
         json!({"name":hex::encode("OLD_COIN"),"id":"1000099","owner_address":source::OWNER}),
     );
-    ingest_tron_range(Arc::new(LoaderTron::new(&config).await?), 2, 2).await?;
+    let repair = aml_warehouse::maintenance::Command::parse(&[
+        "repair".into(),
+        "--from-block".into(),
+        "2".into(),
+        "--to-block".into(),
+        "2".into(),
+        "--max-blocks".into(),
+        "1".into(),
+        "--include-dead".into(),
+    ])?;
+    arz_axum_for_services::operations::run(config.clone(), &repair).await?;
     let row=client.query("SELECT toJSONString(tuple(asset_id,toString(amount_raw),raw_evidence_json)) FROM aml_address_relationships_canonical").fetch_one::<String>().await?;
     let row: Value = serde_json::from_str(&row)?;
     assert_eq!(row[0], "trc10:1000099");

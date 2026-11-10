@@ -73,7 +73,10 @@ pub async fn store(client: &Client, table: &str, values: &[Value]) -> Result<()>
     ensure!(
         matches!(
             table,
-            "intelligence_claims" | "token_metadata" | "token_metadata_jobs"
+            "intelligence_sources"
+                | "intelligence_claims"
+                | "token_metadata"
+                | "token_metadata_jobs"
         ),
         "unsupported operational write"
     );
@@ -84,6 +87,26 @@ pub async fn store(client: &Client, table: &str, values: &[Value]) -> Result<()>
         );
         let now = now_ms();
         match table {
+            "intelligence_sources" => {
+                let record = row(
+                    "aml_intelligence_sources",
+                    json!({
+                        "source_id":v["source_id"], "source_name":v["source_name"],
+                        "source_type":v["source_type"], "reference_url":v["reference_url"],
+                        "trust_tier":v["trust_tier"], "license":v["license"],
+                        "is_active":u8::from(v["is_active"].as_bool().unwrap_or(false)),
+                        "created_by":v["created_by"], "metadata_json":v["metadata_json"]
+                    }),
+                    client.revision("aml_intelligence_sources").await?,
+                    now,
+                )?;
+                client
+                    .insert_rows("aml_intelligence_sources", &[record])
+                    .await?;
+                for family in ["cluster", "exposure", "risk"] {
+                    client.invalidate_active(family).await?;
+                }
+            }
             "intelligence_claims" => {
                 let source = text(v, "source_id");
                 let actor = if text(v, "reviewed_by").is_empty() {

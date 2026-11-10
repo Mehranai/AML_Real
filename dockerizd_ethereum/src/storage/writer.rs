@@ -43,6 +43,14 @@ impl EthereumStore {
         Ok(self.client.query("SELECT network_id,contract_address,protocol,protocol_type,contract_role,remote_network_id,remote_contract_address,decoder,source,confidence,enabled,created_at_unix_ms FROM eth_protocols").fetch_all().await?)
     }
     pub async fn persist_block(&self, source: &ExtractedBlock, observed: u64) -> Result<()> {
+        self.persist_block_force(source, observed, false).await
+    }
+    pub async fn persist_block_force(
+        &self,
+        source: &ExtractedBlock,
+        observed: u64,
+        force: bool,
+    ) -> Result<()> {
         let previous =
             publication::state(&self.client, self.client.database(), Network::Ethereum).await?;
         let mut refresh = false;
@@ -52,7 +60,7 @@ impl EthereumStore {
                 old.block_hash == source.block.block_hash,
                 "finalized Ethereum hash conflict; refusing an implicit branch replacement"
             );
-            if old.trace_data_complete >= source.block.trace_data_complete {
+            if !force && old.trace_data_complete >= source.block.trace_data_complete {
                 return Ok(());
             }
             refresh = true;
@@ -143,13 +151,30 @@ impl EthereumStore {
         height: u64,
         stage: &str,
         message: &str,
-        attempts: u32,
+        _attempts: u32,
         time: u64,
     ) -> Result<()> {
         use sha2::{Digest, Sha256};
+        let failure_id = format!("{:x}", Sha256::digest(format!("eip155:1|{height}|{stage}")));
+        let previous = self
+            .client
+            .rows(
+                "aml_ingestion_failures",
+                &format!("failure_id={}", publication::literal(&failure_id)),
+            )
+            .await?
+            .pop();
+        let attempts = previous
+            .as_ref()
+            .and_then(|r| r["attempts"].as_u64())
+            .unwrap_or(0)
+            .saturating_add(1)
+            .min(u32::MAX as u64);
+        let retryable =
+            attempts < aml_warehouse::maintenance::failure_limit("ETHEREUM_FAILURE_MAX_ATTEMPTS")?;
         let data = crate::db::row(
             "aml_ingestion_failures",
-            json!({"failure_id":format!("{:x}",Sha256::digest(format!("eip155:1|{height}|{stage}"))),"block_number":height,"block_hash":null,"operation":stage,"status":"retry","attempts":attempts,"error_code":"rpc_or_decode","error_message":message,"next_attempt_unix_ms":0,"tx_hash":null,"retryable":1,"first_failed_at_unix_ms":time,"last_failed_at_unix_ms":time,"resolved_at_unix_ms":null,"raw_evidence_json":json!({"stage":stage,"message":message}).to_string()}),
+            json!({"failure_id":failure_id,"block_number":height,"block_hash":null,"operation":stage,"status":if retryable{"retry"}else{"dead_letter"},"attempts":attempts,"error_code":"rpc_or_decode","error_message":message.chars().take(4096).collect::<String>(),"next_attempt_unix_ms":0,"tx_hash":null,"retryable":u8::from(retryable),"first_failed_at_unix_ms":previous.as_ref().and_then(|r|r["first_failed_at_unix_ms"].as_u64()).unwrap_or(time),"last_failed_at_unix_ms":time,"resolved_at_unix_ms":null,"raw_evidence_json":json!({"stage":stage}).to_string()}),
             self.client.revision("aml_ingestion_failures").await?,
             time,
         )?;

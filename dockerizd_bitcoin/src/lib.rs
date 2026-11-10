@@ -10,6 +10,7 @@ pub mod domain;
 pub mod exposure;
 pub mod holdings;
 pub mod intelligence;
+pub mod operations;
 pub mod risk;
 pub mod semantics;
 pub mod storage;

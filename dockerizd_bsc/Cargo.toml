@@ -6,6 +6,7 @@ rust-version = "1.92"
 default-run = "bsc_rpc_probe"
 
 [dependencies]
+aml_chain_api = { path = "../shared/chain_api" }
 aml_warehouse = { path = "../shared/warehouse" }
 anyhow = "1.0"
 uint = { version = "0.9.5", default-features = false, features = ["std"] }

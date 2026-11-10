@@ -625,6 +625,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aml_chain_api"
+version = "0.1.0"
+dependencies = [
+ "aml_warehouse",
+ "anyhow",
+ "axum",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aml_warehouse"
 version = "0.1.0"
 dependencies = [
@@ -1918,6 +1929,7 @@ name = "ethereum_aml"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "aml_chain_api",
  "aml_warehouse",
  "anyhow",
  "axum",

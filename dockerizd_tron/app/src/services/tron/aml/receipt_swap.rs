@@ -66,6 +66,12 @@ pub fn decode_v2_swaps(
             if !is_swap(log) || log["topics"].as_array()?.len() != 3 {
                 return None;
             }
+            let topics: Vec<_> = log["topics"]
+                .as_array()?
+                .iter()
+                .map(Value::as_str)
+                .collect::<Option<_>>()?;
+            let (_, proof) = aml_warehouse::receipt_abi::proof(&topics, log["data"].as_str()?)?;
             let pool = normalize_tron_address(log["address"].as_str()?)?;
             if pool_counts.get(&pool) != Some(&1) {
                 return None;
@@ -94,7 +100,7 @@ pub fn decode_v2_swaps(
             let mut outgoing = BTreeMap::<&str, BigUint>::new();
             let mut ids = Vec::new();
             for transfer in transfers {
-                if transfer.from_address == transfer.to_address {
+                if transfer.token_id.is_some() || transfer.from_address == transfer.to_address {
                     continue;
                 }
                 let amount = BigUint::from_bytes_le(&transfer.amount.to_le_bytes());
@@ -138,13 +144,14 @@ pub fn decode_v2_swaps(
                     asset_in: asset_in.into(),
                     asset_out: asset_out.into(),
                     detector: "receipt_log_and_canonical_transfers".into(),
-                    detector_version: "tron_amm_v2_receipt_v1".into(),
+                    detector_version: "tron_amm_v2_receipt_v2".into(),
                     confidence: 0.85,
                     evidence_json: json!({"evidence_type":"decoded_swap_with_matching_transfers",
                     "log_index":index,"event_signature":SWAP_V2,"emitter":pool,
                     "sender":sender,"recipient":recipient,"subject_role":"transaction_initiator",
                     "amount_in":amount_in.to_string(),"amount_out":amount_out.to_string(),
                     "protocol_identity_verified":false,"protocol_operation_verified":true,
+                    "receipt_abi":proof,"amount_basis":"matched_canonical_transfers",
                     "relationship_ids":ids.iter().take(64).collect::<Vec<_>>(),
                     "references_truncated":ids.len()>64})
                     .to_string(),
@@ -204,6 +211,15 @@ mod tests {
         let evidence: Value = serde_json::from_str(&result[0].row.evidence_json).unwrap();
         assert_eq!(evidence["amount_in"], "10");
         assert_eq!(evidence["relationship_ids"], json!(["in", "out"]));
+        assert!(aml_warehouse::receipt_abi::verify(&evidence["receipt_abi"]).is_some());
+        let mut nft = transfers[1].clone();
+        nft.asset_id = "nft".into();
+        nft.token_id = Some(9u64.into());
+        transfers.push(nft);
+        assert_eq!(
+            decode_v2_swaps("tx", 1, 1000, "wallet", &receipt, &transfers).len(),
+            1
+        );
         transfers[1].amount = 8u64.into();
         assert!(decode_v2_swaps("tx", 1, 1000, "wallet", &receipt, &transfers).is_empty());
     }

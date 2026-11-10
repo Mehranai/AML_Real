@@ -54,6 +54,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         warehouse_source: ../shared/warehouse
+        chain_api_source: ../shared/chain_api
     command: ["bsc_schema"]
     restart: "no"
     init: true
@@ -80,6 +81,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         warehouse_source: ../shared/warehouse
+        chain_api_source: ../shared/chain_api
     profiles: ["tools"]
     command: ["bsc_ingest"]
     restart: "no"
@@ -223,6 +225,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         warehouse_source: ../shared/warehouse
+        chain_api_source: ../shared/chain_api
     command: ["bsc_api"]
     restart: unless-stopped
     init: true
@@ -257,6 +260,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         warehouse_source: ../shared/warehouse
+        chain_api_source: ../shared/chain_api
     profiles: ["runtime"]
     command: ["bsc_token_metadata_worker", "--follow"]
     restart: unless-stopped

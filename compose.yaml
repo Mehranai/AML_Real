@@ -31,6 +31,8 @@ services:
       context: ./analytical_node
       additional_contexts:
         risk_policy_source: ./shared/risk_policy
+        warehouse_source: ./shared/warehouse
+        chain_api_source: ./shared/chain_api
     restart: unless-stopped
     init: true
     read_only: true
@@ -40,6 +42,8 @@ services:
       AML_NEO4J_HTTP_URL: http://neo4j:7474
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:?Set the central NEO4J_PASSWORD in .env}
       AML_GRAPH_TTL_HOURS: ${AML_GRAPH_TTL_HOURS:-24}
+      AML_KYT_WEBHOOK_URL: ${AML_KYT_WEBHOOK_URL:-}
+      AML_KYT_WEBHOOK_TOKEN: ${AML_KYT_WEBHOOK_TOKEN:-}
       AML_SERVICE_KEY: ${AML_SERVICE_KEY:?Set AML_SERVICE_KEY in .env}
       AML_TRON_UPSTREAM: ${AML_TRON_UPSTREAM:-http://host.docker.internal:4001}
       AML_ETHEREUM_UPSTREAM: ${AML_ETHEREUM_UPSTREAM:-http://host.docker.internal:5001}

@@ -11,6 +11,21 @@ use bitcoin_aml::{
 async fn main() -> Result<std::process::ExitCode> {
     let _ = dotenvy::dotenv();
     let mode = std::env::args().nth(1).unwrap_or_else(|| "api".into());
+    if mode == "maintenance" {
+        let args = std::env::args().skip(2).collect::<Vec<_>>();
+        if args.is_empty() || args == ["--help"] {
+            println!("{}", aml_warehouse::maintenance::Command::help());
+            return Ok(std::process::ExitCode::SUCCESS);
+        }
+        let command = aml_warehouse::maintenance::Command::parse(&args)?;
+        let value = bitcoin_aml::operations::run(&command).await?;
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        anyhow::ensure!(
+            command.action != "probe" || value["status"] == "ready",
+            "RPC probe requires review; inspect the JSON report"
+        );
+        return Ok(std::process::ExitCode::SUCCESS);
+    }
     if mode == "analytics" {
         use bitcoin_aml::analytics::{self, cli::Command};
         let command = analytics::cli::parse(&std::env::args().skip(2).collect::<Vec<_>>())?;

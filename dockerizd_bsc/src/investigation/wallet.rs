@@ -17,6 +17,7 @@ pub async fn status(db: &Warehouse) -> Result<Value> {
     data["network_id"] = json!(BSC_NETWORK_ID);
     data["source_snapshot"] = source.value();
     data["intelligence_snapshot"] = json!(intelligence);
+    data["operational_snapshot"] = db.operational_snapshot().await?;
     data["internal_transfer_coverage"] =
         json!(count > 0 && data["trace_complete_blocks"] == data["complete_blocks"]);
     data["contiguous_indexed_range"] = json!(
@@ -36,6 +37,10 @@ pub async fn status(db: &Warehouse) -> Result<Value> {
 }
 
 pub(crate) async fn check_epoch(db: &Warehouse, coverage: &Value) -> Result<()> {
+    ensure!(
+        db.operational_snapshot().await? == coverage["operational_snapshot"],
+        "operational evidence changed during investigation; retry"
+    );
     ensure!(
         db.snapshot().await?.value() == coverage["source_snapshot"],
         "canonical publication changed during investigation; retry"
@@ -188,6 +193,14 @@ pub async fn investigate(db: &Warehouse, address: &str, options: &SearchOptions)
         .filter(|v| v["claim_kind"] == "cluster")
         .cloned()
         .collect::<Vec<_>>();
+    let (cluster_candidates, candidate_status) =
+        match intelligence::candidates_at(db, address, height, options).await {
+            Ok(rows) => (rows, "available"),
+            Err(error) => {
+                tracing::warn!(%error, "BSC cluster candidates unavailable");
+                (Vec::new(), "unavailable")
+            }
+        };
     let (exposure_paths, exposure_coverage) =
         intelligence::exposure(db, address, height, now_ms()).await?;
     // Detect replay/reorg changes anywhere in the queried prefix, not only at the tip.
@@ -198,6 +211,9 @@ pub async fn investigate(db: &Warehouse, address: &str, options: &SearchOptions)
         "asset_flows":asset_flows.iter().take(100).collect::<Vec<_>>(),
         "semantic_events":semantic_events.iter().take(200).collect::<Vec<_>>(),
         "activity":activity.iter().take(366).collect::<Vec<_>>(),"entities":entities,"clusters":clusters,
+        "cluster_candidates":cluster_candidates,
+        "cluster_candidate_coverage":{"status":candidate_status,"sampled":true,"search_complete":false,
+            "destination_asset_limit":100,"transfer_sample_limit":5000,"candidate_limit":25},
         "exposure_paths":exposure_paths,"exposure_coverage":exposure_coverage,
         "graph":wallet_graph,"data_coverage":coverage,
         "holdings":{"status":"on_demand","source":"finalized_rpc","endpoint":format!("/api/bsc/wallet/{address}/holdings"),"scope":"native_and_discovered_assets"},

@@ -223,6 +223,7 @@ pub(crate) async fn run_owned(
             order.push(0);
         }
         let mut last_error = None;
+        let mut can_retry = false;
         for index in order {
             // Reread after every failed source attempt: an earlier block may have committed.
             let mut state = db.state().await?;
@@ -266,6 +267,7 @@ pub(crate) async fn run_owned(
                     };
                     failures::record(&db, next, None, Stage::Source, policy, forced.is_none())
                         .await?;
+                    can_retry |= !crate::rpc::permanent_error(&error);
                     last_error = Some(error);
                     continue;
                 }
@@ -281,6 +283,11 @@ pub(crate) async fn run_owned(
                         };
                         let _ =
                             failures::record(&db, next, None, Stage::Reconcile, policy, true).await;
+                        if !once && crate::rpc::transient_error(&error) {
+                            can_retry = true;
+                            last_error = Some(error);
+                            continue;
+                        }
                         return Err(error);
                     }
                 };
@@ -317,6 +324,7 @@ pub(crate) async fn run_owned(
                 Err(error) => {
                     failures::record(&db, next, None, Stage::Fetch, policy, forced.is_none())
                         .await?;
+                    can_retry |= !crate::rpc::permanent_error(&error);
                     last_error = Some(error);
                     continue;
                 }
@@ -366,6 +374,7 @@ pub(crate) async fn run_owned(
                             forced.is_none(),
                         )
                         .await?;
+                        can_retry |= !crate::rpc::permanent_error(&error);
                         last_error = Some(error);
                         source_failed = true;
                         break;
@@ -412,7 +421,7 @@ pub(crate) async fn run_owned(
             active = index;
             continue 'work;
         }
-        if once {
+        if once || !can_retry {
             return Err(
                 last_error.unwrap_or_else(|| anyhow::anyhow!("no usable Bitcoin RPC source"))
             );

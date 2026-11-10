@@ -30,6 +30,11 @@ pub struct RpcState {
     pub constant_fail: std::sync::atomic::AtomicBool,
     pub constant_calls: AtomicUsize,
     pub advance_constant_head: AtomicU64,
+    pub head_status: AtomicUsize,
+    pub head_calls: AtomicUsize,
+    pub receipt_status: AtomicUsize,
+    pub receipt_fault: RwLock<String>,
+    pub block_calls: RwLock<Vec<u64>>,
 }
 pub struct Rpc {
     pub url: String,
@@ -42,6 +47,9 @@ impl Drop for Rpc {
     }
 }
 pub fn hash(height: u64) -> String {
+    if height == 0 {
+        return arz_axum_for_services::helper::tron::MAINNET_GENESIS.into();
+    }
     format!("{height:064x}")
 }
 pub fn salted(mut tx: Value, salt: u64) -> Value {
@@ -71,7 +79,17 @@ pub fn simple(amount: u64, salt: u64) -> Value {
 }
 impl Rpc {
     pub async fn start() -> Result<Self> {
-        async fn head(State(state): State<Arc<RpcState>>) -> Json<Value> {
+        async fn head(State(state): State<Arc<RpcState>>) -> axum::response::Response {
+            use axum::response::IntoResponse;
+            state.head_calls.fetch_add(1, Ordering::SeqCst);
+            let status = state.head_status.load(Ordering::SeqCst);
+            if status > 0 {
+                return (
+                    axum::http::StatusCode::from_u16(status as u16).unwrap(),
+                    "synthetic head outage",
+                )
+                    .into_response();
+            }
             let height = state.head.load(Ordering::SeqCst);
             Json(
                 state
@@ -82,8 +100,14 @@ impl Rpc {
                     .cloned()
                     .unwrap_or(json!({"block_header":{"raw_data":{"number":height}}})),
             )
+            .into_response()
         }
         async fn block(State(state): State<Arc<RpcState>>, Json(body): Json<Value>) -> Json<Value> {
+            state
+                .block_calls
+                .write()
+                .unwrap()
+                .push(body["num"].as_u64().unwrap());
             Json(
                 state
                     .blocks
@@ -97,8 +121,19 @@ impl Rpc {
         async fn receipt(
             State(state): State<Arc<RpcState>>,
             Json(body): Json<Value>,
-        ) -> Json<Value> {
+        ) -> axum::response::Response {
+            use axum::response::IntoResponse;
             state.receipt_calls.fetch_add(1, Ordering::SeqCst);
+            if *state.receipt_fault.read().unwrap() == body["value"].as_str().unwrap() {
+                return (
+                    axum::http::StatusCode::from_u16(
+                        state.receipt_status.load(Ordering::SeqCst) as u16
+                    )
+                    .unwrap(),
+                    "synthetic receipt outage",
+                )
+                    .into_response();
+            }
             let value = state
                 .receipts
                 .read()
@@ -114,7 +149,7 @@ impl Rpc {
                 .copied()
                 .unwrap_or(0);
             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-            Json(value)
+            Json(value).into_response()
         }
         async fn constant(
             State(state): State<Arc<RpcState>>,
@@ -151,6 +186,7 @@ impl Rpc {
         }))
         }
         let state = Arc::new(RpcState::default());
+        state.blocks.write().unwrap().insert(0,json!({"blockID":hash(0),"block_header":{"raw_data":{"number":0,"timestamp":source::TIME,"parentHash":""}},"transactions":[]}));
         let app = Router::new()
             .route("/walletsolidity/getnowblock", post(head))
             .route("/wallet/getnowblock", post(head))

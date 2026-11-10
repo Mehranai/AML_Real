@@ -28,6 +28,16 @@ impl std::error::Error for Failure {}
 fn failure(reason: &'static str, retryable: bool) -> Failure {
     Failure { reason, retryable }
 }
+pub(crate) fn transient_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<Failure>()
+        .is_some_and(|error| error.retryable)
+}
+pub(crate) fn permanent_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<Failure>()
+        .is_some_and(|error| !error.retryable)
+}
 
 #[derive(Clone)]
 pub struct Rpc {
@@ -196,11 +206,12 @@ impl Rpc {
     }
     pub async fn validate_chain(&self) -> Result<()> {
         let info = self.call("getblockchaininfo", json!([])).await?;
-        ensure!(info["chain"] == "main", "Bitcoin RPC must use mainnet");
-        ensure!(
-            self.block_hash(0).await? == crate::GENESIS,
-            "Bitcoin RPC genesis mismatch"
-        );
+        if info["chain"] != "main" {
+            return Err(failure("must use mainnet", false).into());
+        }
+        if self.block_hash(0).await? != crate::GENESIS {
+            return Err(failure("genesis mismatch", false).into());
+        }
         Ok(())
     }
     pub async fn height(&self) -> Result<u64> {

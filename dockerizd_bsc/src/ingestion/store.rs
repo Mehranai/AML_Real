@@ -34,6 +34,12 @@ pub struct ClickHouseIngestionStore {
     fail_point: Arc<AtomicU8>,
 }
 impl ClickHouseIngestionStore {
+    pub(crate) fn connection(&self) -> &Client {
+        &self.client
+    }
+    pub(crate) fn database(&self) -> &str {
+        &self.database
+    }
     pub fn new(config: &ClickHouseConfig) -> Self {
         Self {
             client: database_client(config),

@@ -20,6 +20,38 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|v| v == "maintenance") {
+        if args.len() == 1 || args[1..] == ["--help"] {
+            println!("{}", aml_warehouse::maintenance::Command::help());
+            return Ok(());
+        }
+        let command = aml_warehouse::maintenance::Command::parse(&args[1..])?;
+        let value = if command.action == "probe" {
+            bsc_aml::ingestion::CanonicalIngestor::probe_history(
+                &bsc_aml::config::AppConfig::from_env()?,
+                bsc_aml::config::IngestionConfig::from_env()?,
+            )
+            .await?
+        } else if !command.mutates() {
+            let cfg = bsc_aml::config::ClickHouseConfig::from_env()?;
+            let settings = bsc_aml::config::AppConfig::from_env()?;
+            bsc_aml::db::warehouse::Warehouse::new(cfg)?
+                .maintenance_read(&command, settings.trace_mode.required())
+                .await?
+        } else {
+            BscRuntime::connect()
+                .await?
+                .ingestor
+                .maintenance(&command)
+                .await?
+        };
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        if command.action == "probe" && value["status"] != "ready" {
+            return Err("RPC probe requires review; inspect the JSON report".into());
+        }
+        return Ok(());
+    }
     let Some(options) = Options::parse()? else {
         return Ok(());
     };

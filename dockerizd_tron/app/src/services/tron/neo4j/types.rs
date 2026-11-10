@@ -17,6 +17,11 @@ pub struct FlowNode {
 #[derive(Debug, Clone, Serialize)]
 pub struct FlowEdge {
     pub id: String,
+    pub asset_id: String,
+    pub token_id: String,
+    pub transaction_index: u32,
+    pub event_index: u32,
+    pub event_sub_index: u32,
     pub from: String,
     pub to: String,
     pub tx_hash: String,
@@ -74,6 +79,9 @@ pub struct WalletFlowGraph {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WalletPathGraph {
+    pub network_id: &'static str,
+    pub source_snapshot: serde_json::Value,
+    pub operational_snapshot: serde_json::Value,
     pub address: String,
     pub source_address: String,
     pub target_address: String,

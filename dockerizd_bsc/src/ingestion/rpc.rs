@@ -242,10 +242,25 @@ impl CanonicalRpcClient {
         for attempt in 1..=self.settings.rpc_max_attempts {
             let endpoint_index =
                 (start_index + usize::try_from(attempt - 1).unwrap_or(0)) % endpoint_count;
-            match self
-                .call_once(&self.endpoints[endpoint_index], method, params.clone())
-                .await
-            {
+            // Revalidate the exact selected endpoint when reading chain headers,
+            // including after failover. Receipts/traces remain bound to those headers.
+            let result = async {
+                let endpoint = &self.endpoints[endpoint_index];
+                if matches!(method, "eth_getBlockByNumber" | "eth_getBlockByHash") {
+                    let value = self.call_once(endpoint, "eth_chainId", json!([])).await?;
+                    let raw = value.as_str().ok_or(RpcFetchError::InvalidResponse {
+                        method: "eth_chainId",
+                        reason: "chain ID is not a quantity",
+                    })?;
+                    let chain_id = parse_u64_quantity("eth_chainId", raw)?;
+                    if chain_id != crate::BSC_CHAIN_ID {
+                        return Err(RpcFetchError::WrongChain { chain_id });
+                    }
+                }
+                self.call_once(endpoint, method, params.clone()).await
+            }
+            .await;
+            match result {
                 Ok(value) => return Ok(value),
                 Err(error)
                     if error.failover_worthy() && attempt < self.settings.rpc_max_attempts =>
@@ -462,6 +477,8 @@ struct RpcErrorPayload {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RpcFetchError {
+    #[error("RPC chain ID {chain_id} does not match BSC mainnet (56)")]
+    WrongChain { chain_id: u64 },
     #[error("failed to build the canonical ingestion HTTP client")]
     BuildClient(#[source] reqwest::Error),
     #[error("configured {endpoints} RPC endpoints but only {attempts} attempts per request")]
@@ -538,7 +555,7 @@ impl RpcFetchError {
     }
 
     fn failover_worthy(&self) -> bool {
-        self.retryable() || self.is_method_unavailable()
+        self.retryable() || self.is_method_unavailable() || matches!(self, Self::WrongChain { .. })
     }
 }
 
@@ -575,6 +592,9 @@ mod tests {
         Json(request): Json<Value>,
     ) -> Json<Value> {
         let id = request.get("id").cloned().unwrap_or(Value::Null);
+        if request["method"] == "eth_chainId" {
+            return Json(json!({"jsonrpc":"2.0","id":id,"result":"0x38"}));
+        }
         if *available {
             Json(json!({
                 "jsonrpc": "2.0",
@@ -629,5 +649,62 @@ mod tests {
         ));
         primary_server.abort();
         fallback_server.abort();
+    }
+
+    #[tokio::test]
+    async fn changed_chain_is_rejected_before_data_and_safe_fallback_is_revalidated() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let reads = Arc::new(AtomicUsize::new(0));
+        let invalid = reads.clone();
+        let router = Router::new().route(
+            "/",
+            post(move |Json(request): Json<Value>| {
+                let invalid = invalid.clone();
+                async move {
+                    if request["method"] != "eth_chainId" {
+                        invalid.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Json(json!({"jsonrpc":"2.0","id":request["id"],"result":"0x1"}))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let bad = format!("http://{}", listener.local_addr().unwrap());
+        let wrong = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let (good, server) = start_rpc(true).await;
+        let mut app = AppConfig {
+            mode: DeploymentMode::Development,
+            rpc_endpoint: RpcEndpoint::parse(&bad).unwrap(),
+            fallback_rpc_endpoints: vec![RpcEndpoint::parse(&good).unwrap()],
+            rpc_provider: "fixture".into(),
+            rpc_timeout: std::time::Duration::from_secs(2),
+            trace_mode: TraceMode::Disabled,
+            require_block_receipts: false,
+            trace_probe_block: 0,
+        };
+        let settings = IngestionConfig::from_values(&[("BSC_RPC_MAX_ATTEMPTS", "2")]).unwrap();
+        assert_eq!(
+            CanonicalRpcClient::new(&app, settings)
+                .unwrap()
+                .finalized_height()
+                .await
+                .unwrap(),
+            100
+        );
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+        app.fallback_rpc_endpoints.clear();
+        let settings = IngestionConfig::from_values(&[("BSC_RPC_MAX_ATTEMPTS", "1")]).unwrap();
+        let error = CanonicalRpcClient::new(&app, settings)
+            .unwrap()
+            .finalized_height()
+            .await
+            .unwrap_err();
+        assert!(matches!(error, RpcFetchError::WrongChain { chain_id: 1 }));
+        assert!(!error.retryable());
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+        wrong.abort();
+        server.abort();
     }
 }

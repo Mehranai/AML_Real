@@ -126,6 +126,59 @@ fn qualified_projection() -> Result<String> {
         .collect::<Vec<_>>()
         .join(","))
 }
+
+/// Read only already selected row identities and their exact UTXO witnesses.
+/// Callers supply internal SQL built from escaped values and validated keys.
+pub(super) async fn read_context(
+    db: &impl Connection,
+    database: &str,
+    network: Network,
+    selector: &str,
+    witness_selector: &str,
+    order: &str,
+    limit: usize,
+) -> Result<Vec<Edge>> {
+    let (body, _) = SQL
+        .split_once("\nORDER BY ")
+        .context("relationship query order missing")?;
+    let sql = body
+        .lines()
+        .filter(|line| !line.starts_with("--"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("{{database}}", database)
+        .replace("{{projection}}", &qualified_projection()?)
+        .replace("{{network}}", &literal(network.id()))
+        .replace("{{selector}}", selector)
+        .replace("{{witness_selector}}", witness_selector);
+    let order = order
+        .split(',')
+        .map(|part| format!("r.{part}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let lines=db.query_bounded(&format!("{sql} ORDER BY {order} LIMIT {limit} SETTINGS max_threads=2,max_memory_usage=268435456,max_execution_time=15")).await?;
+    ensure!(lines.len() <= limit, "relationship page bound exceeded");
+    let mut encoded = Vec::new();
+    let mut witnesses = Vec::new();
+    for line in lines {
+        let mut row: Vec<Value> = serde_json::from_str(&line)?;
+        witnesses.push(row.pop().context("missing UTXO witness flag")?);
+        encoded.push(serde_json::to_string(&row)?);
+    }
+    crate::core::decode_rows("aml_address_relationships", network, encoded)?
+        .into_iter()
+        .zip(witnesses)
+        .map(|(row, witness)| {
+            let edge = Edge::from_validated(row)?;
+            ensure!(
+                network != Network::Bitcoin || witness.as_u64() == Some(1),
+                "canonical UTXO witness does not match relationship {}",
+                edge.evidence()["relationship_id"]
+            );
+            Ok(edge)
+        })
+        .collect()
+}
 pub async fn read_neighborhood(
     db: &impl Connection,
     database: &str,

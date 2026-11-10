@@ -1,8 +1,11 @@
 use crate::{db::Database, model};
+use aml_chain_api::{
+    ApiPath as Path, ApiQuery as Query, EmptyQuery, Network, bridge, bridge::tbtc,
+};
 use anyhow::{Result, ensure};
 use axum::{
     Json, Router,
-    extract::{Path, Query, Request, State},
+    extract::{Request, State},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
@@ -39,6 +42,10 @@ impl Api {
 pub fn router(api: Api) -> Router {
     let protected = Router::new()
         .route("/status", get(status))
+        .route(aml_chain_api::kyt::TRANSACTION_ROUTE, get(kyt_transaction))
+        .route(tbtc::FUNDING_ROUTE, get(tbtc_funding))
+        .route(tbtc::SPENDS_ROUTE, get(tbtc_spends))
+        .route(bridge::SNAPSHOT_ROUTE, get(bridge_snapshot))
         .route("/api/bitcoin/analytics/status", get(analytics_status))
         .route("/api/bitcoin/ingestion/failures", get(ingestion_failures))
         .route(
@@ -46,6 +53,7 @@ pub fn router(api: Api) -> Router {
             get(investigate),
         )
         .route("/api/bitcoin/wallet/{address}/holdings", get(holdings))
+        .route("/api/bitcoin/wallet/{address}/transfers", get(transfers))
         .route("/api/bitcoin/assets/native", get(native_asset))
         .route("/api/bitcoin/wallet/{address}/activity", get(activity))
         .route("/api/bitcoin/wallet/{address}/semantics", get(semantics))
@@ -105,6 +113,62 @@ pub fn router(api: Api) -> Router {
         .route("/assets/bitcoin.js", get(|| async { ([("Content-Type", "text/javascript")], include_str!("../web/bitcoin.js")) }))
         .route("/ready", get(ready)).with_state(api)
 }
+async fn kyt_transaction(
+    State(api): State<Api>,
+    Path(hash): Path<String>,
+) -> Result<Json<aml_chain_api::kyt::TransactionObservation>, aml_chain_api::ApiError> {
+    aml_chain_api::kyt::transaction(
+        &api.db.warehouse_connection(),
+        api.db.database(),
+        aml_chain_api::Network::Bitcoin,
+        &hash,
+    )
+    .await
+    .map(Json)
+}
+async fn tbtc_funding(
+    State(api): State<Api>,
+    Path(hash): Path<String>,
+    Query(query): Query<tbtc::FundingQuery>,
+) -> Result<Json<tbtc::FundingObservation>, aml_chain_api::ApiError> {
+    tbtc::funding(
+        &api.db.warehouse_connection(),
+        api.db.database(),
+        &hash,
+        query,
+    )
+    .await
+    .map(Json)
+}
+
+async fn tbtc_spends(
+    State(api): State<Api>,
+    Path(hash): Path<String>,
+    Query(query): Query<tbtc::SpendQuery>,
+) -> Result<Json<tbtc::SpendObservation>, aml_chain_api::ApiError> {
+    tbtc::spends(
+        &api.db.warehouse_connection(),
+        api.db.database(),
+        &hash,
+        query,
+    )
+    .await
+    .map(Json)
+}
+
+async fn bridge_snapshot(
+    State(api): State<Api>,
+    Query(_): Query<EmptyQuery>,
+) -> Result<Json<Value>, aml_chain_api::ApiError> {
+    bridge::snapshot(
+        &api.db.warehouse_connection(),
+        api.db.database(),
+        Network::Bitcoin,
+    )
+    .await
+    .map(Json)
+}
+
 async fn authorize(
     State(api): State<Api>,
     headers: HeaderMap,
@@ -141,7 +205,7 @@ async fn authorize(
     response
 }
 fn failure(status: StatusCode, message: &str) -> Response {
-    (status, Json(json!({"error":message}))).into_response()
+    aml_chain_api::error_response(status, message)
 }
 pub struct ApiError(StatusCode, String);
 impl IntoResponse for ApiError {
@@ -203,6 +267,27 @@ async fn ingestion_failures(
     Ok(Json(crate::failures::list(&api.db, &query).await?))
 }
 pub type Options = crate::activity::Query;
+
+async fn transfers(
+    State(api): State<Api>,
+    Path(raw): Path<String>,
+    Query(query): Query<aml_warehouse::relationships::PageQuery>,
+) -> std::result::Result<Json<Value>, aml_chain_api::ApiError> {
+    let address = address(&raw).map_err(|e| aml_chain_api::ApiError::new(e.0, e.1))?;
+    let subject =
+        aml_warehouse::relationships::Subject::address(aml_warehouse::Network::Bitcoin, &address)
+            .map_err(|e| aml_chain_api::ApiError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
+    aml_warehouse::relationships::read_page(
+        &api.db.warehouse_connection(),
+        api.db.database(),
+        aml_warehouse::Network::Bitcoin,
+        &subject,
+        &query,
+    )
+    .await
+    .map(Json)
+    .map_err(aml_chain_api::transfer_error)
+}
 
 pub type Graph = aml_warehouse::relationships::Graph;
 pub async fn wallet_graph(db: &Database, address: &str, limit: usize) -> Result<Graph> {
@@ -478,11 +563,15 @@ async fn investigate(
     options
         .validate()
         .map_err(|e| ApiError(StatusCode::BAD_REQUEST, e.to_string()))?;
-    Ok(Json(
-        investigation_with_query(&api.db, &address(&raw)?, &options).await?,
-    ))
+    let value = investigation_with_query(&api.db, &address(&raw)?, &options).await?;
+    Ok(Json(aml_chain_api::response::normalize(
+        aml_warehouse::Network::Bitcoin,
+        aml_chain_api::response::Mode::Wallet,
+        value,
+    )?))
 }
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PathOptions {
     #[serde(default = "default_hops")]
     max_hops: usize,
@@ -627,16 +716,19 @@ async fn paths(
             "distinct addresses, max_hops 1..10, max_nodes 2..200 required".into(),
         ));
     }
-    Ok(Json(
-        find_paths(
-            &api.db,
-            &source,
-            &target,
-            options.max_hops,
-            options.max_nodes,
-        )
-        .await?,
-    ))
+    let value = find_paths(
+        &api.db,
+        &source,
+        &target,
+        options.max_hops,
+        options.max_nodes,
+    )
+    .await?;
+    Ok(Json(aml_chain_api::response::normalize(
+        aml_warehouse::Network::Bitcoin,
+        aml_chain_api::response::Mode::Paths,
+        value,
+    )?))
 }
 
 #[cfg(test)]
@@ -645,6 +737,117 @@ mod tests {
     use crate::config::DatabaseConfig;
     use axum::{body::Body, http::Request};
     use tower::ServiceExt;
+    #[tokio::test]
+    async fn api_boundary_contract() -> Result<()> {
+        let db = Database::new(DatabaseConfig {
+            url: "http://127.0.0.1:9".parse()?,
+            user: "fixture".into(),
+            password: "fixture-only".into(),
+            database: "bitcoin_aml".into(),
+        })?;
+        let app = router(Api::new(db, "k".repeat(32))?);
+        let wallet = "/api/bitcoin/wallet/1BoatSLRHtKNngkdXEeobR76b53LETtpyT";
+        let paths = "paths/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa";
+        for (suffix, status, code) in [
+            ("investigation?unknown=1", 400, "invalid_query"),
+            ("investigation?limit=no", 400, "invalid_query"),
+            ("investigation?limit=-1", 400, "invalid_query"),
+            ("investigation?limit=1&limit=2", 400, "invalid_query"),
+            ("investigation?limit=0", 400, "invalid_request"),
+            ("investigation?limit=101", 400, "invalid_request"),
+            (
+                "investigation?from_block=2&to_block=1",
+                400,
+                "invalid_request",
+            ),
+            ("holdings?asset=unsupported", 400, "invalid_query"),
+            ("transfers?unknown=1", 400, "invalid_query"),
+            ("transfers?limit=1&limit=2", 400, "invalid_query"),
+            ("transfers?direction=typo", 400, "invalid_query"),
+            ("transfers?limit=0", 400, "invalid_request"),
+            ("transfers?limit=101", 400, "invalid_request"),
+            ("transfers?from_block=2&to_block=1", 400, "invalid_request"),
+            (
+                "transfers?from_unix_ms=2&to_unix_ms=1",
+                400,
+                "invalid_request",
+            ),
+            ("transfers?asset_id=native:ETH", 400, "invalid_request"),
+            ("transfers?cursor=00", 400, "invalid_request"),
+            ("holdings?limit=0", 400, "invalid_request"),
+            ("holdings?limit=101", 400, "invalid_request"),
+        ]
+        .into_iter()
+        .map(|(suffix, s, c)| (suffix.to_string(), s, c))
+        .chain([
+            (format!("{paths}?unknown=1"), 400, "invalid_query"),
+            (
+                format!("{paths}?max_hops=1&max_hops=2"),
+                400,
+                "invalid_query",
+            ),
+            (format!("{paths}?max_hops=0"), 400, "invalid_request"),
+            (format!("{paths}?max_hops=11"), 400, "invalid_request"),
+            (format!("{paths}?max_nodes=1"), 400, "invalid_request"),
+        ]) {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("{wallet}/{suffix}"))
+                        .header("X-AML-Service-Key", "k".repeat(32))
+                        .body(Body::empty())?,
+                )
+                .await?;
+            assert_eq!(response.status().as_u16(), status, "{suffix}");
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let body: Value =
+                serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 4096).await?)?;
+            assert_eq!(body["api_version"], "1.0");
+            assert_eq!(body["status"], status);
+            assert_eq!(body["code"], code, "{suffix}");
+            assert!(body["error"].is_string());
+        }
+        for (path, key, status, code) in [
+            (
+                "/api/bitcoin/wallet/invalid/investigation?limit=no",
+                "",
+                401,
+                "unauthorized",
+            ),
+            ("/status", "wrong", 401, "unauthorized"),
+            (
+                "/api/bitcoin/wallet/%FF/investigation",
+                "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+                400,
+                "invalid_path",
+            ),
+            (
+                "/status",
+                "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+                503,
+                "evidence_unavailable",
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header("X-AML-Service-Key", key)
+                        .body(Body::empty())?,
+                )
+                .await?;
+            assert_eq!(response.status().as_u16(), status);
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let body: Value =
+                serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 4096).await?)?;
+            assert_eq!(body["code"], code);
+            assert_eq!(body["status"], status);
+            assert_eq!(body["api_version"], "1.0");
+        }
+        Ok(())
+    }
     #[tokio::test]
     async fn service_auth_address_and_limits_are_checked_before_storage() {
         let config = DatabaseConfig {

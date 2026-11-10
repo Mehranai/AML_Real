@@ -360,9 +360,88 @@ async fn live_governance_metadata_analytics_and_authenticated_api_use_only_share
         .error_for_status()?
         .json()
         .await?;
-    let via_api: Value = http
+    let wallet_url = format!("{base}/api/tron/wallet/{}/investigation", address(2));
+    let fetch_wallet = || async {
+        http.get(wallet_url.as_str())
+            .header("x-aml-service-key", key)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<Value>()
+            .await
+    };
+    let via_api = fetch_wallet().await?;
+    let hash = via_api["graph"]["edges"][0]["tx_hash"].as_str().unwrap();
+    let receipt_url = |hash: &str| format!("{base}/internal/kyt/transactions/{hash}");
+    assert_eq!(http.get(receipt_url(hash)).send().await?.status(), 401);
+    let receipt: aml_chain_api::kyt::TransactionObservation = http
+        .get(receipt_url(hash))
+        .header("x-aml-service-key", key)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(receipt.tx_hash, hash);
+    assert_eq!(receipt.source_snapshot, via_api["source_snapshot"]);
+    let occurrence = receipt.occurrence.expect("canonical transaction");
+    assert!(occurrence.participants.contains(&address(2)));
+    assert!(!occurrence.participants_truncated);
+    let absent: aml_chain_api::kyt::TransactionObservation = http
+        .get(receipt_url(&"f".repeat(64)))
+        .header("x-aml-service-key", key)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert!(absent.occurrence.is_none() && !absent.ambiguous);
+    assert_eq!(via_api["source_snapshot"], status["source_snapshot"]);
+    assert_eq!(
+        via_api["operational_snapshot"],
+        status["operational_snapshot"]
+    );
+    assert_eq!(via_api["ai_risk"]["status"], "DISABLED");
+    if let Ok(path) = std::env::var("CHAIN_RESPONSE_PROOF") {
+        let wallet: Value = http
+            .get(format!(
+                "{base}/api/tron/wallet/{}/investigation",
+                address(1)
+            ))
+            .header("x-aml-service-key", key)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        assert!(
+            !wallet["evidence"]["attribution"]["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let paths: Value = http
+            .get(format!(
+                "{base}/api/tron/wallet/{}/paths/{}?max_hops=3",
+                address(2),
+                address(3)
+            ))
+            .header("x-aml-service-key", key)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        std::fs::write(
+            path,
+            serde_json::to_vec(
+                &json!({"wallet":wallet,"paths":paths,"receipts":{"/status":status}}),
+            )?,
+        )?;
+    }
+    let first: Value = http
         .get(format!(
-            "{base}/api/tron/wallet/{}/investigation",
+            "{base}/api/tron/wallet/{}/transfers?limit=1",
             address(2)
         ))
         .header("x-aml-service-key", key)
@@ -371,12 +450,30 @@ async fn live_governance_metadata_analytics_and_authenticated_api_use_only_share
         .error_for_status()?
         .json()
         .await?;
-    assert_eq!(via_api["source_snapshot"], status["source_snapshot"]);
-    assert_eq!(
-        via_api["operational_snapshot"],
-        status["operational_snapshot"]
+    let cursor = first["pagination"]["next_cursor"].as_str().unwrap();
+    let second: Value = http
+        .get(format!(
+            "{base}/api/tron/wallet/{}/transfers?limit=1&cursor={cursor}",
+            address(2)
+        ))
+        .header("x-aml-service-key", key)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(first["source_snapshot"], second["source_snapshot"]);
+    assert_ne!(first["items"][0]["id"], second["items"][0]["id"]);
+    let filtered:Value=http.get(format!("{base}/api/tron/wallet/{}/transfers?limit=100&from_block=100&to_block=100&asset_id=native:TRX",address(2)))
+        .header("x-aml-service-key",key).send().await?.error_for_status()?.json().await?;
+    assert!(!filtered["items"].as_array().unwrap().is_empty());
+    assert!(
+        filtered["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["block_number"] == 100 && r["asset_id"] == "native:TRX")
     );
-    assert_eq!(via_api["ai_risk"]["status"], "DISABLED");
     assert_eq!(
         http.get(format!("{base}/api/analysis/tron/wallet/{}", address(2)))
             .header("x-aml-service-key", key)
@@ -388,6 +485,16 @@ async fn live_governance_metadata_analytics_and_authenticated_api_use_only_share
     // Replaying the source changes the source revision: stale derived/metadata results disappear.
     eprintln!("authenticated product API passed");
     replay_tron_range(loader, 100, 100).await?;
+    let stale = http
+        .get(format!(
+            "{base}/api/tron/wallet/{}/transfers?limit=1&cursor={cursor}",
+            address(2)
+        ))
+        .header("x-aml-service-key", key)
+        .send()
+        .await?;
+    assert_eq!(stale.status(), 409);
+    assert_eq!(stale.json::<Value>().await?["code"], "snapshot_changed");
     assert_eq!(
         scalar(
             &client,
@@ -436,7 +543,7 @@ async fn live_governance_metadata_analytics_and_authenticated_api_use_only_share
         let _lock = records::operational_lock(&client)?;
         records::publish_clusters(&client).await?;
     }
-    let before = investigate(client.clone(), 2).await?;
+    let before = fetch_wallet().await?;
     review(client.clone(), "CLUSTER_CLAIM", &cluster, "REVOKED").await?;
     assert!(
         load_wallet_intelligence(client.clone(), &address(9))
@@ -457,7 +564,8 @@ async fn live_governance_metadata_analytics_and_authenticated_api_use_only_share
             .top_sources
             .is_empty()
     );
-    let after = investigate(client.clone(), 2).await?;
+    let after = fetch_wallet().await?;
+    assert_eq!(before["source_snapshot"], after["source_snapshot"]);
     assert_ne!(
         before["operational_snapshot"],
         after["operational_snapshot"]

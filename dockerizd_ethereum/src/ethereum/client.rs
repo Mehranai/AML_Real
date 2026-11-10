@@ -18,6 +18,10 @@ use crate::config::{AppConfig, FinalityTag, TraceMode};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct EthereumNodeStatus {
+    pub status: String,
+    pub configured_start_block: Option<u64>,
+    pub history_samples: Vec<serde_json::Value>,
+    pub full_history_verified: bool,
     pub network_id: String,
     pub rpc_provider: String,
     pub chain_id: u64,
@@ -113,13 +117,17 @@ impl EthereumRpc {
         };
 
         Ok(EthereumNodeStatus {
+            status: "not_tested".into(),
+            configured_start_block: None,
+            history_samples: vec![],
+            full_history_verified: false,
             network_id: self.network_id.clone(),
             rpc_provider: self.rpc_provider.clone(),
             chain_id,
             client_version,
             latest_block,
             finalized_block,
-            block_receipts_available: true,
+            block_receipts_available: false,
             internal_traces_available,
             trace_mode: trace_mode_name(self.trace_mode).to_string(),
         })
@@ -298,7 +306,7 @@ impl EthereumRpc {
             })
     }
 
-    async fn validate_chain_id(&self) -> anyhow::Result<()> {
+    pub(super) async fn validate_chain_id(&self) -> anyhow::Result<()> {
         let chain_id = self.chain_id().await?;
         ensure!(
             chain_id == self.expected_chain_id,
@@ -386,6 +394,36 @@ impl EthereumRpc {
     }
 }
 
+/// Retry transport outages and explicit temporary provider errors, never bad evidence,
+/// missing capabilities, authentication errors or a different chain identity.
+pub(super) fn transient_rpc_error(error: &anyhow::Error) -> bool {
+    use alloy::transports::{TransportError, TransportErrorKind};
+    if error
+        .downcast_ref::<tokio::time::error::Elapsed>()
+        .is_some()
+    {
+        return true;
+    }
+    let Some(rpc) = error.downcast_ref::<TransportError>() else {
+        return false;
+    };
+    match rpc {
+        TransportError::ErrorResp(payload) => matches!(payload.code, -32005 | -32603),
+        TransportError::Transport(TransportErrorKind::HttpError(http)) => {
+            matches!(http.status, 408 | 425 | 429 | 500..=599)
+        }
+        TransportError::Transport(TransportErrorKind::Custom(source)) => source
+            .downcast_ref::<alloy::transports::http::reqwest::Error>()
+            .is_some_and(|e| {
+                e.is_timeout()
+                    || e.is_connect()
+                    || e.is_body()
+                    || (e.is_request() && !e.is_builder())
+            }),
+        _ => false,
+    }
+}
+
 fn normalize_trace_results(
     block: &Block,
     results: Vec<TraceResult>,
@@ -445,6 +483,43 @@ fn normalize_trace_results(
         .collect()
 }
 
+#[cfg(test)]
+mod retry_tests {
+    use super::transient_rpc_error;
+    use alloy::transports::{TransportError, TransportErrorKind};
+    #[test]
+    fn retry_only_temporary_rpc_failures_and_preserve_context() {
+        for status in [400, 401, 403, 404, 408, 425, 429, 500, 502, 503, 504] {
+            let error = anyhow::Error::from(TransportErrorKind::http_error(
+                status,
+                "private fixture body".into(),
+            ))
+            .context("fetch failed");
+            assert_eq!(
+                transient_rpc_error(&error),
+                matches!(status, 408 | 425 | 429 | 500..=599),
+                "{status}"
+            );
+        }
+        for code in [-32601, -32602, -32000, -32005, -32603] {
+            let error: TransportError = TransportError::err_resp(
+                serde_json::from_value(serde_json::json!({"code":code,"message":"fixture"}))
+                    .unwrap(),
+            );
+            assert_eq!(
+                transient_rpc_error(&error.into()),
+                matches!(code, -32005 | -32603)
+            );
+        }
+        assert!(!transient_rpc_error(&anyhow::anyhow!(
+            "invalid finalized receipt: 503 timeout"
+        )));
+        assert!(!transient_rpc_error(&anyhow::anyhow!(
+            "Ethereum RPC returned chain id 56, expected 1"
+        )));
+    }
+}
+
 fn trace_mode_name(mode: TraceMode) -> &'static str {
     match mode {
         TraceMode::Disabled => "disabled",
@@ -454,7 +529,51 @@ fn trace_mode_name(mode: TraceMode) -> &'static str {
 }
 
 pub async fn probe_node(config: &AppConfig) -> anyhow::Result<EthereumNodeStatus> {
-    EthereumRpc::connect(config).await?.status().await
+    tokio::time::timeout(Duration::from_secs(120), probe_node_inner(config))
+        .await
+        .context("Ethereum probe exceeded 120 seconds")?
+}
+async fn probe_node_inner(config: &AppConfig) -> anyhow::Result<EthereumNodeStatus> {
+    let rpc = EthereumRpc::connect(config).await?;
+    let mut report = rpc.status().await?;
+    ensure!(
+        config.eth_start_block <= report.finalized_block,
+        "configured Ethereum start is newer than the finalized head"
+    );
+    for height in [config.eth_start_block, report.finalized_block]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        rpc.validate_chain_id().await?;
+        let fetched = rpc.fetch_block(height).await?;
+        let facts = super::extract_block(
+            config,
+            &fetched.block,
+            &fetched.receipts,
+            fetched.traces.as_deref(),
+            &super::SemanticDecoderRegistry::from_contracts(vec![]),
+            0,
+        )?;
+        ensure!(
+            rpc.block_hash(height).await? == format!("{:#x}", fetched.block.header.hash),
+            "Ethereum probe block changed during sampling"
+        );
+        report.history_samples.push(serde_json::json!({"height":height,"hash":facts.block.block_hash,"transactions":facts.transactions.len(),"receipts":fetched.receipts.len(),"trace_coverage":fetched.traces.is_some()}));
+    }
+    report.configured_start_block = Some(config.eth_start_block);
+    report.block_receipts_available = true;
+    report.status = if config.eth_trace_mode.enabled()
+        && report
+            .history_samples
+            .iter()
+            .any(|s| s["trace_coverage"] != true)
+    {
+        "degraded"
+    } else {
+        "ready"
+    }
+    .into();
+    Ok(report)
 }
 
 #[cfg(test)]

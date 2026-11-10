@@ -86,6 +86,11 @@ struct PathSearchResult {
 #[derive(Debug, Clone, Deserialize, clickhouse::Row)]
 struct RelationshipReadRow {
     relationship_id: String,
+    asset_id: String,
+    token_id: String,
+    transaction_index: u32,
+    event_index: u32,
+    event_sub_index: u32,
     from_address: String,
     to_address: String,
     token_address: String,
@@ -371,6 +376,9 @@ pub async fn build_wallet_path_graph(
 
     read_fence.unchanged(&clickhouse).await?;
     Ok(WalletPathGraph {
+        network_id: "tron:mainnet",
+        source_snapshot: read_fence.source_snapshot(),
+        operational_snapshot: read_fence.operational_snapshot(),
         address: source_address.to_string(),
         source_address: source_address.to_string(),
         target_address: target_address.to_string(),
@@ -576,6 +584,8 @@ async fn load_relationships_for_addresses(
             r#"
             SELECT
                 ar.relationship_id AS relationship_id,
+                ar.asset_id AS asset_id,ifNull(toString(ar.token_id),'') AS token_id,
+                ar.transaction_index AS transaction_index,ar.event_index AS event_index,ar.event_sub_index AS event_sub_index,
                 ar.from_address AS from_address,
                 ar.to_address AS to_address,
                 ar.token_address AS token_address,
@@ -667,6 +677,8 @@ async fn load_path_relationships_for_address(
             r#"
             SELECT
                 ar.relationship_id AS relationship_id,
+                ar.asset_id AS asset_id,ifNull(toString(ar.token_id),'') AS token_id,
+                ar.transaction_index AS transaction_index,ar.event_index AS event_index,ar.event_sub_index AS event_sub_index,
                 ar.from_address AS from_address,
                 ar.to_address AS to_address,
                 ar.token_address AS token_address,
@@ -742,6 +754,8 @@ async fn load_path_relationships_for_address(
             r#"
             SELECT
                 ar.relationship_id AS relationship_id,
+                ar.asset_id AS asset_id,ifNull(toString(ar.token_id),'') AS token_id,
+                ar.transaction_index AS transaction_index,ar.event_index AS event_index,ar.event_sub_index AS event_sub_index,
                 ar.from_address AS from_address,
                 ar.to_address AS to_address,
                 ar.token_address AS token_address,
@@ -817,6 +831,8 @@ async fn load_path_relationships_for_address(
             r#"
             SELECT
                 ar.relationship_id AS relationship_id,
+                ar.asset_id AS asset_id,ifNull(toString(ar.token_id),'') AS token_id,
+                ar.transaction_index AS transaction_index,ar.event_index AS event_index,ar.event_sub_index AS event_sub_index,
                 ar.from_address AS from_address,
                 ar.to_address AS to_address,
                 ar.token_address AS token_address,
@@ -1023,6 +1039,11 @@ fn relationship_row_to_edge(row: RelationshipReadRow) -> FlowEdge {
 
     FlowEdge {
         id: row.relationship_id,
+        asset_id: row.asset_id,
+        token_id: row.token_id,
+        transaction_index: row.transaction_index,
+        event_index: row.event_index,
+        event_sub_index: row.event_sub_index,
         from: row.from_address,
         to: row.to_address,
         token_address: row.token_address,
@@ -1316,6 +1337,11 @@ mod tests {
     #[test]
     fn summarizes_direct_exchange_interactions() {
         let edge = FlowEdge {
+            asset_id: "native:TRX".into(),
+            token_id: String::new(),
+            transaction_index: 0,
+            event_index: 0,
+            event_sub_index: 0,
             id: "edge".to_string(),
             from: "wallet".to_string(),
             to: "exchange_wallet".to_string(),

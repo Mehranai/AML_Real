@@ -33,6 +33,9 @@ struct Chain {
     blocks: Vec<Value>,
     receipts: Vec<Vec<Value>>,
     traces: Vec<Vec<Value>>,
+    fault: Option<(String, u16)>,
+    calls: std::collections::BTreeMap<String, usize>,
+    chain_id: u64,
 }
 fn tx(height: u64, index: u64, from: &str, to: &str, value: u64) -> Value {
     json!({"hash":hash(height*10+index),"nonce":format!("0x{:x}",height+index),"blockHash":hash(height),"blockNumber":format!("0x{height:x}"),"transactionIndex":format!("0x{index:x}"),"from":from,"to":to,"value":format!("0x{value:x}"),"gasPrice":"0x1","gas":"0x186a0","input":"0x","v":"0x25","r":"0x1","s":"0x1","type":"0x0","chainId":"0x1"})
@@ -57,6 +60,41 @@ fn log(contract: &str, height: u64, index: u64, nft: bool) -> Value {
         topics.push(format!("0x{}", "f".repeat(64)));
     }
     json!({"address":contract,"topics":topics,"data":if nft{"0x".to_owned()}else{format!("0x{}","f".repeat(64))},"blockNumber":format!("0x{height:x}"),"blockHash":hash(height),"transactionHash":hash(height*10),"transactionIndex":"0x0","logIndex":format!("0x{index:x}"),"removed":false})
+}
+fn marketplace_log(emitter: &str, index: u64) -> Value {
+    let mut event = log(emitter, 7, index, false);
+    event["topics"] = json!([
+        "0x9d9af8e38d66c62e2c12f0225249fd9d721c54b83f48d9352c97c6cacdcb6f31",
+        topic(A),
+        hash(0)
+    ]);
+    let words = [
+        hash(99),
+        topic(B),
+        hash(128),
+        hash(288),
+        hash(1),
+        hash(2),
+        topic(NFT),
+        format!("0x{}", "f".repeat(64)),
+        hash(1),
+        hash(2),
+        hash(0),
+        hash(0),
+        hash(0),
+        hash(11),
+        topic(A),
+        hash(0),
+        hash(0),
+        hash(0),
+        hash(1),
+        topic(C),
+    ];
+    event["data"] = json!(format!(
+        "0x{}",
+        words.iter().map(|word| &word[2..]).collect::<String>()
+    ));
+    event
 }
 fn frame(from: &str, to: &str, value: u64) -> Value {
     json!({"type":"CALL","from":from,"to":to,"value":format!("0x{value:x}"),"gas":"0x186a0","gasUsed":"0x5208","input":"0x","output":"0x"})
@@ -113,6 +151,9 @@ fn fixture() -> Result<Chain> {
         blocks,
         receipts,
         traces,
+        fault: None,
+        calls: Default::default(),
+        chain_id: 1,
     })
 }
 fn abi_string(s: &str) -> String {
@@ -127,7 +168,35 @@ fn abi_string(s: &str) -> String {
         "0".repeat((32 - s.len() % 32) % 32 * 2)
     )
 }
-async fn rpc(State(chain): State<Arc<RwLock<Chain>>>, Json(request): Json<Value>) -> Json<Value> {
+async fn rpc(
+    State(chain): State<Arc<RwLock<Chain>>>,
+    Json(request): Json<Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    {
+        let mut state = chain.write().unwrap();
+        let requests = request
+            .as_array()
+            .cloned()
+            .unwrap_or_else(|| vec![request.clone()]);
+        let mut status = None;
+        for r in requests {
+            let method = r["method"].as_str().unwrap_or_default();
+            *state.calls.entry(method.into()).or_default() += 1;
+            if let Some((fault, code)) = &state.fault {
+                if fault == method {
+                    status = Some(*code);
+                }
+            }
+        }
+        if let Some(status) = status {
+            return (
+                axum::http::StatusCode::from_u16(status).unwrap(),
+                "synthetic RPC outage",
+            )
+                .into_response();
+        }
+    }
     let reply = |r: &Value| {
         let chain = chain.read().unwrap();
         let method = r["method"].as_str().unwrap();
@@ -146,9 +215,13 @@ async fn rpc(State(chain): State<Arc<RwLock<Chain>>>, Json(request): Json<Value>
         } else {
             chain.head
         };
-        let i = if height == 8 { 1 } else { 0 };
+        let i = chain
+            .blocks
+            .iter()
+            .position(|b| b["number"] == format!("0x{height:x}"))
+            .unwrap_or(0);
         let value = match method {
-            "eth_chainId" => json!("0x1"),
+            "eth_chainId" => json!(format!("0x{:x}", chain.chain_id)),
             "web3_clientVersion" => json!("synthetic-ethereum-fixture"),
             "eth_blockNumber" => json!(format!("0x{:x}", chain.head)),
             "eth_getBlockByNumber" => chain.blocks[i].clone(),
@@ -187,6 +260,7 @@ async fn rpc(State(chain): State<Arc<RwLock<Chain>>>, Json(request): Json<Value>
     } else {
         reply(&request)
     })
+    .into_response()
 }
 fn config(url: String) -> Result<AppConfig> {
     Ok(AppConfig {
@@ -243,11 +317,116 @@ async fn response(app: Router, path: &str) -> Result<Value> {
     );
     Ok(serde_json::from_slice(&body)?)
 }
+
+#[tokio::test]
+#[ignore = "requires a new disposable ClickHouse database and fixture service-key environment"]
+async fn tbtc_mint_reads_one_successful_canonical_receipt() -> Result<()> {
+    let evidence: Value = serde_json::from_str(include_str!(
+        "../../shared/chain_api/tests/fixtures/tbtc-mint-mainnet.json"
+    ))?;
+    let mut chain = fixture()?;
+    let mint = evidence["mint"].as_array().context("missing mint logs")?;
+    chain.receipts[0][0]["logs"]
+        .as_array_mut()
+        .unwrap()
+        .extend(mint.iter().enumerate().map(|(i, log)| {
+            json!({
+                "address":log["address"],"topics":log["topics"],"data":log["data"],
+                "blockNumber":"0x7","blockHash":hash(7),"transactionHash":hash(70),
+                "transactionIndex":"0x0","logIndex":format!("0x{:x}", i + 2),"removed":false
+            })
+        }));
+    let mut failed = chain.receipts[0][0]["logs"][4].clone();
+    failed["logIndex"] = json!("0x5");
+    failed["transactionHash"] = json!(hash(71));
+    failed["transactionIndex"] = json!("0x1");
+    chain.receipts[0][1]["logs"] = json!([failed]);
+    let timestamp = u64::from_str_radix(
+        chain.blocks[0]["timestamp"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("0x"),
+        16,
+    )? * 1000;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = format!("http://{}", listener.local_addr()?);
+    let router = Router::new()
+        .route("/", post(rpc))
+        .with_state(Arc::new(RwLock::new(chain)));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let mut cfg = config(endpoint)?;
+    cfg.eth_trace_mode = TraceMode::Disabled;
+    cfg.clickhouse_database = "ethereum_tbtc_mint_fixture".into();
+    db::initialize_ethereum_schema(&cfg).await?;
+    IngestionService::connect(cfg.clone())
+        .await?
+        .ingest_range(7, 7)
+        .await?;
+    let app = ethereum_aml::api::build_router(cfg).await?;
+    let key = mint[2]["topics"][2].as_str().unwrap();
+    let path =
+        |key| format!("/internal/bridge/tbtc/mints/{key}?from_ms={timestamp}&to_ms={timestamp}");
+    let observed = response(app.clone(), &path(key)).await?;
+    let logs = observed["finalizations"]["logs"]
+        .as_array()
+        .context("missing finalizations")?;
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0]["log_index"], 4);
+    assert_eq!(logs[0]["tx_hash"], hash(70));
+    let mut neighbors: Vec<_> = observed["preceding_logs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|log| {
+            assert_eq!(log["tx_hash"], hash(70));
+            log["log_index"].as_u64().unwrap()
+        })
+        .collect();
+    neighbors.sort_unstable();
+    assert_eq!(neighbors, [2, 3]);
+    let missing = response(app, &path(&hash(1))).await?;
+    assert_eq!(missing["finalizations"]["logs"], json!([]));
+    assert_eq!(missing["preceding_logs"], json!([]));
+    server.abort();
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "requires a new disposable ClickHouse database and fixture service-key environment"]
 async fn rpc_to_common_storage_workers_and_investigation() -> Result<()> {
     ethereum_aml::init_tracing();
-    let chain = Arc::new(RwLock::new(fixture()?));
+    let mut fixture = fixture()?;
+    let tbtc_fixture: Value = serde_json::from_str(include_str!(
+        "../../shared/chain_api/tests/fixtures/tbtc-mainnet.json"
+    ))?;
+    let sweep_fixture: Value = serde_json::from_str(include_str!(
+        "../../shared/chain_api/tests/fixtures/tbtc-sweep-mainnet.json"
+    ))?;
+    let reveal_log = json!({"address":tbtc_fixture["eth"]["address"],"topics":tbtc_fixture["eth"]["topics"],
+        "data":tbtc_fixture["eth"]["data"],"blockNumber":"0x7","blockHash":hash(7),
+        "transactionHash":hash(70),"transactionIndex":"0x0","logIndex":"0x4","removed":false});
+    let mut failed_reveal = reveal_log.clone();
+    failed_reveal["logIndex"] = json!("0x5");
+    failed_reveal["transactionHash"] = json!(hash(71));
+    failed_reveal["transactionIndex"] = json!("0x1");
+    let sweep_log = json!({"address":sweep_fixture["proof"]["address"],"topics":sweep_fixture["proof"]["topics"],
+        "data":sweep_fixture["proof"]["data"],"blockNumber":"0x7","blockHash":hash(7),
+        "transactionHash":hash(70),"transactionIndex":"0x0","logIndex":"0x6","removed":false});
+    let mut failed_sweep = sweep_log.clone();
+    failed_sweep["logIndex"] = json!("0x7");
+    failed_sweep["transactionHash"] = json!(hash(71));
+    failed_sweep["transactionIndex"] = json!("0x1");
+    fixture.receipts[0][1]["logs"] = json!([failed_reveal, failed_sweep]);
+    fixture.receipts[0][0]["logs"]
+        .as_array_mut()
+        .unwrap()
+        .extend([
+            marketplace_log("0x0000000000000068f116a894984e2db1123eb395", 2),
+            marketplace_log(C, 3),
+            reveal_log,
+            sweep_log,
+        ]);
+    let chain = Arc::new(RwLock::new(fixture));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let endpoint = format!("http://{}", listener.local_addr()?);
     let router = Router::new()
@@ -350,6 +529,60 @@ async fn rpc_to_common_storage_workers_and_investigation() -> Result<()> {
         2
     );
     let app = ethereum_aml::api::build_router(cfg.clone()).await?;
+    let timestamp = u64::from_str_radix(
+        chain.read().unwrap().blocks[0]["timestamp"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("0x"),
+        16,
+    )? * 1000;
+    let funding = tbtc_fixture["btc"]["tx_hash"].as_str().unwrap();
+    let reveal_path =
+        format!("/internal/bridge/tbtc/reveals/{funding}?from_ms={timestamp}&to_ms={timestamp}");
+    let found = response(app.clone(), &format!("{reveal_path}&output_index=1")).await?;
+    assert_eq!(found["logs"].as_array().unwrap().len(), 1);
+    assert_eq!(found["logs"][0]["log_index"], 4);
+    assert_eq!(
+        found["logs"][0]["data"],
+        tbtc_fixture["eth"]["data"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("0x")
+    );
+    let missed = response(app.clone(), &format!("{reveal_path}&output_index=0")).await?;
+    assert_eq!(missed["logs"], json!([]));
+    let sweep_tx = sweep_fixture["spend"]["tx_hash"].as_str().unwrap();
+    let sweeps_path =
+        |txid| format!("/internal/bridge/tbtc/sweeps/{txid}?from_ms={timestamp}&to_ms={timestamp}");
+    let found = response(app.clone(), &sweeps_path(sweep_tx)).await?;
+    assert_eq!(found["logs"].as_array().unwrap().len(), 1);
+    assert_eq!(found["logs"][0]["log_index"], 6);
+    assert_eq!(
+        response(app.clone(), &sweeps_path(funding)).await?["logs"],
+        json!([])
+    );
+    let first = response(
+        app.clone(),
+        &format!("/api/ethereum/wallet/{B}/transfers?limit=1"),
+    )
+    .await?;
+    let cursor = first["pagination"]["next_cursor"].as_str().unwrap();
+    let second = response(
+        app.clone(),
+        &format!("/api/ethereum/wallet/{B}/transfers?limit=1&cursor={cursor}"),
+    )
+    .await?;
+    assert_eq!(first["source_snapshot"], second["source_snapshot"]);
+    assert_ne!(first["items"][0]["id"], second["items"][0]["id"]);
+    let filtered=response(app.clone(),&format!("/api/ethereum/wallet/{B}/transfers?limit=100&from_block=7&to_block=7&asset_id=native:ETH")).await?;
+    assert!(!filtered["items"].as_array().unwrap().is_empty());
+    assert!(
+        filtered["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["asset_id"] == "native:ETH" && r["amount"].is_string())
+    );
     let wallet = response(
         app.clone(),
         &format!("/api/ethereum/wallet/{B}/investigation"),
@@ -362,6 +595,35 @@ async fn rpc_to_common_storage_workers_and_investigation() -> Result<()> {
     assert!(wallet["block_credits"][0]["tx_hash"].is_null());
     assert_eq!(wallet["block_credits"][0]["amount_raw"], "1000000000");
     assert_eq!(wallet["source_snapshot"]["as_of_block"], 7);
+    let marketplace = &wallet["nft_marketplace_evidence"];
+    assert_eq!(marketplace["status"], "available");
+    assert_eq!(marketplace["searched_transactions"], 1);
+    assert_eq!(marketplace["items"].as_array().unwrap().len(), 1);
+    let order = &marketplace["items"][0];
+    assert_eq!(order["receipt"]["log_index"], 2);
+    assert_eq!(
+        order["order"]["offer"][0]["identifier"],
+        aml_warehouse::RawAmount::MAX
+    );
+    assert_eq!(order["order"]["consideration"][1]["recipient"], C);
+    assert_eq!(order["order"]["consideration"][0]["amount_raw"], "11");
+    assert_eq!(order["related_nft_transfers"].as_array().unwrap().len(), 1);
+    aml_chain_api::response::validate(
+        aml_warehouse::Network::Ethereum,
+        aml_chain_api::response::Mode::Wallet,
+        &wallet,
+    )?;
+    let mut forged = wallet.clone();
+    forged["nft_marketplace_evidence"]["items"][0]["order"]["consideration"][0]["amount_raw"] =
+        json!("12");
+    assert!(
+        aml_chain_api::response::validate(
+            aml_warehouse::Network::Ethereum,
+            aml_chain_api::response::Mode::Wallet,
+            &forged
+        )
+        .is_err()
+    );
     eprintln!("DB-2: investigation API done");
     let holdings = response(app.clone(), &format!("/api/ethereum/wallet/{B}/holdings")).await?;
     assert_eq!(holdings["source"], "finalized_rpc");
@@ -458,6 +720,7 @@ async fn rpc_to_common_storage_workers_and_investigation() -> Result<()> {
             source_type: "ANALYST".into(),
             trust_tier: "VERIFIED".into(),
             reference_url: "https://example.invalid/fixtures".into(),
+            license: "test fixture".into(),
             created_by: "fixture-analyst".into(),
         },
         submitted_by: "fixture-analyst".into(),
@@ -516,6 +779,26 @@ async fn rpc_to_common_storage_workers_and_investigation() -> Result<()> {
             .context("missing entities")?
             .is_empty()
     );
+    if let Ok(path) = std::env::var("CHAIN_RESPONSE_PROOF") {
+        let paths = response(
+            app.clone(),
+            &format!("/api/ethereum/wallet/{A}/paths/{C}?max_hops=3"),
+        )
+        .await?;
+        let status = response(app.clone(), "/status").await?;
+        assert!(
+            !assessed["evidence"]["attribution"]["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        std::fs::write(
+            path,
+            serde_json::to_vec(
+                &json!({"wallet":assessed,"paths":paths,"receipts":{"/status":status}}),
+            )?,
+        )?;
+    }
     // A reviewed service is an endpoint, not a bridge for inferred fund continuity.
     std::fs::write(
         &path,
@@ -523,7 +806,7 @@ async fn rpc_to_common_storage_workers_and_investigation() -> Result<()> {
             "address,entity_id,entity_name,entity_type,address_role,confidence,risk_level,is_exposure_seed,seed_category,source_record_id,evidence_refs,review_status,reviewed_by,review_reason\n{B},fixture-service,Fixture service,exchange,HOT_WALLET,0.99,0,false,,case-2,https://example.invalid/case-2,APPROVED,fixture-analyst,Reviewed synthetic service\n"
         ),
     )?;
-    intelligence::import_entity_labels_csv(&cfg, &path, options).await?;
+    intelligence::import_entity_labels_csv(&cfg, &path, options.clone()).await?;
     clustering::discover_address_clusters(&cfg).await?;
     exposure::propagate_exposure(&cfg, ExposureOptions::default()).await?;
     assert_eq!(
@@ -545,7 +828,26 @@ async fn rpc_to_common_storage_workers_and_investigation() -> Result<()> {
         .into_iter()
         .find(|c| c["address"] == A)
         .context("missing test claim")?;
-    db::records::store(&client,"intelligence_reviews",json!({"review_id":"fixture-revoke","subject_id":claim["claim_id"],"decision":"REVOKED","reviewer":"fixture-analyst","reason":"Withdraw fixture claim","evidence_refs":["https://example.invalid/revoke"]})).await?;
+    let revision = claim["revision"]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| claim["revision"].to_string());
+    let revoke_csv = |expected: &str| {
+        format!(
+            "address,entity_id,entity_name,entity_type,address_role,confidence,risk_level,is_exposure_seed,seed_category,source_record_id,evidence_refs,review_status,reviewed_by,review_reason,expected_revision\n{A},fixture-illicit,Fixture illicit,illicit,HOT_WALLET,0.95,95,true,illicit,case-1,https://example.invalid/revoke,REVOKED,fixture-analyst,Withdraw fixture claim,{expected}\n"
+        )
+    };
+    std::fs::write(&path, revoke_csv("1"))?;
+    assert!(
+        intelligence::import_entity_labels_csv(&cfg, &path, options.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("matching revision")
+    );
+    std::fs::write(&path, revoke_csv(&revision))?;
+    let revoked = intelligence::import_entity_labels_csv(&cfg, &path, options).await?;
+    assert_eq!((revoked.submitted, revoked.revoked), (0, 1));
     assert_eq!(
         client
             .query("SELECT count() FROM aml_exposure_paths_visible")
@@ -570,6 +872,331 @@ async fn rpc_to_common_storage_workers_and_investigation() -> Result<()> {
     let foreign=client.query("SELECT name FROM system.tables WHERE database=currentDatabase() AND NOT startsWith(name,'aml_')").fetch_all::<String>().await?;
     assert!(foreign.is_empty());
     std::fs::remove_file(path)?;
+    server.abort();
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable ETHEREUM_TEST_CLICKHOUSE_URL"]
+async fn follow_recovers_rpc_failures_catches_new_head_and_resumes_checkpoint() -> Result<()> {
+    use std::time::Duration;
+    async fn wait_height(client: &db::Client, height: u64) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(45), async {
+            loop {
+                if client
+                    .query("SELECT max(block_number) FROM aml_ingested_blocks_canonical")
+                    .fetch_one::<u64>()
+                    .await?
+                    == height
+                {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await??;
+        Ok(())
+    }
+    let chain = Arc::new(RwLock::new(fixture()?));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let mut cfg = config(format!("http://{}", listener.local_addr()?))?;
+    cfg.clickhouse_database = "ethereum_aml_ing1".into();
+    cfg.eth_trace_mode = TraceMode::Disabled;
+    let app = Router::new()
+        .route("/", post(rpc))
+        .with_state(chain.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    db::initialize_ethereum_schema(&cfg).await?;
+    let client = db::database_client(&cfg);
+    ensure!(
+        client
+            .query("SELECT count() FROM aml_ingested_blocks_canonical")
+            .fetch_one::<u64>()
+            .await?
+            == 0,
+        "follow fixture must be fresh"
+    );
+    let service = IngestionService::connect(cfg.clone()).await?;
+    chain.write().unwrap().fault = Some(("eth_getBlockByNumber".into(), 503));
+    let worker = tokio::spawn(async move { service.follow_finalized(None, Some(2)).await });
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if chain
+                .read()
+                .unwrap()
+                .calls
+                .get("eth_getBlockByNumber")
+                .copied()
+                .unwrap_or(0)
+                >= 2
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await?;
+    ensure!(
+        !worker.is_finished(),
+        "follow exited on a temporary head outage"
+    );
+    assert_eq!(
+        client
+            .query("SELECT count() FROM aml_ingested_blocks_canonical")
+            .fetch_one::<u64>()
+            .await?,
+        0
+    );
+    chain.write().unwrap().fault = None;
+    wait_height(&client, 7).await?;
+    let receipts = chain
+        .read()
+        .unwrap()
+        .calls
+        .get("eth_getBlockReceipts")
+        .copied()
+        .unwrap_or(0);
+    {
+        let mut state = chain.write().unwrap();
+        state.head = 8;
+        state.fault = Some(("eth_getBlockReceipts".into(), 503));
+    }
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if chain
+                .read()
+                .unwrap()
+                .calls
+                .get("eth_getBlockReceipts")
+                .copied()
+                .unwrap_or(0)
+                >= receipts + 2
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await?;
+    ensure!(
+        !worker.is_finished(),
+        "follow exited on a temporary receipt outage"
+    );
+    assert_eq!(
+        client
+            .query("SELECT max(block_number) FROM aml_ingested_blocks_canonical")
+            .fetch_one::<u64>()
+            .await?,
+        7
+    );
+    chain.write().unwrap().fault = None;
+    let report = tokio::time::timeout(Duration::from_secs(45), worker).await???;
+    assert_eq!(report.completed_blocks, 2);
+    assert_eq!(report.to_block, 8);
+    assert_eq!(
+        client
+            .query("SELECT count() FROM aml_transactions_canonical")
+            .fetch_one::<u64>()
+            .await?,
+        3
+    );
+    let frame = aml_warehouse::visibility::capture(
+        &client,
+        &cfg.clickhouse_database,
+        aml_warehouse::Network::Ethereum,
+    )
+    .await?;
+    assert_eq!(frame.value()["history_complete"], false);
+    {
+        let mut state = chain.write().unwrap();
+        let mut next = state.blocks[1].clone();
+        next["number"] = json!("0x9");
+        next["hash"] = json!(hash(9));
+        next["parentHash"] = json!(hash(8));
+        next["transactions"] = json!([]);
+        next["gasUsed"] = json!("0x0");
+        state.blocks.push(next);
+        state.receipts.push(vec![]);
+        state.traces.push(vec![]);
+        state.head = 9;
+    }
+    let restarted = IngestionService::connect(cfg.clone()).await?;
+    let report = tokio::time::timeout(
+        Duration::from_secs(45),
+        restarted.follow_finalized(None, Some(1)),
+    )
+    .await??;
+    assert_eq!(report.completed_blocks, 1);
+    assert_eq!(report.from_block, 9);
+    assert_eq!(
+        client
+            .query("SELECT count() FROM aml_ingested_blocks_canonical")
+            .fetch_one::<u64>()
+            .await?,
+        3
+    );
+    chain.write().unwrap().chain_id = 56;
+    let error = tokio::time::timeout(
+        Duration::from_secs(10),
+        restarted.follow_finalized(None, Some(1)),
+    )
+    .await?
+    .unwrap_err();
+    ensure!(
+        error.to_string().contains("chain id"),
+        "wrong-network RPC was retried: {error:#}"
+    );
+    assert_eq!(
+        client
+            .query("SELECT count() FROM aml_ingested_blocks_canonical")
+            .fetch_one::<u64>()
+            .await?,
+        3
+    );
+    drop(restarted);
+    server.abort();
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires disposable ETHEREUM_TEST_CLICKHOUSE_URL and ETHEREUM_FAILURE_MAX_ATTEMPTS=2"]
+async fn maintenance_probe_gap_refresh_and_explicit_dead_letter_repair() -> Result<()> {
+    use aml_warehouse::{
+        Network,
+        maintenance::{self, Command},
+        publication,
+    };
+    ensure!(
+        maintenance::failure_limit("ETHEREUM_FAILURE_MAX_ATTEMPTS")? == 2,
+        "fixture requires ETHEREUM_FAILURE_MAX_ATTEMPTS=2"
+    );
+    let chain = Arc::new(RwLock::new(fixture()?));
+    chain.write().unwrap().head = 8;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let mut cfg = config(format!("http://{}", listener.local_addr()?))?;
+    cfg.clickhouse_database = "ethereum_aml_ing2".into();
+    let app = Router::new()
+        .route("/", post(rpc))
+        .with_state(chain.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    db::initialize_ethereum_schema(&cfg).await?;
+    let client = db::database_client(&cfg);
+    let probe = ethereum_aml::ethereum::probe_node(&cfg).await?;
+    assert_eq!(probe.status, "ready");
+    assert!(probe.block_receipts_available);
+    assert_eq!(probe.history_samples.len(), 2);
+    assert!(!probe.full_history_verified);
+    let service = IngestionService::connect(cfg.clone()).await?;
+    service.ingest_range(7, 8).await?;
+    let before = publication::state(&client, &cfg.clickhouse_database, Network::Ethereum).await?;
+    assert_eq!(
+        maintenance::scan(
+            &client,
+            &cfg.clickhouse_database,
+            Network::Ethereum,
+            7,
+            8,
+            2,
+            true
+        )
+        .await?["gaps"],
+        0
+    );
+    aml_warehouse::Connection::execute(&client,"ALTER TABLE aml_transactions DELETE WHERE block_number=7 AND transaction_index=0 SETTINGS mutations_sync=2").await?;
+    assert_eq!(
+        maintenance::scan(
+            &client,
+            &cfg.clickhouse_database,
+            Network::Ethereum,
+            7,
+            8,
+            2,
+            true
+        )
+        .await?["gaps"],
+        1
+    );
+    let command = Command::parse(&[
+        "repair".into(),
+        "--from-block".into(),
+        "7".into(),
+        "--to-block".into(),
+        "7".into(),
+        "--max-blocks".into(),
+        "1".into(),
+    ])?;
+    assert_eq!(service.maintenance(&command).await?["status"], "complete");
+    let after = publication::state(&client, &cfg.clickhouse_database, Network::Ethereum).await?;
+    assert_eq!(before.last_block_number, after.last_block_number);
+    assert_eq!(before.last_block_hash, after.last_block_hash);
+    assert!(after.revision > before.revision);
+    assert_eq!(
+        client
+            .query("SELECT count() FROM aml_transactions_canonical")
+            .fetch_one::<u64>()
+            .await?,
+        3
+    );
+    assert_eq!(
+        client
+            .query("SELECT count() FROM aml_address_relationships_canonical WHERE token_id=?")
+            .bind(aml_warehouse::RawAmount::MAX)
+            .fetch_one::<u64>()
+            .await?,
+        1
+    );
+    {
+        let mut data = chain.write().unwrap();
+        let mut block = data.blocks[1].clone();
+        block["number"] = json!("0x9");
+        block["hash"] = json!(hash(9));
+        block["parentHash"] = json!(hash(8));
+        block["transactions"] = json!([]);
+        block["gasUsed"] = json!("0x0");
+        data.blocks.push(block);
+        data.receipts.push(vec![]);
+        data.traces.push(vec![]);
+        data.head = 9;
+        data.fault = Some(("eth_getBlockReceipts".into(), 503));
+    }
+    assert!(ethereum_aml::ethereum::probe_node(&cfg).await.is_err());
+    for _ in 0..2 {
+        assert!(service.ingest_range(9, 9).await.is_err());
+    }
+    assert!(maintenance::blocked(&client, &cfg.clickhouse_database, Network::Ethereum, 9).await?);
+    chain.write().unwrap().fault = None;
+    assert!(
+        service.ingest_range(9, 9).await.is_err(),
+        "normal ingestion bypassed a dead letter"
+    );
+    let mut repair = command.clone();
+    repair.from = Some(9);
+    repair.to = Some(9);
+    assert!(service.maintenance(&repair).await.is_err());
+    repair.include_dead = true;
+    assert_eq!(service.maintenance(&repair).await?["status"], "complete");
+    assert!(!maintenance::blocked(&client, &cfg.clickhouse_database, Network::Ethereum, 9).await?);
+    assert_eq!(
+        publication::state(&client, &cfg.clickhouse_database, Network::Ethereum)
+            .await?
+            .last_block_number,
+        9
+    );
+    chain.write().unwrap().chain_id = 56;
+    assert!(ethereum_aml::ethereum::probe_node(&cfg).await.is_err());
+    let mut replay = command.clone();
+    replay.action = "replay".into();
+    assert!(service.maintenance(&replay).await.is_err());
+    assert_eq!(
+        publication::state(&client, &cfg.clickhouse_database, Network::Ethereum)
+            .await?
+            .last_block_number,
+        9
+    );
     server.abort();
     Ok(())
 }

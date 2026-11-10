@@ -21,29 +21,41 @@ pub async fn write_block(
     evidence: &Evidence,
     context: WriteContext<'_>,
 ) -> Result<SyncState> {
+    write_block_mode(db, previous, source, evidence, context, false).await
+}
+pub(crate) async fn write_block_mode(
+    db: &Database,
+    previous: &SyncState,
+    source: &BlockHeader,
+    evidence: &Evidence,
+    context: WriteContext<'_>,
+    refresh: bool,
+) -> Result<SyncState> {
     let WriteContext {
         observed,
         start,
         source_id,
     } = context;
     validate_evidence(source, evidence)?;
-    ensure!(
-        source.block_height
-            == if previous.initialized == 1 {
-                previous
-                    .tip_height
-                    .checked_add(1)
-                    .context("height exhausted")?
-            } else {
-                start
-            },
-        "non-contiguous warehouse block"
-    );
-    if previous.initialized == 1 {
+    if !refresh {
         ensure!(
-            source.parent_hash == previous.tip_hash,
-            "warehouse parent hash mismatch"
+            source.block_height
+                == if previous.initialized == 1 {
+                    previous
+                        .tip_height
+                        .checked_add(1)
+                        .context("height exhausted")?
+                } else {
+                    start
+                },
+            "non-contiguous warehouse block"
         );
+        if previous.initialized == 1 {
+            ensure!(
+                source.parent_hash == previous.tip_hash,
+                "warehouse parent hash mismatch"
+            );
+        }
     }
     let revision = db.next_revision(previous.revision).await?;
     let block = Block {
@@ -70,16 +82,31 @@ pub async fn write_block(
     let connection = db.warehouse_connection();
     let mut source_evidence = serde_json::to_value(source)?;
     source_evidence["semantic_detection"] = crate::semantics::block_manifest(evidence);
-    let next = aml_warehouse::core::publish_observed_batch(
-        &connection,
-        db.database(),
-        &to_state(previous),
-        &block,
-        &tables,
-        &source_evidence.to_string(),
-        observed,
-    )
-    .await?;
+    let old = to_state(previous);
+    let raw = source_evidence.to_string();
+    let next = if refresh {
+        aml_warehouse::core::refresh_observed_batch(
+            &connection,
+            db.database(),
+            &old,
+            &block,
+            &tables,
+            &raw,
+            observed,
+        )
+        .await?
+    } else {
+        aml_warehouse::core::publish_observed_batch(
+            &connection,
+            db.database(),
+            &old,
+            &block,
+            &tables,
+            &raw,
+            observed,
+        )
+        .await?
+    };
     Ok(from_state(next))
 }
 

@@ -152,7 +152,13 @@ reset_log
 bash "$project/scripts/vm.sh" bitcoin probe --project existing-bitcoin >/dev/null
 assert_log 'length == 1 and (.[0] | index("existing-bitcoin") != null and index("tools") != null and .[-6:] == ["run","--rm","--no-deps","--pull","never","bitcoin-rpc-probe"] and index("up") == null and index("exec") == null and index("--build") == null)'
 reset_log
-for role in main tron ethereum bsc; do expect_failure bash "$project/scripts/vm.sh" "$role" probe; done
+expect_failure bash "$project/scripts/vm.sh" main probe
+for role in tron ethereum bsc; do
+  reset_log
+  bash "$project/scripts/vm.sh" "$role" probe >/dev/null
+  assert_log 'length == 1 and (.[0] | index("--no-deps") != null and index("maintenance") != null and .[-1] == "probe" and index("up") == null and index("--build") == null)'
+done
+reset_log
 expect_failure bash "$project/scripts/vm.sh" bitcoin probe --build
 expect_failure bash "$project/scripts/vm.sh" bitcoin probe --query 'SELECT 1'
 [[ ! -s $MOCK_LOG ]]
@@ -168,8 +174,8 @@ reset_log
 bash "$project/scripts/vm.sh" bitcoin scan-gaps --from-block 0 --to-block 9 --max-blocks 10 >/dev/null
 assert_log 'length == 1 and (.[0] | index("bitcoin-repair") != null and .[-8:] == ["bitcoin_aml","scan-gaps","--from-block","0","--to-block","9","--max-blocks","10"] and index("--no-deps") != null and index("up") == null)'
 reset_log
-for action in failures repair scan-gaps; do
-  for role in main tron ethereum bsc; do expect_failure bash "$project/scripts/vm.sh" "$role" "$action"; done
+for action in failures repair scan-gaps replay; do
+  expect_failure bash "$project/scripts/vm.sh" main "$action"
 done
 expect_failure bash "$project/scripts/vm.sh" bitcoin up --failure-id bitcoin:block:1
 expect_failure bash "$project/scripts/vm.sh" bitcoin repair --limit 3
@@ -178,6 +184,27 @@ expect_failure bash "$project/scripts/vm.sh" bitcoin failures --build
 expect_failure bash "$project/scripts/vm.sh" bitcoin failures --status
 [[ ! -s $MOCK_LOG ]]
 echo "PASS Bitcoin failure/repair/gap commands, selection flags and no dependency startup"
+for role in tron ethereum bsc; do
+  reset_log
+  bash "$project/scripts/vm.sh" "$role" failures --status dead_letter --limit 2 --cursor '7~fixture:id' >/dev/null
+  assert_log 'length==1 and (.[0]|index("--no-deps")!=null and index("maintenance")!=null and .[-2:]==["--cursor","7~fixture:id"] and index("up")==null)'
+  for action in repair replay scan-gaps; do
+    reset_log
+    bash "$project/scripts/vm.sh" "$role" "$action" --from-block 7 --to-block 8 --max-blocks 2 >/dev/null
+    assert_log 'length==1 and (.[0]|index("maintenance")!=null and .[-6:]==["--from-block","7","--to-block","8","--max-blocks","2"] and index("--no-deps")!=null and index("up")==null)'
+  done
+done
+reset_log
+bash "$project/scripts/vm.sh" bitcoin replay --from-block 7 --to-block 7 --max-blocks 1 >/dev/null
+assert_log '.[0]|index("maintenance")!=null and index("replay")!=null and index("up")==null'
+reset_log
+expect_failure bash "$project/scripts/vm.sh" tron repair --failure-id bitcoin:block:1 --max-blocks 1
+expect_failure bash "$project/scripts/vm.sh" bsc failures --after-block 7
+expect_failure bash "$project/scripts/vm.sh" ethereum repair --from-block 7 --to-block 8
+expect_failure bash "$project/scripts/vm.sh" bitcoin repair --failure-id bitcoin:block:1 --from-block 7 --to-block 8 --max-blocks 2
+expect_failure bash "$project/scripts/vm.sh" ethereum replay --include-dead
+[[ ! -s $MOCK_LOG ]]
+echo "PASS Four-chain bounded maintenance routing and unsupported option rejection"
 
 for role in tron ethereum bsc bitcoin; do
   reset_log

@@ -2,7 +2,7 @@ use num_bigint::BigUint;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-pub const POLICY: &str = "aml_evidence_v2_verified_inputs";
+pub const POLICY: &str = "aml_evidence_v3_receipt_proof";
 pub const LABEL_WEIGHT: f64 = 70.0;
 pub const INCOMING_WEIGHT: f64 = 55.0;
 pub const OUTGOING_WEIGHT: f64 = 45.0;
@@ -56,7 +56,7 @@ pub fn definition() -> Value {
             "MIXER_INTERACTION",
             MIXER_WEIGHT,
             "Decoded mixer evidence with registry provenance",
-            json!({"minimum_confidence":0.8}),
+            json!({"minimum_confidence":0.8,"requires_registered_receipt_abi":true}),
         ),
         (
             "forwarding",
@@ -70,6 +70,7 @@ pub fn definition() -> Value {
         "medium_threshold":MEDIUM,"high_threshold":HIGH,"maximum_score":100,
         "probability_claimed":false,"exposure_aggregation":"strongest_only",
         "implementation_sha256":digest(&json!(include_str!("lib.rs").replace("\r\n","\n"))),
+        "receipt_abi_sha256":aml_warehouse::receipt_abi::definition_hash(),
         "rules":rules.into_iter().map(|(id,kind,weight,description,settings)|json!({"rule_id":id,"signal_type":kind,"max_contribution":weight,"description":description,"enabled":true,"settings":settings})).collect::<Vec<_>>()})
 }
 
@@ -253,7 +254,7 @@ pub fn assess(network: &str, data: &Value) -> Value {
         .filter(|event| {
             text(&event["event_type"]).starts_with("mixer_")
                 && number(&event["confidence"]) >= 0.8
-                && has_mixer_evidence(event)
+                && has_mixer_evidence(network, event)
         })
         .take(10)
         .cloned()
@@ -569,7 +570,7 @@ fn has_path_evidence(path: &Value, tron: bool) -> bool {
             .all(|v| !text(v).is_empty())
 }
 
-fn has_mixer_evidence(event: &Value) -> bool {
+fn has_mixer_evidence(network: &str, event: &Value) -> bool {
     if text(&event["tx_hash"]).is_empty() || text(&event["protocol_contract"]).is_empty() {
         return false;
     }
@@ -578,11 +579,25 @@ fn has_mixer_evidence(event: &Value) -> bool {
     } else {
         serde_json::from_str::<Value>(text(&event["evidence_json"])).unwrap_or(Value::Null)
     };
-    // Both EVM decoders include a registry source and a concrete receipt-log reference.
-    (!text(&evidence["registry_source"]).is_empty() && evidence["log_index"].as_u64().is_some())
-        || (text(&evidence["registry"]["review_status"]).eq_ignore_ascii_case("approved")
-            && !text(&evidence["registry"]["source_id"]).is_empty()
-            && evidence["signal"]["log_index"].as_u64().is_some())
+    let Some(abi) = aml_warehouse::receipt_abi::verify(&evidence["receipt_abi"]) else {
+        return false;
+    };
+    if abi.operation() != event["event_type"] || evidence["emitter"] != event["protocol_contract"] {
+        return false;
+    }
+    match network {
+        "ethereum" => {
+            !text(&evidence["registry_source"]).is_empty()
+                && evidence["log_index"].as_u64().is_some()
+        }
+        "bsc" => {
+            text(&evidence["registry"]["review_status"]).eq_ignore_ascii_case("approved")
+                && !text(&evidence["registry"]["source_id"]).is_empty()
+                && evidence["registry"]["decoder"] == "tornado_cash_v1"
+                && evidence["signal"]["log_index"].as_u64().is_some()
+        }
+        _ => false,
+    }
 }
 
 fn raw_amount(value: &Value) -> Option<BigUint> {
@@ -838,13 +853,26 @@ mod tests {
     #[test]
     fn mixer_requires_a_real_log_and_registry_provenance() {
         let mut event = json!({"event_type":"mixer_deposit","confidence":1.0});
-        assert!(!has_mixer_evidence(&event));
+        assert!(!has_mixer_evidence("ethereum", &event));
         event["tx_hash"] = json!("tx");
         event["protocol_contract"] = json!("contract");
         event["evidence_json"] =
             json!(json!({"registry_source":"official","log_index":0}).to_string());
-        assert!(has_mixer_evidence(&event));
-        event["evidence_json"] = json!({"registry":{"source_id":"s","review_status":"approved"},"signal":{"log_index":0}});
-        assert!(has_mixer_evidence(&event));
+        assert!(!has_mixer_evidence("ethereum", &event));
+        let (_, proof) = aml_warehouse::receipt_abi::proof(
+            &[
+                "a945e51eec50ab98c161376f0db4cf2aeba3ec92755fe2fcd388bdbbb80ff196",
+                &"1".repeat(64),
+            ],
+            &"0".repeat(128),
+        )
+        .unwrap();
+        event["evidence_json"] = json!({"emitter":"contract","receipt_abi":proof,
+            "registry_source":"official","log_index":0,"registry":{"source_id":"s",
+                "review_status":"approved","decoder":"tornado_cash_v1"},"signal":{"log_index":0}});
+        assert!(has_mixer_evidence("ethereum", &event));
+        assert!(has_mixer_evidence("bsc", &event));
+        event["evidence_json"]["receipt_abi"]["data"] = json!("0x00");
+        assert!(!has_mixer_evidence("bsc", &event));
     }
 }

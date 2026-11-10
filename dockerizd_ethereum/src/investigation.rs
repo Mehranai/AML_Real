@@ -11,11 +11,11 @@ use crate::{
 };
 
 const DEFAULT_EDGE_LIMIT: u64 = 750;
-const MAX_EDGE_LIMIT: u64 = 5_000;
+pub(crate) const MAX_EDGE_LIMIT: u64 = 5_000;
 const DEFAULT_PATH_LIMIT: usize = 5;
-const MAX_PATH_LIMIT: usize = 25;
+pub(crate) const MAX_PATH_LIMIT: usize = 25;
 const DEFAULT_PER_ADDRESS_LIMIT: u64 = 500;
-const MAX_PER_ADDRESS_LIMIT: u64 = 2_000;
+pub(crate) const MAX_PER_ADDRESS_LIMIT: u64 = 2_000;
 
 #[derive(Clone)]
 pub struct InvestigationService {
@@ -33,6 +33,10 @@ pub struct FlowEdge {
     pub tx_hash: String,
     pub block_number: u64,
     pub block_timestamp_unix_ms: u64,
+    pub transaction_index: u32,
+    pub event_index: u32,
+    pub event_sub_index: u32,
+    pub trace_address: Vec<u32>,
     pub from_address: String,
     pub to_address: String,
     pub asset_id: String,
@@ -207,7 +211,7 @@ impl PathDirection {
             .to_ascii_lowercase()
             .as_str()
         {
-            "outbound" | "forward" => Ok(Self::Outbound),
+            "outgoing" | "outbound" | "forward" => Ok(Self::Outbound),
             "both" | "undirected" => Ok(Self::Both),
             value => anyhow::bail!("unsupported path direction {value}; use outbound or both"),
         }
@@ -261,6 +265,10 @@ struct FlowEdgeRow {
     tx_hash: String,
     block_number: u64,
     block_timestamp_unix_ms: u64,
+    transaction_index: u32,
+    event_index: u32,
+    event_sub_index: u32,
+    trace_address: Vec<u32>,
     from_address: String,
     to_address: String,
     asset_id: String,
@@ -769,6 +777,7 @@ impl InvestigationService {
                     tx_hash,
                     block_number,
                     block_timestamp_unix_ms,
+                    transaction_index,event_index,event_sub_index,trace_address,
                     from_address,
                     to_address,
                     asset_id,
@@ -1256,6 +1265,10 @@ impl From<FlowEdgeRow> for FlowEdge {
             tx_hash: row.tx_hash,
             block_number: row.block_number,
             block_timestamp_unix_ms: row.block_timestamp_unix_ms,
+            transaction_index: row.transaction_index,
+            event_index: row.event_index,
+            event_sub_index: row.event_sub_index,
+            trace_address: row.trace_address,
             from_address: row.from_address,
             to_address: row.to_address,
             asset_id: row.asset_id,
@@ -1370,6 +1383,10 @@ mod tests {
             tx_hash: format!("0x{id}"),
             block_number: 1,
             block_timestamp_unix_ms: 1,
+            transaction_index: 0,
+            event_index: 0,
+            event_sub_index: 0,
+            trace_address: vec![],
             from_address: from.to_string(),
             to_address: to.to_string(),
             asset_id: "eip155:1/native:eth".to_string(),

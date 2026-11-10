@@ -28,6 +28,8 @@ struct Cli {
     trust_tier: String,
     #[arg(long, default_value = "")]
     reference_url: String,
+    #[arg(long, default_value = "unspecified")]
+    license: String,
     #[arg(long)]
     created_by: String,
     #[arg(long)]
@@ -50,6 +52,7 @@ async fn main() -> anyhow::Result<()> {
                 source_type: cli.source_type,
                 trust_tier: cli.trust_tier,
                 reference_url: cli.reference_url,
+                license: cli.license,
                 created_by: cli.created_by,
             },
             submitted_by: cli.submitted_by,

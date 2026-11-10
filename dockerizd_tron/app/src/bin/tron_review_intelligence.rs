@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.len() < 4 {
         return Err(anyhow!(
-            "usage: tron_review_intelligence <ENTITY_LABEL|CLUSTER_CLAIM> <subject_id> <APPROVED|REJECTED> <reviewer> [reason]"
+            "usage: tron_review_intelligence <ENTITY_LABEL|CLUSTER_CLAIM> <subject_id> <APPROVED|REJECTED|REVOKED> <reviewer> [reason]"
         ));
     }
     let config = AppConfig::from_env();

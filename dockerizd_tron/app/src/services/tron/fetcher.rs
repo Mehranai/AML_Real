@@ -354,15 +354,23 @@ async fn resolve_legacy_assets(
 }
 
 pub async fn fetch_tron(loader: Arc<LoaderTron>, start: u64, total_txs: u64) -> Result<()> {
-    fetch_tron_with_options(loader, start, None, total_txs, false).await
+    fetch_tron_with_options(loader, start, None, total_txs, false, None).await
 }
 pub async fn replay_tron_range(loader: Arc<LoaderTron>, start: u64, end: u64) -> Result<()> {
     validate_replay_range(start, end)?;
-    fetch_tron_with_options(loader, start, Some(end), 0, true).await
+    fetch_tron_with_options(loader, start, Some(end), 0, true, None).await
 }
 pub async fn ingest_tron_range(loader: Arc<LoaderTron>, start: u64, end: u64) -> Result<()> {
     validate_replay_range(start, end)?;
-    fetch_tron_with_options(loader, start, Some(end), 0, false).await
+    fetch_tron_with_options(loader, start, Some(end), 0, false, None).await
+}
+pub(crate) async fn maintenance_block(
+    loader: Arc<LoaderTron>,
+    height: u64,
+    historical: bool,
+    owner: &std::fs::File,
+) -> Result<()> {
+    fetch_tron_with_options(loader, height, Some(height), 0, historical, Some(owner)).await
 }
 async fn fetch_tron_with_options(
     loader: Arc<LoaderTron>,
@@ -370,8 +378,16 @@ async fn fetch_tron_with_options(
     end: Option<u64>,
     total_txs: u64,
     force_replay: bool,
+    owner: Option<&std::fs::File>,
 ) -> Result<()> {
-    let _writer = super::publication_store::writer_lock(loader.clickhouse.database())?;
+    let _writer = if owner.is_none() {
+        Some(super::publication_store::writer_lock(
+            loader.clickhouse.database(),
+        )?)
+    } else {
+        None
+    };
+    loader.tron_client.validate_mainnet().await?;
     let latest = loader.tron_client.get_solid_block_number().await?;
     let end = end.unwrap_or(latest);
     anyhow::ensure!(
@@ -444,6 +460,18 @@ async fn fetch_tron_with_options(
     }
     let mut count = 0u64;
     for height in start..=end {
+        if !force_replay && owner.is_none() {
+            anyhow::ensure!(
+                !aml_warehouse::maintenance::blocked(
+                    &*loader.clickhouse,
+                    loader.clickhouse.database(),
+                    aml_warehouse::Network::Tron,
+                    height
+                )
+                .await?,
+                "TRON source validation failed: ingestion blocked by a dead letter; use maintenance repair --include-dead"
+            );
+        }
         if total_txs > 0 && count >= total_txs {
             break;
         }
@@ -660,6 +688,21 @@ async fn record_error(
 }
 
 pub(crate) fn classify_ingestion_error(error: &anyhow::Error) -> (&'static str, bool) {
+    if error
+        .downcast_ref::<crate::helper::tron::RpcHttpError>()
+        .is_some()
+        || error.downcast_ref::<reqwest::Error>().is_some()
+    {
+        let transient = crate::helper::tron::transient_rpc_error(error);
+        return (
+            if transient {
+                "RPC_TRANSIENT"
+            } else {
+                "RPC_PERMANENT"
+            },
+            transient,
+        );
+    }
     if error.downcast_ref::<FinalizedHashConflict>().is_some() {
         return ("HASH_CONFLICT", false);
     }
@@ -693,6 +736,7 @@ pub(crate) fn classify_ingestion_error(error: &anyhow::Error) -> (&'static str, 
         "invalid",
         "decode",
         "deserialize",
+        "failed to parse",
         "malformed",
     ]
     .iter()

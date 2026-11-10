@@ -10,6 +10,29 @@ use tokio::time::sleep;
 // ارتباط سطح پایین با Tron RPC را مدیریت میکند
 const TRON_RPC_MAX_ATTEMPTS: usize = 5;
 const TRON_RPC_MIN_REQUEST_INTERVAL: Duration = Duration::from_millis(120);
+// Full mainnet genesis ID specified in tronprotocol/TIPs tip-474.
+pub const MAINNET_GENESIS: &str =
+    "00000000000000001ebf88508a03865c71d452e25f4d51194196a1d22b6653dc";
+
+#[derive(Debug)]
+pub struct RpcHttpError {
+    pub status: u16,
+    retry_after: Option<u64>,
+}
+impl std::fmt::Display for RpcHttpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TRON RPC HTTP status {}", self.status)
+    }
+}
+impl std::error::Error for RpcHttpError {}
+pub fn transient_rpc_error(error: &anyhow::Error) -> bool {
+    if let Some(http) = error.downcast_ref::<RpcHttpError>() {
+        return matches!(http.status, 408 | 425 | 429 | 500..=599);
+    }
+    error.downcast_ref::<reqwest::Error>().is_some_and(|e| {
+        e.is_timeout() || e.is_connect() || e.is_body() || (e.is_request() && !e.is_builder())
+    })
+}
 
 #[derive(Clone)]
 pub struct TronClient {
@@ -20,6 +43,10 @@ pub struct TronClient {
 }
 
 impl TronClient {
+    pub async fn validate_mainnet(&self) -> Result<()> {
+        let genesis = self.get_block(0).await?;
+        validate_genesis(&genesis)
+    }
     pub fn new(base_url: &str, api_key: Option<String>, timeout_seconds: u64) -> Result<Self> {
         let timeout = Duration::from_secs(timeout_seconds.max(1));
 
@@ -48,6 +75,9 @@ impl TronClient {
             match self.post_once(endpoint, body.clone()).await {
                 Ok(value) => return Ok(value),
                 Err(err) => {
+                    if !transient_rpc_error(&err) {
+                        return Err(err);
+                    }
                     if attempt < TRON_RPC_MAX_ATTEMPTS {
                         let delay = retry_delay(&err, attempt);
 
@@ -89,6 +119,11 @@ impl TronClient {
             .with_context(|| format!("HTTP request failed: {}", endpoint))?;
 
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok());
         // let text = response.text().await?;
         let text = response
             .text()
@@ -96,16 +131,31 @@ impl TronClient {
             .with_context(|| format!("Failed reading body from endpoint: {}", endpoint))?;
 
         if !status.is_success() {
-            return Err(anyhow!(
-                "Tron API error | endpoint={} | status={} | body={}",
-                endpoint,
-                status,
-                text
-            ));
+            return Err(RpcHttpError {
+                status: status.as_u16(),
+                retry_after: retry_after.or_else(|| parse_suspended_seconds(&text)),
+            }
+            .into());
         }
 
         let parsed: Value = serde_json::from_str(&text)
             .with_context(|| format!("Invalid JSON from endpoint: {}", endpoint))?;
+
+        // TronGrid can report throttling in a successful HTTP response.
+        if let Some(message) = parsed
+            .get("Error")
+            .or_else(|| parsed.get("error"))
+            .and_then(Value::as_str)
+        {
+            let lower = message.to_ascii_lowercase();
+            if lower.contains("frequency limit") || lower.contains("rate limit") {
+                return Err(RpcHttpError {
+                    status: 429,
+                    retry_after: parse_suspended_seconds(message),
+                }
+                .into());
+            }
+        }
 
         Ok(parsed)
     }
@@ -175,17 +225,29 @@ impl TronClient {
     }
 }
 
+fn validate_genesis(genesis: &Value) -> Result<()> {
+    let header = genesis
+        .pointer("/block_header/raw_data")
+        .and_then(Value::as_object)
+        .context("TRON source validation failed: genesis header missing")?;
+    anyhow::ensure!(
+        genesis["blockID"]
+            .as_str()
+            .is_some_and(|id| id.eq_ignore_ascii_case(MAINNET_GENESIS))
+            && header.get("number").is_none_or(|n| n.as_u64() == Some(0)),
+        "TRON source validation failed: RPC genesis is not mainnet"
+    );
+    Ok(())
+}
 fn retry_delay(err: &anyhow::Error, attempt: usize) -> Duration {
-    let message = err.to_string();
-
-    if message.contains("429 Too Many Requests") || message.contains("frequency limit") {
-        if let Some(seconds) = parse_suspended_seconds(&message) {
-            return Duration::from_secs(seconds.saturating_add(1));
+    if let Some(http) = err.downcast_ref::<RpcHttpError>() {
+        if let Some(seconds) = http.retry_after {
+            return Duration::from_secs(seconds.saturating_add(1).min(60));
         }
-
-        return Duration::from_secs(30);
+        if http.status == 429 {
+            return Duration::from_secs(30);
+        }
     }
-
     Duration::from_millis(500 * attempt as u64)
 }
 
@@ -203,7 +265,67 @@ fn parse_suspended_seconds(message: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_suspended_seconds;
+    use super::*;
+    #[test]
+    fn mainnet_genesis_accepts_only_the_proto3_zero_default() {
+        let mut genesis = serde_json::json!({"blockID":MAINNET_GENESIS.to_ascii_uppercase(),"block_header":{"raw_data":{}}});
+        assert!(validate_genesis(&genesis).is_ok());
+        genesis["block_header"]["raw_data"]["number"] = serde_json::json!(0);
+        assert!(validate_genesis(&genesis).is_ok());
+        genesis["block_header"]["raw_data"]["number"] = serde_json::json!(1);
+        assert!(validate_genesis(&genesis).is_err());
+        genesis["block_header"]["raw_data"]["number"] = serde_json::json!(0);
+        genesis["blockID"] = serde_json::json!("f".repeat(64));
+        assert!(validate_genesis(&genesis).is_err());
+        assert!(validate_genesis(&serde_json::json!({"blockID":MAINNET_GENESIS})).is_err());
+    }
+    #[test]
+    fn rpc_retry_classification_uses_status_and_bounded_hints() {
+        for status in [400, 401, 403, 404, 408, 425, 429, 500, 502, 503, 504] {
+            let error: anyhow::Error = RpcHttpError {
+                status,
+                retry_after: Some(u64::MAX),
+            }
+            .into();
+            assert_eq!(
+                transient_rpc_error(&error),
+                matches!(status, 408 | 425 | 429 | 500..=599)
+            );
+            assert!(retry_delay(&error, 1) <= Duration::from_secs(60));
+            assert_eq!(error.to_string(), format!("TRON RPC HTTP status {status}"));
+        }
+        assert!(!transient_rpc_error(&anyhow!(
+            "invalid source data mentioning timeout 503"
+        )));
+    }
+
+    #[tokio::test]
+    async fn authentication_failure_is_not_retried_or_logged_with_its_body() {
+        use axum::{Router, http::StatusCode, routing::post};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let requests = calls.clone();
+        let app=Router::new().route("/walletsolidity/getnowblock",post(|| async {axum::Json(serde_json::json!({"Error":"The key exceeds the frequency limit, suspended for 999999 s"}))}))
+        .route("/wallet/getnowblock",post(move || {let requests=requests.clone();async move {
+            requests.fetch_add(1,Ordering::SeqCst);(StatusCode::UNAUTHORIZED,"private-fixture-key")
+        }}));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = TronClient::new(&url, None, 2).unwrap();
+        let error = client.get_now_block().await.unwrap_err();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(!format!("{error:#}").contains("private-fixture-key"));
+        let limited = client
+            .post_once("walletsolidity/getnowblock", serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert!(transient_rpc_error(&limited));
+        assert_eq!(retry_delay(&limited, 1), Duration::from_secs(60));
+        server.abort();
+    }
 
     #[test]
     fn parses_trongrid_suspension_window() {

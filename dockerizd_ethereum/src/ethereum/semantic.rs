@@ -8,7 +8,8 @@ use alloy::{
     primitives::{Address, B256, U256, U512, keccak256},
     rpc::types::Log,
 };
-use serde_json::json;
+use aml_warehouse::receipt_abi;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::storage::{
@@ -16,7 +17,7 @@ use crate::storage::{
 };
 
 const DETECTOR: &str = "ethereum_semantic_decoder";
-const DETECTOR_VERSION: &str = "ethereum_semantic_v3_exact_flows";
+const DETECTOR_VERSION: &str = "ethereum_semantic_v4_receipt_abi";
 
 static SWAP_V2_EVENT: LazyLock<B256> =
     LazyLock::new(|| signature("Swap(address,uint256,uint256,uint256,uint256,address)"));
@@ -147,6 +148,9 @@ pub fn decode_transaction(
         }
 
         if let Some((event_type, family)) = liquidity_family(topic0) {
+            let Some(proof) = receipt_proof(log) else {
+                continue;
+            };
             events.push(decode_liquidity(
                 registry,
                 &transaction,
@@ -154,12 +158,23 @@ pub fn decode_transaction(
                 log_index,
                 event_type,
                 family,
+                proof,
             ));
             continue;
         }
 
         if let Some(family) = swap_family(topic0) {
-            events.push(decode_swap(registry, &transaction, log, log_index, family));
+            let Some(proof) = receipt_proof(log) else {
+                continue;
+            };
+            events.push(decode_swap(
+                registry,
+                &transaction,
+                log,
+                log_index,
+                family,
+                proof,
+            ));
         }
     }
 
@@ -174,12 +189,23 @@ pub fn decode_transaction(
     }
 }
 
+fn receipt_proof(log: &Log) -> Option<Value> {
+    let topics: Vec<_> = log
+        .topics()
+        .iter()
+        .map(|topic| format!("{topic:#x}"))
+        .collect();
+    let topics: Vec<_> = topics.iter().map(String::as_str).collect();
+    receipt_abi::proof(&topics, &format!("{:#x}", log.data().data)).map(|(_, proof)| proof)
+}
+
 fn decode_swap(
     registry: &SemanticDecoderRegistry,
     transaction: &SemanticTransaction<'_>,
     log: &Log,
     log_index: u32,
     family: &'static str,
+    proof: Value,
 ) -> SemanticAmlEventRow {
     let pool = log.address();
     let registered = registry
@@ -243,6 +269,9 @@ fn decode_swap(
         "log_index": log_index,
         "flow_correlation": related_movements,
         "registered_protocol": registered.is_some(),
+        "registry_source": registered.map(|contract| &contract.source),
+        "receipt_abi":proof,
+        "amount_basis":if family=="balancer_vault" {"receipt_words"} else {"transaction_aggregate"},
     });
 
     SemanticAmlEventRow {
@@ -435,6 +464,7 @@ fn decode_liquidity(
     log_index: u32,
     event_type: &'static str,
     family: &'static str,
+    proof: Value,
 ) -> SemanticAmlEventRow {
     let pool = log.address();
     let registered = registry
@@ -458,6 +488,9 @@ fn decode_liquidity(
         "flow_direction": if inbound { "into_pool" } else { "out_of_pool" },
         "flow_count": flow_count,
         "registered_protocol": registered.is_some(),
+        "registry_source":registered.map(|contract| &contract.source),
+        "receipt_abi":proof,
+        "amount_basis":"transaction_aggregate",
     });
 
     SemanticAmlEventRow {
@@ -512,17 +545,14 @@ fn decode_tornado_mixer(
     contract: &ProtocolContractRow,
 ) -> Option<SemanticAmlEventRow> {
     let topic0 = log.topic0()?;
+    let proof = receipt_proof(log)?;
     let (event_type, inbound, subject) = if topic0 == &*TORNADO_DEPOSIT_EVENT {
         ("mixer_deposit", true, transaction.sender)
     } else if topic0 == &*TORNADO_WITHDRAWAL_EVENT {
         (
             "mixer_withdrawal",
             false,
-            log.topics()
-                .get(1)
-                .copied()
-                .and_then(topic_address)
-                .unwrap_or(transaction.sender),
+            Address::from_str(proof["recipient"].as_str()?).ok()?,
         )
     } else {
         return None;
@@ -539,12 +569,14 @@ fn decode_tornado_mixer(
         "flow_count": flow_count,
         "registry_source": contract.source,
         "contract_role": contract.contract_role,
+        "receipt_abi":proof,
+        "amount_basis":"transaction_aggregate",
     });
-    let correlation_material = log
-        .topics()
-        .get(1)
-        .map(|topic| format!("{topic:#x}"))
-        .unwrap_or_else(|| format!("{:#x}", transaction.tx_hash));
+    let correlation_material = if inbound {
+        format!("{:#x}", log.topics().get(1)?)
+    } else {
+        proof["nullifier_hash"].as_str()?.to_owned()
+    };
 
     Some(SemanticAmlEventRow {
         event_id: semantic_event_id(
@@ -890,6 +922,67 @@ mod tests {
     #[test]
     fn recognizes_supported_swap_signature() {
         assert_eq!(swap_family(&BALANCER_SWAP_EVENT), Some("balancer_vault"));
+        assert_eq!(
+            aml_warehouse::receipt_abi::Event::from_topic(&format!("{:#x}", *BALANCER_SWAP_EVENT)),
+            Some(aml_warehouse::receipt_abi::Event::BalancerSwap)
+        );
+    }
+
+    #[test]
+    fn tornado_withdrawal_subject_is_the_recipient_encoded_in_data() {
+        let pool = address!("0000000000000000000000000000000000000010");
+        let recipient = address!("0000000000000000000000000000000000000020");
+        let relayer = address!("0000000000000000000000000000000000000030");
+        let contract = ProtocolContractRow {
+            network_id: "eip155:1".into(),
+            contract_address: format!("{pool:#x}"),
+            protocol: "tornado_cash".into(),
+            protocol_type: "mixer".into(),
+            contract_role: "pool".into(),
+            remote_network_id: String::new(),
+            remote_contract_address: String::new(),
+            decoder: "tornado_cash_v1".into(),
+            source: "fixture".into(),
+            confidence: 1.0,
+            enabled: 1,
+            created_at_unix_ms: 1,
+        };
+        let registry = SemanticDecoderRegistry::from_contracts(vec![contract]);
+        let mut data = [0u8; 96];
+        data[12..32].copy_from_slice(recipient.as_slice());
+        let create = |data: Bytes| Log {
+            inner: PrimitiveLog::new_unchecked(
+                pool,
+                vec![*super::TORNADO_WITHDRAWAL_EVENT, address_topic(relayer)],
+                data,
+            ),
+            log_index: Some(9),
+            ..Default::default()
+        };
+        let decode = |logs: &[Log]| {
+            decode_transaction(
+                &registry,
+                SemanticTransaction {
+                    network_id: "eip155:1",
+                    block_number: 100,
+                    block_timestamp_unix_ms: 1000,
+                    tx_hash: B256::repeat_byte(1),
+                    sender: relayer,
+                    destination: Some(pool),
+                    input_selector: "",
+                    logs,
+                    movements: &[],
+                    relationships: &[],
+                },
+            )
+        };
+        assert!(decode(&[create(Bytes::new())]).events.is_empty());
+        let result = decode(&[create(Bytes::copy_from_slice(&data))]);
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].subject_address, format!("{recipient:#x}"));
+        let body: serde_json::Value =
+            serde_json::from_str(&result.events[0].evidence_json).unwrap();
+        assert_eq!(body["receipt_abi"]["relayer"], format!("{relayer:#x}"));
     }
 
     #[test]

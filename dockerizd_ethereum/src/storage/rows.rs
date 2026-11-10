@@ -178,6 +178,7 @@ pub struct IntelligenceSourceRow {
     pub source_type: String,
     pub trust_tier: String,
     pub reference_url: String,
+    pub license: String,
     pub is_active: u8,
     pub created_by: String,
     pub created_at_unix_ms: u64,

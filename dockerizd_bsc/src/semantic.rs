@@ -18,7 +18,7 @@ use crate::{
 };
 
 const DETECTOR: &str = "bsc_semantic_classifier";
-const DETECTOR_VERSION: &str = "bsc_semantic_v2_exact_flows";
+const DETECTOR_VERSION: &str = "bsc_semantic_v3_receipt_abi";
 mod flow_amount {
     // At most 256 UInt256 legs are summed per bounded observation.
     uint::construct_uint! { pub struct U512(8); }
@@ -442,10 +442,11 @@ fn classify_protocol(
     );
     let mut emitted = HashSet::new();
 
-    if let Some(position) = rule
-        .method_ids
-        .iter()
-        .position(|method| method == &transaction.input_selector)
+    if transaction.to_address == rule.contract_address
+        && let Some(position) = rule
+            .method_ids
+            .iter()
+            .position(|method| method == &transaction.input_selector)
     {
         let event_type = &rule.method_event_types[position];
         push_registry_event(
@@ -657,12 +658,26 @@ fn push_registry_event(
     classification_source: &str,
     evidence_quality: f32,
 ) {
+    let receipt_proof = if let Some(log) = log
+        && aml_warehouse::receipt_abi::Event::from_topic(&log.topic0).is_some()
+    {
+        let topics: Vec<_> = log.topics.iter().map(String::as_str).collect();
+        let Some((abi, proof)) = aml_warehouse::receipt_abi::proof(&topics, &log.data) else {
+            return;
+        };
+        (abi.operation() == event_type
+            && (!event_type.starts_with("mixer_") || rule.decoder == "tornado_cash_v1"))
+            .then_some(proof)
+    } else {
+        None
+    };
     let protocol_contract = log
         .map(|item| item.contract_address.as_str())
         .unwrap_or(&rule.contract_address);
     let event_id = stable_id(&format!(
-        "{BSC_NETWORK_ID}|{DETECTOR_VERSION}|{}|{event_type}|{protocol_contract}|{event_index}",
-        transaction.hash
+        "{BSC_NETWORK_ID}|{DETECTOR_VERSION}|{}|{event_type}|{protocol_contract}|{event_index}|{}",
+        transaction.hash,
+        log.is_some()
     ));
     if !emitted.insert(event_id.clone()) {
         return;
@@ -683,8 +698,10 @@ fn push_registry_event(
         _ => "",
     };
     let subject_address = if event_type == "mixer_withdrawal" {
-        log.and_then(|item| topic_at(item, 1))
-            .and_then(topic_address)
+        receipt_proof
+            .as_ref()
+            .and_then(|proof| proof["recipient"].as_str())
+            .map(str::to_owned)
             .or_else(|| flow.recipient.clone())
             .unwrap_or_else(|| transaction.from_address.clone())
     } else if event_type == "bridge_withdrawal" {
@@ -720,6 +737,9 @@ fn push_registry_event(
     let evidence_json = json!({
         "confidence_semantics": "evidence_quality_not_illicit_probability",
         "classification_source": classification_source,
+        "receipt_abi": receipt_proof,
+        "emitter": log.map(|item| &item.contract_address),
+        "amount_basis":"transaction_aggregate",
         "registry": {
             "revision": rule.registry_revision,
             "source_id": rule.source_id,
@@ -1341,6 +1361,18 @@ mod tests {
         }
     }
 
+    fn v2_log(topic0: &str, addresses: usize, words: usize) -> CanonicalLog {
+        let mut topics = vec![topic0.to_owned()];
+        topics.extend(std::iter::repeat_n(
+            format!("0x{}{}", "0".repeat(24), &SENDER[2..]),
+            addresses,
+        ));
+        CanonicalLog {
+            data: format!("0x{}", "0".repeat(words * 64)),
+            ..log(topic0, topics)
+        }
+    }
+
     fn relationship(
         id: &str,
         from: &str,
@@ -1458,13 +1490,11 @@ mod tests {
         let block = block(
             transaction(1, "0x12345678"),
             vec![
-                log(SWAP_V2_TOPIC, vec![SWAP_V2_TOPIC.to_string()]),
+                v2_log(SWAP_V2_TOPIC, 2, 4),
                 CanonicalLog {
                     event_id: format!("{BSC_NETWORK_ID}:{TX}:1"),
                     log_index: 1,
-                    topic0: V2_MINT_TOPIC.to_string(),
-                    topics: vec![V2_MINT_TOPIC.to_string()],
-                    ..log(V2_MINT_TOPIC, Vec::new())
+                    ..v2_log(V2_MINT_TOPIC, 1, 2)
                 },
             ],
         );
@@ -1480,6 +1510,10 @@ mod tests {
         assert_eq!(result.transaction_features[0].is_swap, 1);
         assert_eq!(result.transaction_features[0].is_liquidity_add, 1);
         assert!(result.events.iter().all(|event| event.confidence <= 1.0));
+        assert!(result.events.iter().all(|event| {
+            serde_json::from_str::<serde_json::Value>(&event.evidence_json).unwrap()["receipt_abi"]
+                .is_object()
+        }));
     }
 
     #[test]
@@ -1581,7 +1615,7 @@ mod tests {
 
     #[test]
     fn unreviewed_unregistered_and_failed_transactions_emit_nothing() {
-        let standard_log = log(SWAP_V2_TOPIC, vec![SWAP_V2_TOPIC.to_string()]);
+        let standard_log = v2_log(SWAP_V2_TOPIC, 2, 4);
         let active_block = block(transaction(1, "0x12345678"), vec![standard_log.clone()]);
         assert!(
             classify_block(
@@ -1609,6 +1643,34 @@ mod tests {
             .events
             .is_empty()
         );
+    }
+
+    #[test]
+    fn mixer_receipt_uses_recipient_and_rejects_topic_only_lookalike() {
+        let topic = format!("0x{}{}", "0".repeat(24), &SENDER[2..]);
+        let mut withdrawal = log(
+            MIXER_WITHDRAWAL_TOPIC,
+            vec![MIXER_WITHDRAWAL_TOPIC.into(), topic],
+        );
+        let registry = registry(rule("mixer", "tornado_cash_v1"));
+        let input = extracted(Vec::new());
+        assert!(
+            classify_block(
+                &registry,
+                &block(transaction(1, "0x12345678"), vec![withdrawal.clone()]),
+                &input
+            )
+            .events
+            .is_empty()
+        );
+        withdrawal.data = format!("0x{}{}{}", "0".repeat(24), &RECEIVER[2..], "0".repeat(128));
+        let result = classify_block(
+            &registry,
+            &block(transaction(1, "0x12345678"), vec![withdrawal]),
+            &input,
+        );
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].subject_address, RECEIVER);
     }
 
     #[test]

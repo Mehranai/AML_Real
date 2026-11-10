@@ -58,6 +58,8 @@ struct Settings {
     huge: bool,
     raw_script_bytes: usize,
     result_status: u16,
+    fault_method: Option<String>,
+    fault_height: Option<u64>,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -74,6 +76,8 @@ impl Default for Settings {
             huge: false,
             raw_script_bytes: 0,
             result_status: 200,
+            fault_method: None,
+            fault_height: None,
         }
     }
 }
@@ -186,6 +190,14 @@ async fn reply(State(state): State<Arc<Server>>, Json(request): Json<Value>) -> 
     state.requests.lock().unwrap().push(request.clone());
     let number = state.count.fetch_add(1, Ordering::SeqCst) + 1;
     let settings = state.settings.read().unwrap().clone();
+    if settings.fault_method.as_deref() == request["method"].as_str()
+        && settings.fault_method.is_some()
+        && settings
+            .fault_height
+            .is_none_or(|h| request["params"][0] == h)
+    {
+        return (StatusCode::SERVICE_UNAVAILABLE, "synthetic scoped outage").into_response();
+    }
     if number <= settings.fail_first {
         if let Some(code) = settings.rpc_error {
             return (
@@ -861,6 +873,113 @@ async fn follow_survives_rpc_outage_and_recovers_without_restart() {
     assert!(!worker.is_finished());
     worker.abort();
     let _ = worker.await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable ClickHouse"]
+async fn follow_recovers_checkpoint_rpc_outage_and_reads_new_blocks_once() {
+    let db = database("bitcoin_ing1_follow");
+    db.initialize().await.unwrap();
+    let mock = Mock::start(Settings {
+        blocks: (0..2).map(block).collect(),
+        ..Settings::default()
+    })
+    .await;
+    let worker_db = db.clone();
+    let rpc = mock.rpc();
+    let worker = tokio::spawn(async move {
+        ingestion::run(
+            worker_db,
+            rpc,
+            IngestConfig {
+                end: None,
+                ..ingest_config()
+            },
+            false,
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(45), async {
+        loop {
+            if db.state().await.unwrap().initialized == 1
+                && db.state().await.unwrap().tip_height == 1
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let before = db.state().await.unwrap();
+    {
+        let mut settings = mock.state.settings.write().unwrap();
+        settings.fault_method = Some("getblockhash".into());
+        settings.fault_height = Some(1);
+    }
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if failures::current(&db, 2)
+                .await
+                .unwrap()
+                .is_some_and(|f| f.operation == "reconcile")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!worker.is_finished());
+    assert_eq!(db.state().await.unwrap().revision, before.revision);
+    {
+        let mut settings = mock.state.settings.write().unwrap();
+        settings.fault_method = None;
+        settings.blocks.push(block(2));
+    }
+    tokio::time::timeout(Duration::from_secs(45), async {
+        loop {
+            if db.state().await.unwrap().tip_height == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!worker.is_finished());
+    worker.abort();
+    let _ = worker.await;
+    let fetched = mock.calls("getblock").len();
+    mock.state.settings.write().unwrap().blocks.push(block(3));
+    ingestion::run(db.clone(), mock.rpc(), ingest_config(), true)
+        .await
+        .unwrap();
+    assert_eq!(mock.calls("getblock").len(), fetched + 1);
+    assert_eq!(db.state().await.unwrap().tip_height, 3);
+    let counts: Vec<Value> = db
+        .rows(
+            "SELECT count() AS n FROM aml_ingested_blocks_canonical",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(counts[0]["n"], 4);
+    mock.state.settings.write().unwrap().chain = "test";
+    let error = ingestion::run(
+        db.clone(),
+        mock.rpc(),
+        IngestConfig {
+            end: None,
+            ..ingest_config()
+        },
+        false,
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("mainnet"));
+    assert_eq!(db.state().await.unwrap().tip_height, 3);
 }
 
 #[test]

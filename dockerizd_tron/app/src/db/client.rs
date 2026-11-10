@@ -271,6 +271,12 @@ pub struct ReadFence {
     operations: Vec<String>,
 }
 impl ReadFence {
+    pub fn source_snapshot(&self) -> Value {
+        self.source.value()
+    }
+    pub fn operational_snapshot(&self) -> Value {
+        crate::db::records::operational_snapshot(&self.operations)
+    }
     pub async fn capture(client: &Client) -> Result<Self> {
         Ok(Self {
             source: aml_warehouse::visibility::capture(client, client.database(), Network::Tron)

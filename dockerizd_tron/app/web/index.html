@@ -1648,7 +1648,7 @@
       badge.textContent = `${total} asset${total === 1 ? '' : 's'}`;
       badge.className = `badge ${total ? 'ok' : ''}`;
       document.getElementById('nativeBalance').textContent = native
-        ? `${formatDecimal(native.balance_decimal)} TRX`
+        ? `${formatRawAmount(native.balance_raw, native.decimals)} TRX (indexed netflow)`
         : 'Unknown';
       document.getElementById('assetCount').textContent = `${assets.length}/${total} shown`;
       document.getElementById('assetMetadata').textContent = gaps ? `${gaps} gap${gaps === 1 ? '' : 's'}` : 'Complete';
@@ -2094,11 +2094,23 @@
 
     function formatAssetHolding(asset) {
       const symbol = asset.asset_symbol || shortAddress(asset.asset_id);
-      const decimal = asset.metadata_available
-        ? formatDecimal(asset.balance_decimal)
+      const decimal = asset.decimals_known
+        ? formatRawAmount(asset.balance_raw, asset.decimals)
         : `${asset.balance_raw} raw`;
 
       return `${decimal} ${symbol}`;
+    }
+
+    function formatRawAmount(raw, decimals) {
+      const text = String(raw ?? '');
+      const places = Number(decimals);
+      if (!/^-?(0|[1-9][0-9]*)$/.test(text) || decimals == null || !Number.isInteger(places) || places < 0 || places > 255) return `${text || 'unknown'} raw`;
+      const negative = text.startsWith('-');
+      const digits = negative ? text.slice(1) : text;
+      if (!places) return text;
+      const padded = digits.padStart(places + 1, '0');
+      const fraction = padded.slice(-places).replace(/0+$/, '');
+      return `${negative ? '-' : ''}${padded.slice(0, -places)}${fraction ? '.' + fraction : ''}`;
     }
 
     function titleCase(value) {

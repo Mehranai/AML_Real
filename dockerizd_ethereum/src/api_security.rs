@@ -2,13 +2,11 @@ use std::{env, sync::Arc};
 
 use anyhow::{bail, ensure};
 use axum::{
-    Json,
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::Response,
 };
-use serde_json::json;
 
 const SERVICE_KEY_HEADER: &str = "x-aml-service-key";
 const MINIMUM_SERVICE_KEY_LENGTH: usize = 32;
@@ -20,6 +18,17 @@ pub struct ServiceAuth {
 }
 
 impl ServiceAuth {
+    pub(crate) fn required(key: impl Into<String>) -> anyhow::Result<Self> {
+        let key = key.into();
+        ensure!(
+            key.len() >= MINIMUM_SERVICE_KEY_LENGTH,
+            "AML_SERVICE_KEY must contain at least {MINIMUM_SERVICE_KEY_LENGTH} characters when service authentication is required"
+        );
+        Ok(Self {
+            required: true,
+            expected_key: Arc::from(key),
+        })
+    }
     pub fn from_env() -> anyhow::Result<Self> {
         let required = match env::var("AML_SERVICE_AUTH_REQUIRED") {
             Ok(value) => parse_bool("AML_SERVICE_AUTH_REQUIRED", &value)?,
@@ -32,10 +41,7 @@ impl ServiceAuth {
             .to_string();
 
         if required {
-            ensure!(
-                expected_key.len() >= MINIMUM_SERVICE_KEY_LENGTH,
-                "AML_SERVICE_KEY must contain at least {MINIMUM_SERVICE_KEY_LENGTH} characters when service authentication is required"
-            );
+            return Self::required(expected_key);
         }
 
         Ok(Self {
@@ -61,11 +67,10 @@ pub async fn require_service_auth(
         .unwrap_or_default();
 
     if !constant_time_eq(supplied_key.as_bytes(), auth.expected_key.as_bytes()) {
-        return (
+        return aml_chain_api::error_response(
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "unauthorized service request"})),
-        )
-            .into_response();
+            "unauthorized service request",
+        );
     }
 
     next.run(request).await

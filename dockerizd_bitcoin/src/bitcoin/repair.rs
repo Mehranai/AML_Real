@@ -28,6 +28,17 @@ pub async fn run(
     tuning: PipelineConfig,
     options: Options,
 ) -> Result<Value> {
+    let owner = WriterLock::for_database(db.database())?;
+    run_owned(db, pool, config, tuning, options, &owner).await
+}
+pub(crate) async fn run_owned(
+    db: Database,
+    pool: RpcPool,
+    config: IngestConfig,
+    tuning: PipelineConfig,
+    options: Options,
+    owner: &WriterLock,
+) -> Result<Value> {
     let heights = options
         .ids
         .iter()
@@ -42,7 +53,6 @@ pub async fn run(
     );
     options.policy.validate()?;
     tuning.validate()?;
-    let owner = WriterLock::for_database(db.database())?;
     db.ready().await?;
     failures::recover_interrupted(&db, &options.policy).await?;
     let before = db.state().await?;
@@ -101,7 +111,7 @@ pub async fn run(
                 repair_height: Some(height),
                 policy: options.policy.clone(),
             },
-            &owner,
+            owner,
         )
         .await;
         let after = db.state().await?;

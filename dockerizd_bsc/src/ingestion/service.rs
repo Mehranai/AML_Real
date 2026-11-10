@@ -33,6 +33,58 @@ pub struct CanonicalIngestor {
 }
 
 impl CanonicalIngestor {
+    pub async fn probe_history(
+        app: &AppConfig,
+        settings: IngestionConfig,
+    ) -> anyhow::Result<serde_json::Value> {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            Self::probe_history_inner(app, settings),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("BSC probe exceeded 120 seconds"))?
+    }
+    async fn probe_history_inner(
+        app: &AppConfig,
+        settings: IngestionConfig,
+    ) -> anyhow::Result<serde_json::Value> {
+        let mut report = serde_json::to_value(crate::rpc::probe_configured_endpoints(app).await?)?;
+        let rpc = CanonicalRpcClient::new(app, settings.clone())?;
+        let finalized = rpc.finalized_height().await?;
+        let start = settings.start_block.unwrap_or(finalized);
+        anyhow::ensure!(
+            start <= finalized,
+            "BSC configured start exceeds finalized head"
+        );
+        let mut samples = vec![];
+        for height in [start, finalized].into_iter().collect::<BTreeSet<_>>() {
+            let prepared = prepare_block(rpc.clone(), height).await?;
+            anyhow::ensure!(
+                rpc.block_identity(height).await?.hash == prepared.block.hash,
+                "BSC probe source changed during sampling"
+            );
+            samples.push(serde_json::json!({"height":height,"hash":prepared.block.hash,"transactions":prepared.block.transactions.len(),"receipts":prepared.source.receipts.len(),"trace_coverage":prepared.evidence.trace_data_complete}));
+        }
+        report["history_samples"] = serde_json::json!(samples);
+        report["configured_start_block"] = serde_json::json!(settings.start_block);
+        report["full_history_verified"] = serde_json::json!(false);
+        report["local_database_checked"] = serde_json::json!(false);
+        Ok(report)
+    }
+    pub async fn maintenance(
+        &self,
+        command: &aml_warehouse::maintenance::Command,
+    ) -> anyhow::Result<serde_json::Value> {
+        aml_warehouse::maintenance::run(self.store.connection(),self.store.database(),aml_warehouse::Network::Bsc,command,self.trace_required,self.settings.start_block.unwrap_or(command.from.unwrap_or(0)),
+            async |height,historical| {
+                let head=self.rpc.finalized_height().await?;
+                if let Some(checkpoint)=self.store.checkpoint().await? {
+                    anyhow::ensure!(head>=checkpoint.last_finalized_block && self.rpc.block_identity(checkpoint.last_finalized_block).await?.hash==checkpoint.last_finalized_block_hash,"BSC published checkpoint disagrees with the RPC; reconcile before manual replay/repair");
+                }
+                if historical {self.replay_range(height,height).await?;}else{self.repair_range(height,height,true).await?;}
+                Ok(())
+            }).await
+    }
     pub fn new(
         app_config: &AppConfig,
         ingestion_config: IngestionConfig,
@@ -161,17 +213,60 @@ impl CanonicalIngestor {
     ) -> Result<FollowReport, IngestionError> {
         let mut completed_blocks = 0_u64;
         let mut batches = 0_u64;
-        let mut start = initial_start;
+        let mut next = self
+            .store
+            .checkpoint()
+            .await?
+            .map(|s| s.next_block)
+            .or(initial_start)
+            .or(self.settings.start_block)
+            .ok_or(IngestionError::MissingStartBlock)?;
+        let mut retry_delay = std::time::Duration::from_secs(1);
         loop {
             let remaining = maximum_blocks.map(|maximum| maximum.saturating_sub(completed_blocks));
             if remaining == Some(0) {
                 break;
             }
-            let report = self.sync_once(start.take(), remaining).await?;
-            if let Some(batch) = report.batch {
-                completed_blocks = completed_blocks
-                    .saturating_add(batch.completed_blocks)
-                    .saturating_add(batch.skipped_blocks);
+            let attempt = self.sync_once(initial_start, remaining).await;
+            // Failed batches may have published a complete prefix already. Account
+            // for that prefix while retaining the CLI start until a checkpoint exists.
+            let mut published_prefix = 0;
+            if let Some(checkpoint) = self.store.checkpoint().await? {
+                published_prefix = checkpoint.next_block.saturating_sub(next);
+                next = checkpoint.next_block;
+            }
+            let report = match attempt {
+                Ok(report) => {
+                    if let Some(batch) = &report.batch {
+                        completed_blocks = completed_blocks
+                            .saturating_add(batch.completed_blocks)
+                            .saturating_add(batch.skipped_blocks);
+                    }
+                    retry_delay = std::time::Duration::from_secs(1);
+                    report
+                }
+                Err(IngestionError::Rpc(error)) if error.retryable() => {
+                    completed_blocks = completed_blocks.saturating_add(published_prefix);
+                    if self
+                        .store
+                        .dead_failure_blocks(next, next)
+                        .await?
+                        .contains(&next)
+                    {
+                        return Err(IngestionError::BlockedFailure { block_number: next });
+                    }
+                    tracing::warn!(
+                        next_block = next,
+                        retry_seconds = retry_delay.as_secs(),
+                        "BSC RPC temporarily unavailable; keeping the published checkpoint"
+                    );
+                    sleep(retry_delay).await;
+                    retry_delay = (retry_delay * 2).min(std::time::Duration::from_secs(60));
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            if report.batch.is_some() {
                 batches = batches.saturating_add(1);
             }
             if maximum_blocks.is_some_and(|maximum| completed_blocks >= maximum) {
@@ -375,6 +470,16 @@ impl CanonicalIngestor {
             });
         }
 
+        if advance_cursor
+            && let Some(block_number) = self
+                .store
+                .dead_failure_blocks(start_block, end_block)
+                .await?
+                .into_iter()
+                .min()
+        {
+            return Err(IngestionError::BlockedFailure { block_number });
+        }
         let mut report = IngestionReport {
             start_block,
             end_block,
@@ -810,6 +915,10 @@ pub enum IngestionError {
     RepairRangeTooLarge { requested: u64, maximum: u64 },
     #[error("auto/follow sync has no checkpoint or configured start block")]
     MissingStartBlock,
+    #[error(
+        "ingestion is blocked by a dead letter at block {block_number}; explicit repair is required"
+    )]
+    BlockedFailure { block_number: u64 },
     #[error("requested end block {requested_end} is newer than finalized block {finalized_height}")]
     BeyondFinalized {
         requested_end: u64,
@@ -883,6 +992,7 @@ impl IngestionError {
             | Self::CheckpointMarkerMissing { .. }
             | Self::CheckpointHashMismatch { .. }
             | Self::MissingCheckpoint
+            | Self::BlockedFailure { .. }
             | Self::ReorgDepthExceeded { .. } => "continuity",
             Self::RequestedHashMismatch { .. } => "replay_validation",
             Self::InvalidRange { .. }
@@ -913,6 +1023,7 @@ impl IngestionError {
             Self::RangeTooLarge { .. } => "range_limit",
             Self::RepairRangeTooLarge { .. } => "repair_range_limit",
             Self::MissingStartBlock => "start_block_missing",
+            Self::BlockedFailure { .. } => "dead_letter_blocked",
             Self::BeyondFinalized { .. } => "not_finalized",
             Self::Clock(_) | Self::ClockOverflow => "clock_failure",
             Self::BlockNumberOverflow => "block_number_overflow",
@@ -977,10 +1088,30 @@ mod tests {
     const TX_SUCCESS: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
     const TX_FAILED: &str = "0x3333333333333333333333333333333333333333333333333333333333333333";
     const TX_CREATE: &str = "0x4444444444444444444444444444444444444444444444444444444444444444";
+    const CLUSTER_TRANSFERS: [(&str, &str, &str); 2] = [
+        (
+            "0x5555555555555555555555555555555555555555555555555555555555555555",
+            "0x3",
+            "0xcccccccccccccccccccccccccccccccccccccccc",
+        ),
+        (
+            "0x6666666666666666666666666666666666666666666666666666666666666666",
+            "0x4",
+            "0xdddddddddddddddddddddddddddddddddddddddd",
+        ),
+    ];
+    const CLUSTER_DESTINATION: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
     struct MockRpc {
         nfts: AtomicBool,
+        bridge: AtomicBool,
+        cluster_transfers: AtomicBool,
         reorged: AtomicBool,
+        head: std::sync::atomic::AtomicU64,
+        fault_height: std::sync::atomic::AtomicU64,
+        head_failure: std::sync::atomic::AtomicBool,
+        failures: std::sync::atomic::AtomicUsize,
+        chain_id: std::sync::atomic::AtomicU64,
     }
 
     async fn rpc(State(state): State<Arc<MockRpc>>, Json(request): Json<Value>) -> Json<Value> {
@@ -991,8 +1122,30 @@ mod tests {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        if (state.head_failure.load(Ordering::SeqCst)
+            && params.first() == Some(&json!("finalized")))
+            || (method == "eth_getBlockByNumber"
+                && params.first()
+                    == Some(&json!(format!(
+                        "0x{:x}",
+                        state.fault_height.load(Ordering::SeqCst)
+                    ))))
+        {
+            state.failures.fetch_add(1, Ordering::SeqCst);
+            return Json(
+                json!({"jsonrpc":"2.0","id":id,"error":{"code":-32603,"message":"temporary fixture outage"}}),
+            );
+        }
         let response = match method {
-            "eth_chainId" => json!({"jsonrpc":"2.0","id":id,"result":"0x38"}),
+            "web3_clientVersion" => {
+                json!({"jsonrpc":"2.0","id":id,"result":"synthetic-bsc-fixture"})
+            }
+            "eth_blockNumber" => {
+                json!({"jsonrpc":"2.0","id":id,"result":format!("0x{:x}",state.head.load(Ordering::SeqCst))})
+            }
+            "eth_chainId" => {
+                json!({"jsonrpc":"2.0","id":id,"result":format!("0x{:x}",state.chain_id.load(Ordering::SeqCst))})
+            }
             "eth_getBalance" => json!({"jsonrpc":"2.0","id":id,"result":"0x1000"}),
             "eth_call" => {
                 if params.get(1) != Some(&json!("0x64")) {
@@ -1017,19 +1170,49 @@ mod tests {
 
             "eth_getBlockByNumber" if params.first() == Some(&json!("finalized")) => {
                 json!({ "jsonrpc": "2.0", "id": id, "result": {
-                    "number": "0x64", "hash": BLOCK_HASH
+                    "number": format!("0x{:x}",state.head.load(Ordering::SeqCst)), "hash": BLOCK_HASH
                 }})
             }
             "eth_getBlockByNumber" if params.first() == Some(&json!("0x64")) => {
-                let block = if state.reorged.load(Ordering::SeqCst) {
+                let mut block = if state.reorged.load(Ordering::SeqCst) {
                     reorg_block()
                 } else {
                     block()
                 };
+                if state.cluster_transfers.load(Ordering::SeqCst)
+                    && !state.reorged.load(Ordering::SeqCst)
+                {
+                    for (hash, index, sender) in CLUSTER_TRANSFERS {
+                        let mut tx =
+                            transaction(hash, index, json!(CLUSTER_DESTINATION), "0x2a", "0x");
+                        tx["from"] = json!(sender);
+                        block["transactions"].as_array_mut().unwrap().push(tx);
+                    }
+                }
                 json!({ "jsonrpc": "2.0", "id": id, "result": block })
             }
             "eth_getBlockByNumber" if params.first() == Some(&json!("0x63")) => {
                 json!({ "jsonrpc": "2.0", "id": id, "result": block_99() })
+            }
+            "eth_getBlockByNumber"
+                if matches!(
+                    params.first().and_then(Value::as_str),
+                    Some("0x65" | "0x66" | "0x67")
+                ) =>
+            {
+                let h =
+                    u64::from_str_radix(params[0].as_str().unwrap().trim_start_matches("0x"), 16)
+                        .unwrap();
+                let mut value = block();
+                value["number"] = json!(format!("0x{h:x}"));
+                value["hash"] = json!(format!("0x{h:064x}"));
+                value["parentHash"] = json!(if h == 101 {
+                    BLOCK_HASH.to_owned()
+                } else {
+                    format!("0x{:064x}", h - 1)
+                });
+                value["transactions"] = json!([]);
+                json!({"jsonrpc":"2.0","id":id,"result":value})
             }
             "eth_getBlockReceipts" => json!({
                 "jsonrpc": "2.0", "id": id,
@@ -1043,17 +1226,30 @@ mod tests {
                     TX_CREATE => creation_receipt(),
                     _ => Value::Null,
                 };
+                if state.cluster_transfers.load(Ordering::SeqCst)
+                    && let Some((_, index, sender)) =
+                        CLUSTER_TRANSFERS.iter().find(|entry| entry.0 == tx_hash)
+                {
+                    receipt = self::receipt(tx_hash, index, json!(CLUSTER_DESTINATION), "0x1");
+                    receipt["from"] = json!(sender);
+                }
                 if tx_hash == TX_SUCCESS && state.nfts.load(Ordering::SeqCst) {
                     receipt["logs"]
                         .as_array_mut()
                         .unwrap()
                         .extend(fixture_nft_logs());
                 }
+                if tx_hash == TX_SUCCESS && state.bridge.load(Ordering::SeqCst) {
+                    receipt["logs"]
+                        .as_array_mut()
+                        .unwrap()
+                        .extend([fixture_bridge_log(), fixture_allbridge_log()]);
+                }
                 json!({ "jsonrpc": "2.0", "id": id, "result": receipt })
             }
             "debug_traceBlockByNumber" => {
                 let empty =
-                    params.first() == Some(&json!("0x63")) || state.reorged.load(Ordering::SeqCst);
+                    params.first() != Some(&json!("0x64")) || state.reorged.load(Ordering::SeqCst);
                 json!({
                     "jsonrpc": "2.0", "id": id,
                     "result": if empty { json!([]) } else { traces() }
@@ -1220,7 +1416,14 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let state = Arc::new(MockRpc {
             nfts: AtomicBool::new(false),
+            bridge: AtomicBool::new(false),
+            cluster_transfers: AtomicBool::new(false),
             reorged: AtomicBool::new(false),
+            head: std::sync::atomic::AtomicU64::new(100),
+            fault_height: std::sync::atomic::AtomicU64::new(u64::MAX),
+            head_failure: std::sync::atomic::AtomicBool::new(false),
+            failures: std::sync::atomic::AtomicUsize::new(0),
+            chain_id: std::sync::atomic::AtomicU64::new(56),
         });
         let app = Router::new()
             .route("/", post(rpc))
@@ -1711,6 +1914,175 @@ mod tests {
             .execute()
             .await
             .unwrap();
+    }
+    #[tokio::test]
+    #[ignore = "requires disposable BSC_TEST_CLICKHOUSE_* settings"]
+    async fn follow_recovers_preserves_cli_start_counts_prefix_and_respects_dead_letters()
+    -> anyhow::Result<()> {
+        use std::time::Duration;
+        async fn wait_next(store: &ClickHouseIngestionStore, next: u64) -> anyhow::Result<()> {
+            tokio::time::timeout(Duration::from_secs(45), async {
+                loop {
+                    if store
+                        .checkpoint()
+                        .await?
+                        .is_some_and(|s| s.next_block == next)
+                    {
+                        return Ok::<_, anyhow::Error>(());
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            })
+            .await??;
+            Ok(())
+        }
+        let (admin, database) = disposable_database("follow").await;
+        let native = admin.clone().with_database(&database);
+        let (rpc_url, state, server) = start_mock().await;
+        let config = crate::config::ClickHouseConfig::fixture(
+            &env::var("BSC_TEST_CLICKHOUSE_URL")?,
+            &env::var("BSC_TEST_CLICKHOUSE_USER")?,
+            &env::var("BSC_TEST_CLICKHOUSE_PASSWORD")?,
+            &database,
+        );
+        let store = ClickHouseIngestionStore::new(&config);
+        let app = test_app_config(&rpc_url);
+        let mut settings = test_ingestion_config();
+        settings.start_block = None;
+        settings.rpc_max_attempts = 1;
+        settings.poll_interval = Duration::from_millis(50);
+        settings.block_fetch_concurrency = 1;
+        settings.failure_max_attempts = 2;
+        let ingestor = Arc::new(CanonicalIngestor::new(
+            &app,
+            settings.clone(),
+            store.clone(),
+            "fixture-follow".into(),
+        )?);
+        state.head.store(101, Ordering::SeqCst);
+        state.head_failure.store(true, Ordering::SeqCst);
+        state.fault_height.store(101, Ordering::SeqCst);
+        let run = ingestor.clone();
+        let worker = tokio::spawn(async move { run.follow(Some(100), Some(2)).await });
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                if state.failures.load(Ordering::SeqCst) >= 2 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await?;
+        assert!(!worker.is_finished());
+        assert!(store.checkpoint().await?.is_none());
+        state.head_failure.store(false, Ordering::SeqCst);
+        wait_next(&store, 101).await?;
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                if native
+                    .query(
+                        "SELECT count() FROM aml_ingestion_failures_current WHERE block_number=101",
+                    )
+                    .fetch_one::<u64>()
+                    .await?
+                    > 0
+                {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await??;
+        assert!(!worker.is_finished());
+        state.fault_height.store(u64::MAX, Ordering::SeqCst);
+        let report = tokio::time::timeout(Duration::from_secs(45), worker).await???;
+        assert_eq!(report.completed_blocks, 2);
+        assert_eq!(report.next_block, Some(102));
+        assert_eq!(
+            native
+                .query("SELECT count() FROM aml_ingested_blocks_canonical")
+                .fetch_one::<u64>()
+                .await?,
+            2
+        );
+        assert_eq!(
+            native
+                .query("SELECT count() FROM aml_transactions_canonical")
+                .fetch_one::<u64>()
+                .await?,
+            3
+        );
+        drop(ingestor);
+        let restarted = Arc::new(CanonicalIngestor::new(
+            &app,
+            settings,
+            store.clone(),
+            "fixture-restart".into(),
+        )?);
+        let run = restarted.clone();
+        let worker = tokio::spawn(async move { run.follow(None, Some(1)).await });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!worker.is_finished());
+        state.head.store(102, Ordering::SeqCst);
+        let report = tokio::time::timeout(Duration::from_secs(45), worker).await???;
+        assert_eq!(report.completed_blocks, 1);
+        assert_eq!(report.next_block, Some(103));
+        state.chain_id.store(1, Ordering::SeqCst);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(10), restarted.follow(None, Some(1)))
+                .await?
+                .is_err()
+        );
+        assert_eq!(store.checkpoint().await?.unwrap().next_block, 103);
+        state.chain_id.store(56, Ordering::SeqCst);
+        state.head.store(103, Ordering::SeqCst);
+        state.fault_height.store(103, Ordering::SeqCst);
+        let error = tokio::time::timeout(Duration::from_secs(45), restarted.follow(None, Some(1)))
+            .await?
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            super::IngestionError::BlockedFailure { block_number: 103 }
+        ));
+        let attempts = state.failures.load(Ordering::SeqCst);
+        assert!(matches!(
+            restarted.follow(None, Some(1)).await.unwrap_err(),
+            super::IngestionError::BlockedFailure { block_number: 103 }
+        ));
+        assert_eq!(
+            state.failures.load(Ordering::SeqCst),
+            attempts,
+            "restart bypassed a dead letter"
+        );
+        state.fault_height.store(u64::MAX, Ordering::SeqCst);
+        assert_eq!(
+            restarted
+                .repair_range(103, 103, true)
+                .await?
+                .repaired_blocks,
+            vec![103]
+        );
+        assert_eq!(
+            native
+                .query("SELECT status FROM aml_ingestion_failures_current WHERE block_number=103")
+                .fetch_one::<String>()
+                .await?,
+            "resolved"
+        );
+        assert_eq!(
+            native
+                .query("SELECT count() FROM aml_ingested_blocks_canonical")
+                .fetch_one::<u64>()
+                .await?,
+            4
+        );
+        server.abort();
+        drop(restarted);
+        admin
+            .query(&format!("DROP DATABASE {database}"))
+            .execute()
+            .await?;
+        Ok(())
     }
     include!("../../tests/support/shared_pipeline.rs");
 }

@@ -2,6 +2,7 @@
 
 FROM rust:1.92-bookworm AS builder
 COPY --from=warehouse_source / /build/shared/warehouse/
+COPY --from=chain_api_source / /build/shared/chain_api/
 WORKDIR /build/dockerizd_tron/app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

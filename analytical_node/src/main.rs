@@ -1,7 +1,14 @@
 mod bitcoin_clusters;
+mod bridge;
 #[cfg(test)]
 mod bitcoin_exposure_tests;
+mod cases;
+mod kyt;
+#[cfg(test)]
+mod response_contract_tests;
 mod risk;
+#[cfg(test)]
+mod risk_evaluation_tests;
 mod store;
 
 use anyhow::{Context, ensure};
@@ -135,6 +142,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
+    let kyt_worker = kyt::start(app.clone())?;
     let router = Router::new()
         .route("/health", get(|| async { Json(json!({"status":"alive"})) }))
         .route("/ready", get(ready))
@@ -146,6 +154,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/investigations", get(saved))
         .route("/api/investigations/{id}", get(reopen))
         .route("/api/investigations/{id}/export", post(export))
+        .merge(bridge::routes())
+        .merge(kyt::routes())
+        .merge(cases::routes())
         .with_state(app);
     let listener = tokio::net::TcpListener::bind(
         std::env::var("AML_ANALYTICAL_ADDR").unwrap_or("0.0.0.0:7001".into()),
@@ -165,6 +176,7 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
     janitor.abort();
+    kyt_worker.abort();
     Ok(())
 }
 
@@ -181,6 +193,23 @@ async fn ready(State(app): State<App>) -> Result<Json<Value>, Failure> {
 struct Owner {
     hash: String,
     cookie: Option<String>,
+}
+fn user_owner_hash(user: &str) -> String {
+    format!("{:x}", Sha256::digest(format!("user:{user}")))
+}
+fn authenticated_operator<'a>(
+    app: &App,
+    headers: &'a HeaderMap,
+) -> Result<(Owner, &'a str), Failure> {
+    let username = headers
+        .get("x-aml-user")
+        .and_then(|value| value.to_str().ok())
+        .filter(|user| !user.is_empty())
+        .ok_or(Failure(
+            StatusCode::UNAUTHORIZED,
+            "An authenticated operator is required",
+        ))?;
+    Ok((owner(app, headers)?, username))
 }
 fn owner(app: &App, headers: &HeaderMap) -> Result<Owner, Failure> {
     let supplied = headers
@@ -205,7 +234,7 @@ fn owner(app: &App, headers: &HeaderMap) -> Result<Owner, Failure> {
         .filter(|s| !s.is_empty());
     if let Some(user) = user {
         return Ok(Owner {
-            hash: format!("{:x}", Sha256::digest(format!("user:{user}"))),
+            hash: user_owner_hash(user),
             cookie: None,
         });
     }
@@ -287,13 +316,50 @@ async fn create(
             "Investigation capacity reached; retry shortly",
         )
     })?;
+    let mut data = load_evidence(&app, &network, &address, target.as_deref(), &uri).await?;
+    let immutable_holdings =
+        network == "bitcoin" && data["holdings"]["holdings_snapshot"].is_object();
+    if target.is_none()
+        && !immutable_holdings
+        && let Some(holdings) = data.get_mut("holdings").and_then(Value::as_object_mut)
+    {
+        // Returned only after Store::create commits the complete payload.
+        holdings.insert("persisted".into(), json!(true));
+        holdings.insert("storage".into(), json!("central_investigation_snapshot"));
+    }
+    refresh_source_validity(&app, &mut data, &network).await;
+    let network_id = risk::text(&data["network_id"]);
+    let id = nanoid!(32);
+    let (nodes, edges) = normalize_graph(&id, network_id, &network, &data).map_err(internal)?;
+    let timestamp = now();
+    let payload = serde_json::to_string(&data).map_err(internal)?;
+    let metadata = json!({"id":id,"network_id":network_id,"network":network,
+        "mode":if target.is_some(){"paths"}else{"wallet"},"address":address,"target":target,
+        "state":"temporary","created_at_unix_ms":timestamp,"expires_at_unix_ms":timestamp+app.ttl_ms,
+        "snapshot_hash":format!("{:x}",Sha256::digest(payload.as_bytes()))});
+    app.store
+        .create(
+            json!({"metadata":metadata,"owner":owner.hash,"payload":payload,
+        "nodes":nodes,"edges":edges}),
+        )
+        .await
+        .map_err(internal)?;
+    data["investigation"] = metadata;
+    Ok(response(data, owner))
+}
+
+async fn load_evidence(
+    app: &App,
+    network: &str,
+    address: &str,
+    target: Option<&str>,
+    uri: &axum::http::Uri,
+) -> Result<Value, Failure> {
     let upstream = app
         .upstreams
-        .get(&network)
+        .get(network)
         .ok_or(Failure(StatusCode::NOT_FOUND, "Unsupported network"))?;
-    if !valid_address(&network, &address)
-        || target.as_ref().is_some_and(|a| !valid_address(&network, a))
-    {
+    if !valid_address(network, address) || target.is_some_and(|a| !valid_address(network, a)) {
         return Err(Failure(StatusCode::BAD_REQUEST, "Invalid wallet address"));
     }
     let mut remote = app
@@ -331,15 +397,11 @@ async fn create(
         bytes.extend_from_slice(&chunk);
     }
     let mut data: Value = serde_json::from_slice(&bytes).map_err(internal)?;
-    let network_id = if network == "tron" {
-        "tron:mainnet"
-    } else if network == "bsc" {
-        "eip155:56"
-    } else if network == "bitcoin" {
-        "bip122:000000000019d6689c085ae165831e93"
-    } else {
-        "eip155:1"
-    };
+    let response_network = aml_chain_api::Network::ALL
+        .into_iter()
+        .find(|chain| chain.name() == network)
+        .ok_or(Failure(StatusCode::NOT_FOUND, "Unsupported network"))?;
+    let network_id = response_network.id();
     if data.get("network_id").is_some_and(|v| v != network_id) {
         return Err(Failure(
             StatusCode::BAD_GATEWAY,
@@ -347,9 +409,49 @@ async fn create(
         ));
     }
     data["network_id"] = json!(network_id);
+    let mode = if target.is_some() {
+        aml_chain_api::response::Mode::Paths
+    } else {
+        aml_chain_api::response::Mode::Wallet
+    };
+    if !data["response_contract"].is_null() {
+        aml_chain_api::response::validate(response_network, mode, &data).map_err(|error| {
+            eprintln!("Chain response rejected: {error:#}");
+            Failure(
+                StatusCode::BAD_GATEWAY,
+                "Chain response contradicts its evidence contract",
+            )
+        })?;
+    }
+    data = aml_chain_api::response::normalize(response_network, mode, data).map_err(|error| {
+        eprintln!("Chain response rejected: {error:#}");
+        Failure(StatusCode::BAD_GATEWAY, "Invalid chain evidence response")
+    })?;
+    let canonical_address = |value: &str| {
+        if matches!(network, "ethereum" | "bsc") || value.to_ascii_lowercase().starts_with("bc1") {
+            value.to_ascii_lowercase()
+        } else {
+            value.to_owned()
+        }
+    };
+    if data["address"] != canonical_address(address)
+        || target
+            .as_ref()
+            .is_some_and(|value| data["target"] != canonical_address(value))
+    {
+        return Err(Failure(
+            StatusCode::BAD_GATEWAY,
+            "Chain response wallet or target mismatch",
+        ));
+    }
+    let fields = data
+        .as_object_mut()
+        .expect("normalized investigation object");
+    fields.remove("historical_risk_engine");
+    fields.remove("risk_policy_hash");
     if target.is_none() {
-        // The chain supplies evidence. A single centrally versioned policy scores both networks.
-        let assessed = risk::assess(&network, &data);
+        // The chain supplies evidence. The same centrally versioned policy scores all networks.
+        let assessed = risk::assess(network, &data);
         if network == "bitcoin"
             && data["risk_snapshot"].is_object()
             && (!aml_risk_policy::bitcoin_binding_matches(&data["risk_snapshot"], &data)
@@ -360,35 +462,11 @@ async fn create(
                 "Bitcoin persisted risk differs from the central policy or evidence",
             ));
         }
-        data["risk_engine"] = assessed;
-        let immutable_holdings =
-            network == "bitcoin" && data["holdings"]["holdings_snapshot"].is_object();
-        if !immutable_holdings
-            && let Some(holdings) = data.get_mut("holdings").and_then(Value::as_object_mut)
-        {
-            // Returned only after Store::create commits the complete payload.
-            holdings.insert("persisted".into(), json!(true));
-            holdings.insert("storage".into(), json!("central_investigation_snapshot"));
-        }
+        risk::attach_assessment(&mut data, assessed);
+    } else {
+        fields.remove("risk_engine");
     }
-    refresh_source_validity(&app, &mut data, &network).await;
-    let id = nanoid!(32);
-    let (nodes, edges) = normalize_graph(&id, network_id, &network, &data).map_err(internal)?;
-    let timestamp = now();
-    let payload = serde_json::to_string(&data).map_err(internal)?;
-    let metadata = json!({"id":id,"network_id":network_id,"network":network,
-        "mode":if target.is_some(){"paths"}else{"wallet"},"address":address,"target":target,
-        "state":"temporary","created_at_unix_ms":timestamp,"expires_at_unix_ms":timestamp+app.ttl_ms,
-        "snapshot_hash":format!("{:x}",Sha256::digest(payload.as_bytes()))});
-    app.store
-        .create(
-            json!({"metadata":metadata,"owner":owner.hash,"payload":payload,
-        "nodes":nodes,"edges":edges}),
-        )
-        .await
-        .map_err(internal)?;
-    data["investigation"] = metadata;
-    Ok(response(data, owner))
+    Ok(data)
 }
 
 fn valid_address(network: &str, address: &str) -> bool {
@@ -426,7 +504,7 @@ fn normalize_graph(
     let mut nodes = BTreeMap::new();
     let key = |address: &str| format!("{id}:{network_id}:{address}");
     for node in raw_nodes {
-        let typed = network == "bitcoin" && node["subject_id"].is_string();
+        let typed = node["subject_id"].is_string() && node["subject_type"].is_string();
         let address = if typed {
             risk::text(&node["subject_id"])
         } else if network == "tron" {
@@ -435,8 +513,8 @@ fn normalize_graph(
             risk::text(&node["address"])
         };
         ensure!(!address.is_empty(), "empty graph node");
-        let kind = risk::text(&node["node_type"]);
-        if typed {
+        let kind = risk::text(&node[if typed { "subject_type" } else { "node_type" }]);
+        if typed && network == "bitcoin" {
             ensure!(
                 ["address", "transaction", "script"].contains(&kind),
                 "unknown Bitcoin graph subject type"
@@ -454,7 +532,7 @@ fn normalize_graph(
                 "non-address subject has an address value"
             );
         }
-        let address_value = if network == "bitcoin" && ["transaction", "script"].contains(&kind) {
+        let address_value = if typed && kind != "address" {
             Value::Null
         } else {
             json!(address)
@@ -468,9 +546,7 @@ fn normalize_graph(
     let mut edges = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for edge in raw_edges {
-        let typed = network == "bitcoin"
-            && edge["from_subject_id"].is_string()
-            && edge["to_subject_id"].is_string();
+        let typed = edge["from_subject_id"].is_string() && edge["to_subject_id"].is_string();
         let from = if typed {
             risk::text(&edge["from_subject_id"])
         } else {
@@ -546,7 +622,9 @@ fn normalize_graph(
             "from_subject_id":from,"to_subject_id":to,"from_subject_type":nodes[from]["subject_type"],"to_subject_type":nodes[to]["subject_type"],
             "fund_continuity_claimed":if typed{json!(false)}else{Value::Null},"amount_allocation_claimed":if typed{json!(false)}else{Value::Null},
             "tx_hash":edge["tx_hash"],"amount":edge["amount"],
-            "asset_id":edge.get("asset_id").or_else(||edge.get("token_address")).unwrap_or(&Value::Null),
+            "asset_id":edge.get("canonical_asset_id").or_else(||edge.get("asset_id")).or_else(||edge.get("token_address")).unwrap_or(&Value::Null),
+            "token_id":edge.get("canonical_token_id").or_else(||edge.get("token_id")).unwrap_or(&Value::Null),
+            "transaction_index":edge["transaction_index"],"event_index":edge["event_index"],"event_sub_index":edge["event_sub_index"],"trace_address":edge["trace_address"],
             "block_number":edge["block_number"],"transfer_type":edge["transfer_type"],"evidence_json":edge.to_string()}));
     }
     Ok((nodes.into_values().collect(), edges))
@@ -761,14 +839,7 @@ fn annotate_source_validity(data: &mut Value, current: Option<&Value>) {
             "current"
         };
     }
-    data["source_validity"] = json!({"status":status,"checked_at_unix_ms":now(),"current_risk_usable":status=="current","historical_evidence_preserved":true});
-    if status != "current" && data.get("risk_engine").is_some() {
-        if data.get("historical_risk_engine").is_none() {
-            data["historical_risk_engine"] = data["risk_engine"].clone();
-        }
-        data["risk_engine"] = json!({"risk_score":null,"risk_level":"UNKNOWN","signals":[],"policy_version":"source_snapshot_invalid",
-            "limitations":["Historical snapshot: its source is changed or could not be verified. Run a new investigation before using current risk."]});
-    }
+    risk::record_source_validity(data, "bitcoin", status, now());
 }
 fn apply_tron_source_validity(data: &mut Value, current: Option<&Value>) {
     let valid = |v: &Value| {
@@ -793,14 +864,36 @@ fn apply_tron_source_validity(data: &mut Value, current: Option<&Value>) {
     } else {
         "current"
     };
-    data["source_validity"] = json!({"status":status,"checked_at_unix_ms":now(),"current_risk_usable":status=="current","historical_evidence_preserved":true});
-    if status != "current" && data["risk_engine"].is_object() {
-        if !data["historical_risk_engine"].is_object() {
-            data["historical_risk_engine"] = data["risk_engine"].clone();
-        }
-        data["risk_engine"] = json!({"risk_score":null,"risk_level":"UNKNOWN","signals":[],"policy_version":"source_snapshot_invalid","limitations":["TRON chain or operational evidence changed or cannot be verified; create a new investigation."]});
-    }
+    risk::record_source_validity(data, "tron", status, now());
 }
+fn apply_account_source_validity(data: &mut Value, current: Option<&Value>, network: &str) {
+    let valid = |value: &Value| {
+        matches!(value["network_id"].as_str(), Some("eip155:1" | "eip155:56"))
+            && value["source_snapshot"]["network_id"] == value["network_id"]
+            && value["source_snapshot"]["contract"] == "canonical_v1"
+            && value["source_snapshot"]["snapshot_id"]
+                .as_str()
+                .is_some_and(|v| v.len() == 64)
+            && value["operational_snapshot"]["network_id"] == value["network_id"]
+            && value["operational_snapshot"]["contract"] == "operational_v1"
+            && value["operational_snapshot"]["snapshot_id"]
+                .as_str()
+                .is_some_and(|v| v.len() == 64)
+    };
+    let status = if !valid(data)
+        || current.is_none_or(|v| !valid(v) || v["network_id"] != data["network_id"])
+    {
+        "unverified"
+    } else if current.unwrap()["source_snapshot"] != data["source_snapshot"]
+        || current.unwrap()["operational_snapshot"] != data["operational_snapshot"]
+    {
+        "stale"
+    } else {
+        "current"
+    };
+    risk::record_source_validity(data, network, status, now());
+}
+
 async fn refresh_source_validity(app: &App, data: &mut Value, network: &str) {
     if network == "tron" {
         let current = async {
@@ -834,6 +927,31 @@ async fn refresh_source_validity(app: &App, data: &mut Value, network: &str) {
         return;
     }
     if network != "bitcoin" {
+        let current = async {
+            let upstream = app
+                .upstreams
+                .get(network)
+                .context("missing chain upstream")?;
+            let mut response = app
+                .http
+                .get(format!("{upstream}/status"))
+                .header("x-aml-service-key", &app.key)
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await?;
+            ensure!(response.status().is_success(), "chain status unavailable");
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
+                ensure!(
+                    bytes.len() + chunk.len() <= 65536,
+                    "chain status exceeds bound"
+                );
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok::<Value, anyhow::Error>(serde_json::from_slice(&bytes)?)
+        }
+        .await;
+        apply_account_source_validity(data, current.as_ref().ok(), network);
         return;
     }
     let current = async {
@@ -1032,7 +1150,7 @@ async fn export(
         .as_str()
         .unwrap_or("")
         .to_owned();
-    if matches!(network.as_str(), "bitcoin" | "tron") {
+    if matches!(network.as_str(), "bitcoin" | "tron" | "ethereum" | "bsc") {
         let mut snapshot = app
             .store
             .read(&id, &owner.hash, now())
@@ -1042,6 +1160,9 @@ async fn export(
         refresh_source_validity(&app, &mut snapshot, &network).await;
         result["source_validity"] = snapshot["source_validity"].clone();
         result["risk_engine"] = snapshot["risk_engine"].clone();
+        if let Some(hash) = snapshot.get("risk_policy_hash") {
+            result["risk_policy_hash"] = hash.clone();
+        }
         if snapshot["historical_risk_engine"].is_object() {
             result["historical_risk_engine"] = snapshot["historical_risk_engine"].clone();
         }
@@ -1129,13 +1250,16 @@ mod tests {
     #[test]
     fn changed_or_unverifiable_sources_cannot_supply_current_risk() {
         let network = "bip122:000000000019d6689c085ae165831e93";
-        let mut data = serde_json::json!({"network_id":network,"source_snapshot":{"contract":"canonical_v1","snapshot_id":"a".repeat(64),"network_id":network,"source_revision":"10","block_hash":"b".repeat(64),"as_of_block":7},"risk_engine":{"risk_score":90,"risk_level":"HIGH","signals":["original"]}});
+        let mut data = serde_json::json!({"network_id":network,"source_snapshot":{"contract":"canonical_v1","snapshot_id":"a".repeat(64),"network_id":network,"source_revision":"10","block_hash":"b".repeat(64),"as_of_block":7}});
+        let assessed = risk::assess("bitcoin", &data);
+        risk::attach_assessment(&mut data, assessed);
         let original = data.clone();
         let status =
             serde_json::json!({"network_id":network,"source_snapshot":data["source_snapshot"]});
         super::annotate_source_validity(&mut data, Some(&status));
         assert_eq!(data["source_validity"]["status"], "current");
-        assert_eq!(data["risk_engine"]["risk_score"], 90);
+        assert_eq!(data["risk_engine"], original["risk_engine"]);
+        assert_eq!(data["source_validity"]["current_risk_usable"], false);
         let mut changed = status.clone();
         changed["source_snapshot"]["source_revision"] = serde_json::json!("11");
         super::annotate_source_validity(&mut data, Some(&changed));
@@ -1261,13 +1385,14 @@ mod tests {
             requests: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
         };
         let mut saved = approved.clone();
-        saved["risk_engine"] = risk.clone();
+        super::risk::attach_assessment(&mut saved, risk.clone());
         super::refresh_source_validity(&app, &mut saved, "bitcoin").await;
         assert_eq!(saved["source_validity"]["status"], "current");
+        assert_eq!(saved["source_validity"]["current_risk_usable"], true);
         for state in ["source_inactive", "revoked"] {
             *live.write().unwrap() = proof[state]["intelligence_snapshot"].clone();
             let mut saved = approved.clone();
-            saved["risk_engine"] = risk.clone();
+            super::risk::attach_assessment(&mut saved, risk.clone());
             super::refresh_source_validity(&app, &mut saved, "bitcoin").await;
             assert_eq!(saved["source_validity"]["status"], "stale");
             assert!(saved["risk_engine"]["risk_score"].is_null());

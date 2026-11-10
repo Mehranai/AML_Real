@@ -43,6 +43,7 @@ pub struct IngestionService {
 
 impl IngestionService {
     pub async fn connect(config: AppConfig) -> anyhow::Result<Self> {
+        aml_warehouse::maintenance::failure_limit("ETHEREUM_FAILURE_MAX_ATTEMPTS")?;
         let writer = crate::storage::ingestion_lock(&config.clickhouse_database)?;
         let rpc = EthereumRpc::connect(&config).await?;
         let store = EthereumStore::new(&config);
@@ -94,25 +95,47 @@ impl IngestionService {
             trace_data_complete: false,
             ..Default::default()
         };
-
+        let mut retry_delay = Duration::from_secs(1);
         loop {
-            let finalized = self.rpc.finalized_block_number().await?;
-            // Polls at the current head must also detect a changed finalized source.
-            self.verify_checkpoint(finalized).await?;
-            while next_block <= finalized {
-                let block_report = self.ingest_one(next_block, finalized).await?;
-                report.absorb(block_report);
-                report.to_block = next_block;
-                next_block = next_block.saturating_add(1);
+            let attempt = async {
+                self.rpc.validate_chain_id().await?;
+                let finalized = self.rpc.finalized_block_number().await?;
+                // Polls at the current head must also detect a changed finalized source.
+                self.verify_checkpoint(finalized).await?;
+                while next_block <= finalized {
+                    let block_report = self.ingest_one(next_block, finalized).await?;
+                    report.absorb(block_report);
+                    report.to_block = next_block;
+                    next_block = next_block.saturating_add(1);
 
-                if max_blocks.is_some_and(|limit| report.completed_blocks >= limit) {
+                    if max_blocks.is_some_and(|limit| report.completed_blocks >= limit) {
+                        return Ok::<_, anyhow::Error>(true);
+                    }
+                    self.rate_limit_delay().await;
+                }
+                Ok(false)
+            }
+            .await;
+            match attempt {
+                Ok(true) => {
                     report.elapsed_ms = elapsed_millis(started);
                     return Ok(report);
                 }
-                self.rate_limit_delay().await;
+                Ok(false) => {
+                    retry_delay = Duration::from_secs(1);
+                    sleep(Duration::from_secs(self.config.eth_poll_interval_seconds)).await;
+                }
+                Err(error) if super::client::transient_rpc_error(&error) => {
+                    tracing::warn!(
+                        next_block,
+                        retry_seconds = retry_delay.as_secs(),
+                        "Ethereum RPC temporarily unavailable; keeping the published checkpoint"
+                    );
+                    sleep(retry_delay).await;
+                    retry_delay = (retry_delay * 2).min(Duration::from_secs(60));
+                }
+                Err(error) => return Err(error),
             }
-
-            sleep(Duration::from_secs(self.config.eth_poll_interval_seconds)).await;
         }
     }
 
@@ -178,9 +201,30 @@ impl IngestionService {
         block_number: u64,
         observed: u64,
     ) -> anyhow::Result<IngestionReport> {
+        self.ingest_one_force(block_number, observed, false).await
+    }
+    async fn ingest_one_force(
+        &self,
+        block_number: u64,
+        observed: u64,
+        force: bool,
+    ) -> anyhow::Result<IngestionReport> {
+        if !force {
+            let client = crate::db::database_client(&self.config);
+            ensure!(
+                !aml_warehouse::maintenance::blocked(
+                    &client,
+                    &self.config.clickhouse_database,
+                    aml_warehouse::Network::Ethereum,
+                    block_number
+                )
+                .await?,
+                "ingestion blocked by a dead letter; use maintenance repair --include-dead"
+            );
+        }
         let started = Instant::now();
         let result = async {
-            if let Some(hash) = self.store
+            if !force && let Some(hash) = self.store
                 .complete_block_hash(block_number, self.config.eth_trace_mode.required())
                 .await?
             {
@@ -220,7 +264,7 @@ impl IngestionService {
                 elapsed_ms: 0,
                 trace_data_complete: fetched.traces.is_some(),
             };
-            self.store.persist_block(&extracted, observed).await?;
+            self.store.persist_block_force(&extracted, observed,force).await?;
             Ok::<_, anyhow::Error>(report)
         }
         .await;
@@ -283,6 +327,34 @@ impl IngestionService {
             cache.loaded_at_block = Some(block_number);
         }
         Ok(cache.registry.clone())
+    }
+    pub async fn maintenance(
+        &self,
+        command: &aml_warehouse::maintenance::Command,
+    ) -> anyhow::Result<serde_json::Value> {
+        let client = crate::db::database_client(&self.config);
+        // Manual refresh sees the current governed registry, not an older cache.
+        self.registry_cache.lock().await.loaded_at_block = None;
+        aml_warehouse::maintenance::run(
+            &client,
+            &self.config.clickhouse_database,
+            aml_warehouse::Network::Ethereum,
+            command,
+            self.config.eth_trace_mode.required(),
+            self.config.eth_start_block,
+            async |height, historical| {
+                self.rpc.validate_chain_id().await?;
+                let finalized = self.rpc.finalized_block_number().await?;
+                ensure!(
+                    height <= finalized,
+                    "repair/replay block is above finalized head"
+                );
+                self.verify_checkpoint(finalized).await?;
+                self.ingest_one_force(height, finalized, historical).await?;
+                Ok(())
+            },
+        )
+        .await
     }
 
     async fn rate_limit_delay(&self) {

@@ -41,6 +41,15 @@ Legacy DDL/mounts have been removed. All four schema jobs initialize the same
 contract before runtime startup; one [generated SQL bundle](sql/README.md) is
 kept for review and checked against the source.
 
+`relationships::read_page` serves the same address transfer page on all four
+adapters. Block/time/asset/direction filters select canonical row keys first;
+only those rows and their UTXO witnesses are read back. The descending key
+includes block, transaction, event, sub-index and relationship identity. A cursor
+binds the database, network, address, filters, page size and source snapshot.
+The source is checked before and after each page. Any publication/frame change
+requires restarting pagination; historical pages are not retained. Bitcoin pages
+remain address/transaction UTXO legs, with no input/output allocation inferred.
+
 Fresh databases are required. No automatic downgrade of an old test volume is
 implemented. Do not edit an applied schema to match an existing volume.
 

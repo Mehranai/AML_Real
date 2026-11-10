@@ -2,6 +2,7 @@
 
 FROM rust:1.92-bookworm AS builder
 COPY --from=warehouse_source / /build/shared/warehouse/
+COPY --from=chain_api_source / /build/shared/chain_api/
 WORKDIR /build/dockerizd_bsc
 ENV CARGO_HTTP_MULTIPLEXING=false CARGO_NET_RETRY=10 CARGO_HTTP_TIMEOUT=600
 COPY Cargo.toml Cargo.lock ./

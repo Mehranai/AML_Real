@@ -117,6 +117,7 @@ node-data/
 # Private database backup archives and verification manifests
 backups/
 /dockerizd_bitcoin/intelligence-data/
+/intelligence-data/
 exports/
 snapshots/
 deployment-artifacts/

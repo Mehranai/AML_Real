@@ -86,6 +86,16 @@ server {
         limit_conn aml_connections 10;
         proxy_pass $analytical_upstream$request_uri;
     }
+    location /api/kyt/ {
+        limit_req zone=aml_api burst=10 nodelay;
+        limit_conn aml_connections 10;
+        proxy_pass $analytical_upstream$request_uri;
+    }
+    location ~ ^/api/cases(/|$) {
+        limit_req zone=aml_api burst=10 nodelay;
+        limit_conn aml_connections 10;
+        proxy_pass $analytical_upstream$request_uri;
+    }
     location ~ /neo4j/import$ {
         default_type application/json;
         return 410 '{"error":"Export the current investigation by its ID on the main VM."}';

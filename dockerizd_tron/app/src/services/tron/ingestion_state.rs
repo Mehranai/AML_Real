@@ -96,6 +96,13 @@ pub async fn record_ingestion_failure(
         .await?
         .pop();
     let now = crate::db::now_ms();
+    let attempts = old
+        .as_ref()
+        .and_then(|r| r["attempts"].as_u64())
+        .unwrap_or(0)
+        .saturating_add(1);
+    let retryable = retryable
+        && attempts < aml_warehouse::maintenance::failure_limit("TRON_FAILURE_MAX_ATTEMPTS")?;
     let hash =
         |s: &str| aml_warehouse::values::normalize_hash(aml_warehouse::Network::Tron, s).ok();
     let previous = old.as_ref();

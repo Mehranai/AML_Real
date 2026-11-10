@@ -6,11 +6,123 @@ info:
     Contract between the main AML gateway and an isolated blockchain VM. A chain VM owns its
     node/RPC access, ingestion workers and an isolated ClickHouse database. The main VM
     owns the Analytical Node and central Neo4j. The gateway never connects to ClickHouse directly.
+    Wallet investigation, paths and holdings reject malformed, duplicate and unknown query
+    parameters with HTTP 400. Protected responses use Cache-Control no-store. API errors
+    retain the string error field and add api_version, status and a stable code. Holdings
+    availability payloads and health/readiness retain their domain-specific shapes.
+    Investigation and paths add chain_response_v1: a common typed graph and evidence
+    sections, without replacing immutable native records. The main consumer validates
+    the contract and stores it losslessly in Neo4j. Applicability is not proof of coverage.
 servers:
   - url: http://chain-api.internal
 security:
   - ServiceKey: []
 paths:
+  /internal/kyt/transactions/{hash}:
+    get:
+      operationId: observeCanonicalTransaction
+      description: >-
+        Internal chain VM receipt used by the analytical node. Reads the transaction and
+        typed address participants from one unchanged canonical ClickHouse snapshot.
+        A missing occurrence is scoped to indexed history. An ambiguous hash has no
+        selected occurrence. At most four addresses are returned. Bitcoin inputs and
+        outputs provide observed participants without inferring ownership or fund continuity.
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          schema: { type: string, pattern: '^(0[xX])?[0-9A-Fa-f]{64}$' }
+      responses:
+        '200':
+          description: Canonical transaction lookup result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [network_id, tx_hash, source_snapshot, occurrence, ambiguous]
+                properties:
+                  network_id: { type: string }
+                  tx_hash: { type: string }
+                  source_snapshot: { type: object }
+                  ambiguous: { type: boolean }
+                  occurrence:
+                    type: [object, "null"]
+                    required: [block_number, block_hash, participants, participants_truncated]
+                    properties:
+                      block_number: { type: integer, minimum: 0 }
+                      block_hash: { type: string }
+                      participants:
+                        type: array
+                        maxItems: 4
+                        uniqueItems: true
+                        items: { type: string }
+                      participants_truncated: { type: boolean }
+        '400': { description: Invalid transaction hash for the selected chain }
+        '401': { description: Missing or invalid service key }
+        '503': { description: Canonical evidence unavailable or changed during lookup }
+  /api/{network}/wallet/{address}/transfers:
+    get:
+      operationId: pageWalletTransfers
+      description: >-
+        Read-only keyset pages of canonical observed transfers or Bitcoin UTXO legs.
+        Uses one unchanged source snapshot; a new publication, rollback, coverage refresh
+        or source-frame change requires restarting without a cursor (HTTP 409).
+        Keep every filter and limit unchanged when continuing. The opaque cursor is a
+        continuation marker, never an authentication credential. Filters apply only to
+        this evidence list, not to holdings, risk, full investigations or multihop paths.
+        Exact integers remain decimal strings. NFT collection filters include token IDs;
+        Bitcoin outgoing means an observed spent input, incoming an output to the address.
+        No allocation of inputs to particular outputs or ownership is inferred.
+      parameters:
+        - $ref: "#/components/parameters/Network"
+        - $ref: "#/components/parameters/Address"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 4096 }
+        - name: from_block
+          in: query
+          description: Inclusive lower block height, no greater than to_block.
+          schema: { type: integer, minimum: 0, maximum: 18446744073709551615 }
+        - name: to_block
+          in: query
+          description: Inclusive upper block height within the indexed source snapshot.
+          schema: { type: integer, minimum: 0, maximum: 18446744073709551615 }
+        - name: from_unix_ms
+          in: query
+          description: Inclusive lower UTC Unix time in milliseconds, no greater than to_unix_ms.
+          schema: { type: integer, minimum: 0, maximum: 18446744073709551615 }
+        - name: to_unix_ms
+          in: query
+          description: Inclusive upper UTC Unix time in milliseconds.
+          schema: { type: integer, minimum: 0, maximum: 18446744073709551615 }
+        - name: asset_id
+          in: query
+          description: >-
+            Network-local canonical asset ID (native:BTC/ETH/BNB/TRX or token standard and
+            contract/ID). A qualified ID must name this network. An NFT collection selects
+            all its token IDs; a collection/token ID selects that token. Invalid or
+            inapplicable standards fail with 400; valid unobserved assets return no items.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: direction
+          in: query
+          schema: { type: string, enum: [incoming, outgoing, both], default: both }
+      responses:
+        "200":
+          description: Stable evidence page; has_more refers only to the indexed filtered snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferPage" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: Source snapshot changed; restart pagination without a cursor. Code snapshot_changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "503": { $ref: "#/components/responses/EvidenceUnavailable" }
   /api/bitcoin/analytics/status:
     get:
       operationId: bitcoinAnalyticsWorkerStatus
@@ -134,7 +246,7 @@ paths:
             application/json:
               schema: { type: object, required: [network_id, assets, native_asset_snapshot, capabilities], additionalProperties: true }
         "401": { description: Missing or invalid service key. }
-        "503": { description: Metadata missing, conflicting or storage unavailable. }
+        "503": { description: "Metadata missing, conflicting or storage unavailable." }
   /api/bitcoin/wallet/{address}/holdings:
     get:
       operationId: bitcoinNativeHoldings
@@ -162,9 +274,9 @@ paths:
                 type: object
                 required: [contract, network_id, address, status, balance_sats, balance_decimal, immature_sats, mature_sats, utxo_count, outputs, outputs_truncated, source_snapshot, holdings_snapshot, native_asset_snapshot, metadata, capabilities, history_complete, is_complete_balance]
                 additionalProperties: true
-        "400": { description: Invalid mainnet address, output limit or unknown option. }
+        "400": { description: "Invalid mainnet address, output limit or unknown option." }
         "401": { description: Missing or invalid service key. }
-        "503": { description: Source changed, metadata invalid, resource cap exceeded or evidence unavailable; never represented as zero. }
+        "503": { description: "Source changed, metadata invalid, resource cap exceeded or evidence unavailable; never represented as zero." }
   /api/bitcoin/semantics/config:
     get:
       operationId: bitcoinSemanticDetectorConfig
@@ -208,10 +320,10 @@ paths:
                 type: object
                 required: [network_id, address, source_snapshot, semantic_events, semantic_coverage, semantic_snapshot]
                 additionalProperties: true
-        "400": { description: Invalid address, scope, limit or unknown option. }
+        "400": { description: "Invalid address, scope, limit or unknown option." }
         "401": { description: Missing or invalid service key. }
         "422": { description: Activity scope exceeds 100000 transactions; narrow filters. }
-        "503": { description: Evidence unavailable, incoherent canonical source or detector/fact mismatch. }
+        "503": { description: "Evidence unavailable, incoherent canonical source or detector/fact mismatch." }
   /api/bitcoin/wallet/{address}/activity:
     get:
       operationId: bitcoinWalletActivity
@@ -240,10 +352,10 @@ paths:
                 type: object
                 required: [network_id, address, source_snapshot, fingerprint, activity, recent_transactions, top_counterparties, asset_flows, query_scope, activity_coverage]
                 additionalProperties: true
-        "400": { description: Invalid address, range, direction, limit or unknown option. }
+        "400": { description: "Invalid address, range, direction, limit or unknown option." }
         "401": { description: Missing or invalid service key. }
         "422": { description: More than 100000 matching transactions; narrow the block or UTC time filters. }
-        "503": { description: Evidence unavailable, source changed or query resource budget exceeded. }
+        "503": { description: "Evidence unavailable, source changed or query resource budget exceeded." }
   /api/bitcoin/ingestion/failures:
     get:
       operationId: listBitcoinIngestionFailures
@@ -280,7 +392,7 @@ paths:
                   truncated: { type: boolean }
                   next_after_block: { type: [integer, "null"] }
                   scope: { type: string, const: latest_persisted_failure_state }
-        "400": { description: Invalid status, range or limit. }
+        "400": { description: "Invalid status, range or limit." }
         "401": { description: Missing or invalid service key. }
         "503": { description: Persisted failure state unavailable. }
   /health:
@@ -314,6 +426,13 @@ paths:
       parameters:
         - $ref: "#/components/parameters/Network"
         - $ref: "#/components/parameters/Address"
+        - name: limit
+          in: query
+          description: >-
+            Positive integer, never silently clamped. Bitcoin 1..100 (default 40),
+            Ethereum/BSC 1..5000 (default 750), TRON 1..2000 (default 500).
+            This bounds returned investigation context, not the complete address history.
+          schema: { type: integer, minimum: 1, maximum: 5000 }
       responses:
         "200":
           description: Investigation result. Chain-specific evidence fields may be added.
@@ -321,8 +440,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Investigation"
-        "400": { description: Invalid network address or options. }
-        "401": { description: Missing or invalid service key. }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/EvidenceUnavailable" }
   /api/{network}/wallet/{address}/neo4j/import:
     post:
       operationId: projectWalletGraph
@@ -337,7 +457,12 @@ paths:
   /api/{network}/wallet/{source}/paths/{target}:
     get:
       operationId: findWalletPaths
-      description: Read-only path search over persisted transfers, bounded to at most 10 hops.
+      description: >-
+        Read-only path search over persisted transfers, bounded to at most 10 hops.
+        Source and target must be distinct. TRON retains max_depth as an alias of max_hops;
+        supplying both is invalid. BSC accepts limit as an alias of max_paths, never both.
+        Other options and direction capabilities remain network-specific; unsupported
+        options fail with 400. A bounded path does not prove continuity of particular funds.
       parameters:
         - $ref: "#/components/parameters/Network"
         - name: source
@@ -350,12 +475,53 @@ paths:
           schema: { type: string }
         - name: max_hops
           in: query
-          schema: { type: integer, minimum: 1, maximum: 10, default: 6 }
+          description: Defaults are Bitcoin 3, Ethereum 6, BSC/TRON 10.
+          schema: { type: integer, minimum: 1, maximum: 10 }
       responses:
-        "200": { description: Bounded path-search result. }
-        "400": { description: Invalid address or path options. }
-        "401": { description: Missing or invalid service key. }
+        "200":
+          description: Bounded path-search result with the same response contract and source snapshot as investigation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PathResult" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/EvidenceUnavailable" }
+  /api/{network}/wallet/{address}/holdings:
+    get:
+      operationId: walletHoldings
+      description: >-
+        Network-specific holdings evidence. Bitcoin reports indexed UTXO state; TRON
+        reports indexed netflow, not an RPC account balance; Ethereum/BSC query finalized
+        RPC state. Unavailable is never interpreted as zero. Only Bitcoin/TRON accept
+        the optional limit query parameter (1..100 and 1..250 respectively). EVM holdings
+        accept no query options. This standalone endpoint keeps its native evidence shape;
+        the common presentation is investigation.evidence.holdings.
+      parameters:
+        - $ref: "#/components/parameters/Network"
+        - $ref: "#/components/parameters/Address"
+      responses:
+        "200": { description: Holdings with explicit source and scope. }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503":
+          description: Evidence unavailable; may carry the typed holdings availability payload instead of ApiError.
 components:
+  responses:
+    InvalidRequest:
+      description: Invalid address, unsupported/duplicate/malformed query or out-of-range option; rejected before evidence IO.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ApiError" }
+    Unauthorized:
+      description: Missing or invalid X-AML-Service-Key; authentication precedes request parsing.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ApiError" }
+    EvidenceUnavailable:
+      description: Required chain evidence or storage unavailable; internal details remain in service logs.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ApiError" }
   securitySchemes:
     ServiceKey:
       type: apiKey
@@ -375,6 +541,65 @@ components:
       required: true
       schema: { type: string }
   schemas:
+    ApiError:
+      type: object
+      required: [api_version, error, code, status]
+      properties:
+        api_version: { type: string, const: "1.0" }
+        error: { type: string }
+        code:
+          type: string
+          enum: [invalid_request, invalid_query, invalid_path, unauthorized, forbidden, not_found, method_not_allowed, conflict, snapshot_changed, scope_limit, capacity_exceeded, evidence_unavailable, timeout, internal_error, request_failed]
+        status: { type: integer, minimum: 400, maximum: 599 }
+      additionalProperties: false
+    TransferPage:
+      type: object
+      required: [api_version, contract, network_id, address, source_snapshot, items, query_scope, pagination, model, history_complete, fund_continuity_claimed, ownership_claimed, amount_allocation_claimed]
+      properties:
+        api_version: { type: string, const: "1.0" }
+        contract: { type: string, const: transfer_page_v1 }
+        network_id: { type: string }
+        address: { type: string }
+        source_snapshot: { type: object, additionalProperties: true }
+        query_scope: { type: object, additionalProperties: true }
+        items:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [id, relationship_id, block_number, transaction_index, event_index, event_sub_index, asset_id, amount_raw, amount, from_subject_id, from_subject_type, to_subject_id, to_subject_type]
+            properties:
+              id: { type: string }
+              relationship_id: { type: string }
+              block_number: { type: integer, minimum: 0 }
+              transaction_index: { type: integer, minimum: 0 }
+              event_index: { type: integer, minimum: 0 }
+              event_sub_index: { type: integer, minimum: 0 }
+              asset_id: { type: string }
+              amount_raw: { type: string, pattern: '^(0|[1-9][0-9]*)$' }
+              amount: { type: string, pattern: '^(0|[1-9][0-9]*)$' }
+              token_id: { type: [string, "null"] }
+              from_subject_id: { type: string }
+              from_subject_type: { type: string, enum: [address, transaction, script] }
+              to_subject_id: { type: string }
+              to_subject_type: { type: string, enum: [address, transaction, script] }
+            additionalProperties: true
+        pagination:
+          type: object
+          required: [limit, has_more, next_cursor, order, snapshot_policy]
+          properties:
+            limit: { type: integer, minimum: 1, maximum: 100 }
+            has_more: { type: boolean }
+            next_cursor: { type: [string, "null"], maxLength: 4096 }
+            order: { type: string, const: block_desc_tx_desc_event_desc_subindex_desc_id_desc }
+            snapshot_policy: { type: string, const: restart_on_source_change }
+          additionalProperties: false
+        model: { type: string, enum: [address_transaction_utxo, observed_transfers] }
+        history_complete: { type: boolean }
+        fund_continuity_claimed: { type: boolean, const: false }
+        ownership_claimed: { type: boolean, const: false }
+        amount_allocation_claimed: { type: boolean, const: false }
+      additionalProperties: false
     Health:
       type: object
       required: [status]
@@ -392,12 +617,291 @@ components:
       additionalProperties: true
     Investigation:
       type: object
-      required: [api_version, network_id, address, graph]
+      required: [api_version, response_contract, network_id, address, source_snapshot, response_capabilities, graph, evidence]
       properties:
         api_version: { type: string, const: "1.0" }
+        response_contract: { type: string, const: chain_response_v1 }
         network_id: { type: string }
         address: { type: string }
-        graph: { type: object, additionalProperties: true }
+        source_snapshot: { $ref: "#/components/schemas/CanonicalSnapshot" }
+        operational_snapshot:
+          description: EVM operational_v1 or TRON tron_operational_v1 frame; Bitcoin retains scoped immutable receipts.
+          type: object
+          additionalProperties: true
+        response_capabilities: { $ref: "#/components/schemas/ResponseCapabilities" }
+        graph: { $ref: "#/components/schemas/EvidenceGraph" }
+        evidence: { $ref: "#/components/schemas/ResponseEvidence" }
+        analysis_evidence: { $ref: "#/components/schemas/AnalysisEvidence" }
+        semantic_evidence: { $ref: "#/components/schemas/SemanticEvidence" }
+        nft_marketplace_evidence: { $ref: "#/components/schemas/NftMarketplaceEvidence" }
         data_quality: { type: object, additionalProperties: true }
         data_coverage: { type: object, additionalProperties: true }
       additionalProperties: true
+    PathResult:
+      allOf:
+        - $ref: "#/components/schemas/Investigation"
+        - type: object
+          required: [source, target, paths]
+          properties:
+            source: { type: string }
+            target: { type: string }
+            paths: { type: array, items: { type: object, additionalProperties: true } }
+    CanonicalSnapshot:
+      type: object
+      required: [contract, network_id, snapshot_id, source_revision, as_of_block]
+      properties:
+        contract: { type: string, const: canonical_v1 }
+        network_id: { type: string }
+        snapshot_id: { type: string, pattern: '^[0-9a-fA-F]{64}$' }
+        source_revision: { type: string, pattern: '^[0-9]+$' }
+        as_of_block: { type: [integer, "null"], minimum: 0 }
+      additionalProperties: true
+    ResponseCapabilities:
+      type: object
+      required: [transaction_model, holdings_model, receipt_logs, execution_traces, tron_internal_records, prevouts, transfer_pages, max_path_hops, coverage]
+      properties:
+        transaction_model: { type: string, enum: [utxo, account] }
+        holdings_model: { type: string, enum: [indexed_utxo, indexed_netflow, finalized_rpc] }
+        receipt_logs: { $ref: "#/components/schemas/Applicability" }
+        execution_traces: { $ref: "#/components/schemas/Applicability" }
+        tron_internal_records: { $ref: "#/components/schemas/Applicability" }
+        prevouts: { $ref: "#/components/schemas/Applicability" }
+        transfer_pages: { type: boolean, const: true }
+        max_path_hops: { type: integer, const: 10 }
+        coverage:
+          description: Native runtime coverage, nullable when the path response supplies none. Applicability alone does not claim data availability.
+          type: [object, "null"]
+          additionalProperties: true
+      additionalProperties: false
+    Applicability:
+      type: object
+      required: [applicability]
+      properties:
+        applicability: { type: string, enum: [applicable, not_applicable] }
+      additionalProperties: false
+    EvidenceGraph:
+      type: object
+      required: [model, nodes, edges]
+      properties:
+        model: { type: string, enum: [address_transaction_utxo, observed_account_transfers] }
+        nodes:
+          type: array
+          maxItems: 20000
+          items:
+            type: object
+            required: [id, subject_id, subject_type, subject_key, address]
+            properties:
+              id: { type: string }
+              subject_id: { type: string }
+              subject_type: { type: string, enum: [address, transaction, script] }
+              subject_key: { type: string }
+              address: { type: [string, "null"] }
+            additionalProperties: true
+        edges:
+          type: array
+          maxItems: 20000
+          items:
+            type: object
+            required: [id, from_subject_id, from_subject_type, to_subject_id, to_subject_type, from_address, to_address, amount_raw, canonical_asset_id, canonical_token_id, source_position, ownership_claimed, fund_continuity_claimed, amount_allocation_claimed]
+            properties:
+              id: { type: string }
+              from_subject_id: { type: string }
+              to_subject_id: { type: string }
+              from_subject_type: { type: string, enum: [address, transaction, script] }
+              to_subject_type: { type: string, enum: [address, transaction, script] }
+              from_address: { type: [string, "null"] }
+              to_address: { type: [string, "null"] }
+              amount_raw: { type: string, pattern: '^(0|[1-9][0-9]*)$' }
+              canonical_asset_id: { type: string }
+              canonical_token_id: { type: [string, "null"], pattern: '^(0|[1-9][0-9]*)$' }
+              source_position: { type: object, additionalProperties: true }
+              ownership_claimed: { type: boolean, const: false }
+              fund_continuity_claimed: { type: boolean, const: false }
+              amount_allocation_claimed: { type: boolean, const: false }
+            additionalProperties: true
+      additionalProperties: true
+    EvidenceSection:
+      type: object
+      required: [status, items]
+      properties:
+        status: { type: string, enum: [available, unavailable, not_requested] }
+        items: { type: array, items: { type: object, additionalProperties: true } }
+      additionalProperties: true
+    SemanticEvidence:
+      type: object
+      required: [contract, network_id, source_snapshot_id, scope, coverage, items]
+      description: Bounded wallet evidence. A decoded ABI does not by itself verify the emitter's identity.
+      properties:
+        contract: { const: chain_semantic_evidence_v1 }
+        network_id: { type: string }
+        source_snapshot_id: { type: string }
+        scope: { enum: [returned_wallet_evidence, not_requested] }
+        coverage: { type: object }
+        items:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            required: [id, category, event_type, grade, tx_hash, protocol_identity]
+            properties:
+              id: { type: string }
+              category: { enum: [defi, mixer, nft, obfuscation] }
+              event_type: { type: string }
+              grade: { enum: [decoded_receipt, observed_transfer, candidate, behavioral_candidate] }
+              tx_hash: { type: string }
+              protocol_identity: { type: object }
+              token_id: { type: string, pattern: '^[0-9]+$' }
+              amount_raw: { type: string, pattern: '^[0-9]+$' }
+    NftMarketplaceEvidence:
+      description: Ethereum wallet evidence for bounded Seaport 1.6 OrderFulfilled receipts and related NFT transfers.
+      type: object
+      required: [contract, network_id, source_snapshot_id, status, scope, searched_transactions, exhaustive, items]
+      properties:
+        contract: { const: nft_marketplace_evidence_v1 }
+        network_id: { const: 'eip155:1' }
+        source_snapshot_id: { type: string, pattern: '^[0-9a-fA-F]{64}$' }
+        status: { enum: [available, partial, unavailable] }
+        scope: { const: returned_wallet_nft_transfers }
+        searched_transactions: { type: integer, minimum: 0, maximum: 24 }
+        exhaustive: { const: false }
+        items:
+          type: array
+          maxItems: 12
+          items:
+            type: object
+            required: [protocol, event_type, claim, settlement_verified, score_eligible, receipt, order, related_nft_transfers, transfer_refs_truncated]
+            properties:
+              protocol: { const: seaport_1_6 }
+              event_type: { const: nft_order_fulfilled }
+              claim: { const: protocol_order_event }
+              settlement_verified: { const: false }
+              score_eligible: { const: false }
+              receipt: { type: object }
+              order:
+                type: object
+                required: [order_hash, offerer, zone, recipient, offer, consideration]
+                properties:
+                  order_hash: { type: string, pattern: '^0x[0-9a-f]{64}$' }
+                  offerer: { type: string, pattern: '^0x[0-9a-f]{40}$' }
+                  zone: { type: string, pattern: '^0x[0-9a-f]{40}$' }
+                  recipient: { type: string, pattern: '^0x[0-9a-f]{40}$' }
+                  offer:
+                    type: array
+                    maxItems: 16
+                    items: { $ref: "#/components/schemas/NftMarketplaceOrderItem" }
+                  consideration:
+                    type: array
+                    maxItems: 16
+                    items: { $ref: "#/components/schemas/NftMarketplaceOrderItem" }
+              related_nft_transfers:
+                type: array
+                minItems: 1
+                maxItems: 16
+                items: { type: string }
+              transfer_refs_truncated: { type: boolean }
+    NftMarketplaceOrderItem:
+      type: object
+      required: [item_type, token, identifier, amount_raw, recipient]
+      properties:
+        item_type: { enum: [native, erc20, erc721, erc1155] }
+        token: { type: string, pattern: '^0x[0-9a-f]{40}$' }
+        identifier: { type: string, pattern: '^[0-9]{1,78}$' }
+        amount_raw: { type: string, pattern: '^[0-9]{1,78}$' }
+        recipient: { type: [string, "null"], pattern: '^0x[0-9a-f]{40}$' }
+    AnalysisEvidence:
+      description: Additive index into the original wallet evidence. Older adapters may omit it. Counts cover the returned items only.
+      type: object
+      required: [contract, source_snapshot_id, clustering, exposure]
+      properties:
+        contract: { type: string, const: chain_analysis_evidence_v1 }
+        source_snapshot_id: { type: string, pattern: '^[0-9a-fA-F]{64}$' }
+        clustering:
+          type: object
+          required: [status, search_complete, items]
+          properties:
+            status: { type: string, enum: [available, partial, unavailable, not_requested] }
+            search_complete: { type: boolean, const: false }
+            items:
+              type: array
+              maxItems: 100
+              items:
+                type: object
+                required: [kind, native_ref, review_status, ownership_claimed, score_eligible]
+                properties:
+                  kind: { type: string, enum: [investigative_lead, reviewed_association] }
+                  native_ref: { type: string, description: JSON Pointer to the native evidence in this response. }
+                  review_status: { type: [string, "null"] }
+                  ownership_claimed: { type: boolean, const: false }
+                  score_eligible: { type: boolean, const: false }
+        exposure:
+          type: object
+          required: [status, search_complete, direct_count, indirect_count, items]
+          properties:
+            status: { type: string, enum: [available, partial, unavailable, not_requested] }
+            search_complete: { type: boolean, const: false }
+            direct_count: { type: integer, minimum: 0 }
+            indirect_count: { type: integer, minimum: 0 }
+            items:
+              type: array
+              maxItems: 100
+              items:
+                type: object
+                required: [kind, direction, hop_count, seed_address, native_ref, evidence_model, service_mediated, ownership_claimed, fund_continuity_claimed]
+                properties:
+                  kind: { type: string, enum: [direct, indirect] }
+                  direction: { type: string, enum: [received_from_seed, sent_to_seed] }
+                  hop_count: { type: integer, minimum: 1, maximum: 10 }
+                  seed_address: { type: string }
+                  native_ref: { type: string, description: JSON Pointer to the native evidence in this response. }
+                  evidence_model: { type: string, enum: [utxo_bounds_path, observed_account_path, propagated_source_summary] }
+                  service_mediated: { type: [boolean, "null"] }
+                  ownership_claimed: { type: boolean, const: false }
+                  fund_continuity_claimed: { type: boolean, const: false }
+    ResponseEvidence:
+      type: object
+      required: [contract, mode, source_snapshot_id, graph, activity, holdings, paths, attribution]
+      properties:
+        contract: { type: string, const: chain_response_v1 }
+        mode: { type: string, enum: [wallet, paths] }
+        source_snapshot_id: { type: string, pattern: '^[0-9a-fA-F]{64}$' }
+        graph:
+          type: object
+          required: [status, field, model]
+          properties:
+            status: { type: string, const: available }
+            field: { type: string, const: graph }
+            model: { type: string, enum: [address_transaction_utxo, observed_account_transfers] }
+          additionalProperties: false
+        activity: { $ref: "#/components/schemas/EvidenceSection" }
+        paths:
+          allOf:
+            - $ref: "#/components/schemas/EvidenceSection"
+            - description: Node/edge references point to the returned graph. Bitcoin hop_count counts transaction hops, not individual UTXO legs. Search is bounded and never claims exhaustive connectivity or continuity of particular funds.
+        attribution:
+          allOf:
+            - $ref: "#/components/schemas/EvidenceSection"
+            - description: Reviewed or unreviewed source claims retain their review state and references; presentation never approves claims or asserts ownership.
+        holdings:
+          type: object
+          required: [status, model, assets]
+          properties:
+            status: { type: string, enum: [available, partial, unavailable, not_requested] }
+            model: { type: string, enum: [indexed_utxo, indexed_netflow, finalized_rpc] }
+            assets:
+              type: array
+              items:
+                type: object
+                required: [asset_id, token_id, amount_raw, decimals, status, is_complete_balance]
+                properties:
+                  asset_id: { type: string }
+                  token_id: { type: [string, "null"] }
+                  amount_raw:
+                    description: Exact signed indexed TRON netflow, unsigned UTXO/RPC amounts, or null when unavailable. It is never a float or a substituted zero.
+                    type: [string, "null"]
+                    pattern: '^-?(0|[1-9][0-9]*)$'
+                  decimals: { type: [integer, "null"], minimum: 0, maximum: 255 }
+                  status: { type: string, enum: [available, partial, unavailable] }
+                  is_complete_balance: { type: boolean }
+                additionalProperties: false
+          additionalProperties: true
+      additionalProperties: false

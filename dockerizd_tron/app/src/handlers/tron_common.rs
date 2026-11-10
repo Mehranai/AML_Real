@@ -2,11 +2,9 @@ use std::sync::Arc;
 
 use crate::db::Client;
 use axum::{
-    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use serde_json::json;
 
 use crate::{
     config::AppConfig, services::tron::neo4j::client::Neo4jClient,
@@ -30,22 +28,15 @@ impl TronApiError {
     pub fn internal(err: anyhow::Error) -> Self {
         eprintln!("TRON API internal error: {err:#}");
         Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: "internal server error".to_string(),
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "TRON evidence unavailable; check service logs".to_string(),
         }
     }
 }
 
 impl IntoResponse for TronApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(json!({
-                "error": self.message,
-                "status": self.status.as_u16()
-            })),
-        )
-            .into_response()
+        aml_chain_api::error_response(self.status, self.message)
     }
 }
 

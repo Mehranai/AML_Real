@@ -3,9 +3,21 @@
 version = 4
 
 [[package]]
+name = "aml_chain_api"
+version = "0.1.0"
+dependencies = [
+ "aml_warehouse",
+ "anyhow",
+ "axum",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aml_risk_policy"
 version = "0.1.0"
 dependencies = [
+ "aml_warehouse",
  "num-bigint",
  "serde_json",
  "sha2",
@@ -179,6 +191,7 @@ dependencies = [
 name = "bitcoin_aml"
 version = "0.1.0"
 dependencies = [
+ "aml_chain_api",
  "aml_risk_policy",
  "aml_warehouse",
  "anyhow",

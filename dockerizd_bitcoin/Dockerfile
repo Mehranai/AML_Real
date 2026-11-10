@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 FROM rust:1.92-slim-bookworm AS builder
 COPY --from=warehouse_source / /build/shared/warehouse/
+COPY --from=chain_api_source / /build/shared/chain_api/
 COPY --from=risk_policy_source / /build/shared/risk_policy/
 WORKDIR /build/dockerizd_bitcoin
 COPY Cargo.toml Cargo.lock ./

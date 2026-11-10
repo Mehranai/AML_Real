@@ -1,6 +1,6 @@
 # وضعیت واقعی پروژه و تصمیم‌های پاک‌سازی
 
-تاریخ ممیزی: ۲۰۲۶-۱۱-۰۶؛ پذیرش DB: ۲۰۲۶-۱۱-۰۷. دامنه هر چهار شبکهٔ TRON، Ethereum، BSC و Bitcoin
+تاریخ ممیزی: ۲۰۲۶-۱۱-۰۶؛ پذیرش DB: ۲۰۲۶-۱۱-۰۷؛ پذیرش محدود انتهابه‌انتها: ۲۰۲۶-۱۱-۰۸. دامنه هر چهار شبکهٔ TRON، Ethereum، BSC و Bitcoin
 است. دیتابیس هنگام استقرار خالی خواهد بود؛ نگه‌داری دادهٔ آزمایشی و انتقال
 ردیف‌های دیتابیس قدیمی جزو نیاز محصول نیست.
 
@@ -17,8 +17,12 @@ restart/retry، برخورد با تغییر شاخه و query/مصرف‌کنن
 قرارداد v6 با ClickHouse واقعی و RPC نمونه موفق شدند. سپس آزمون محدود RPC
 عمومی واقعی برای هر چهار شبکه روی ۵ بلاک و ۸۷۹۱ تراکنش موفق شد: دریافت،
 تطبیق با پاسخ مستقل RPC، restart بدون تکرار و API تحقیق دارای auth.
-پوشش trace اتریوم/BSC صفر بود و موجودی RPC در آخرین آزمون آن‌ها unavailable
-شد؛ بنابراین پذیرش کامل قابلیت/ظرفیت RPC، VM و مسیر مرکزی/Neo4j باقی است.
+پوشش trace اتریوم/BSC صفر بود. سپس مسیر محدود واقعی RPC → چهار ClickHouse
+مستقل → چهار API → Gateway/Analytical Node → Neo4j → پنل واقعی نیز برای
+Wallet و Paths هر چهار شبکه پذیرفته شد؛ مبلغ RPC و reopen/Export دقیق ماند.
+موجودی EVM در درخواست زنده snapshot مستقل و فرّار است، پس شواهد کاملِ همان
+تحقیق پس از reopen تطبیق شد. پذیرش کامل قابلیت/ظرفیت RPC، بار و پنج VM کاربر
+همچنان باقی است.
 
 مرحلهٔ DB-1 تکمیل شده است: قرارداد اجرایی writer/reader مشترک با تطبیق
 دادهٔ ذخیره‌شده روی چهار database خالی آزموده شد و writer فعال Bitcoin
@@ -40,8 +44,9 @@ reorg، metadata، intelligence و API آن با RPC نمونه و ClickHouse و
 | Ethereum | ingest/checkpoint، API تحقیق، metadata و workerهای intelligence/cluster/exposure/risk از `aml_*` استفاده می‌کنند؛ DDL قبلی حذف شده است | [schema](../dockerizd_ethereum/src/db/migrations.rs)، [writer](../dockerizd_ethereum/src/storage/writer.rs)، [تحقیق](../dockerizd_ethereum/src/investigation.rs) |
 | BSC | ingest/checkpoint، replay/repair، metadata، protocol/intelligence و API از `aml_*` استفاده می‌کنند؛ exposure هنگام درخواست و ارزیابی ریسک در مرکز باقی است | [schema](../dockerizd_bsc/src/db/migrations.rs)، [writer](../dockerizd_bsc/src/ingestion/store.rs)، [تحقیق](../dockerizd_bsc/src/investigation/wallet.rs) |
 | TRON | انتشار بلاک/receipt/انتقال و checkpoint مشترک، replay، خطا/benchmark مشترک و projection دادهٔ بلاک فعال‌اند؛ metadata/intelligence، خوشه‌بندی و exposure نیز مشترک‌اند؛ SQL و mount بومی حذف شدند و schema job پیش از runtime اجرا می‌شود | [schema](../dockerizd_tron/app/src/db/tron_schema.rs)، [publisher](../dockerizd_tron/app/src/services/tron/publication_store.rs)، [ingest](../dockerizd_tron/app/src/services/tron/fetcher.rs) |
-| VM اصلی | پنل، API مرکزی تحقیق، snapshot، ذخیره/بازگشایی و Export در Neo4j وجود دارد | [سرویس مرکزی](../analytical_node/src/main.rs)، [Compose](../compose.yaml) |
-| قرارداد API | قرارداد مستند موجود است؛ parity کامل هر چهار پاسخ و خطا و pagination هنوز باید پذیرفته شود | [OpenAPI](../contracts/chain-api-v1.openapi.yaml) |
+| VM اصلی | پنل، API مرکزی تحقیق، snapshot، ذخیره/بازگشایی و Export در Neo4j وجود دارد؛ مسیر زندهٔ محدود هر چهار شبکه تا پنل واقعی پذیرفته شده است | [سرویس مرکزی](../analytical_node/src/main.rs)، [پذیرش](TESTING.md) |
+| دریافت و بازیابی | ING-1 دریافت پیوسته و restart را پذیرفت. ING-2 ابزارهای probe/failures/scan-gaps/replay/repair را برای هر چهار VM به ingestor موجود متصل کرد؛ قفل writer، حفظ tip در refresh تاریخی و repair صریح dead-letter برقرارند. probe نمونه‌ای است؛ archive کامل، پذیرش طولانی RPC و اتصال پیوسته تا مرکز روی VM کاربر هنوز باز است | [قرارداد عملیات](../shared/warehouse/src/maintenance.rs)، [launcher](../scripts/vm.sh)، [استفاده](USAGE_FA.md)، [آزمون](TESTING.md) |
+| قرارداد API | API-1 ورودی/خطا، API-2 فهرست transfers با فیلتر و cursor مقید به snapshot، و API-3 پاسخ مشترک تحقیق/مسیر و مصرف مرکزی پذیرفته شدند. مبلغ/NFT/UTXO و مدل موجودی حفظ می‌شوند؛ تغییر منبع در بازگشایی/Export ریسک جاری را UNKNOWN می‌کند. چهار API با ClickHouse واقعی و هشت حالت مرکزی با Neo4j واقعی آزموده شدند؛ پذیرش پیوستهٔ RPC/VM جداست | [OpenAPI](../contracts/chain-api-v1.openapi.yaml)، [پاسخ مشترک](../shared/chain_api/src/response.rs)، [خواندن صفحه](../shared/warehouse/src/relationships/page.rs)، [آزمون‌ها](TESTING.md) |
 | استقرار | helper هر پنج role و Composeها وجود دارند؛ اجرای واقعی روی VMهای کاربر تأیید نشده | [vm.sh](../scripts/vm.sh)، [راهنمای دستی](VM_SETUP_FA.md) |
 
 وضعیت «وجود کد» با «صحت روی RPC/VM واقعی» یکی نیست. تاریخچهٔ بلاک‌های
@@ -101,12 +106,12 @@ reorg، metadata، intelligence و API آن با RPC نمونه و ClickHouse و
 | قابلیت هدف | اکنون | کار لازم |
 |---|---|---|
 | دریافت داده و گراف تحقیق | موجود، با تفاوت شبکه‌ها و پوشش محدود به دادهٔ ذخیره‌شده | schema/IO مشترک و پذیرش از صفر برای هر چهار شبکه |
-| attribution، sanctions و intelligence | source/claim/review و import وجود دارد؛ دیتاست جامع معتبر همراه کد نداریم | خوراک معتبر/مجاز، نسخه، refresh، provenance و آزمون لغو/تغییر برچسب |
-| خوشه‌بندی و entity | heuristic و candidate/review در سطح‌های متفاوت موجود است | parity و ارزیابی دقت؛ تشخیص CoinJoin/ابهام و جلوگیری از انتساب قطعی بی‌شاهد |
-| exposure مستقیم/غیرمستقیم و ریسک | مسیرها و سیاست شواهدی موجودند | اجرای یکسان، fresh بودن ورودی‌ها، توضیح score و ارزیابی false positive/negative |
-| KYT پیوسته | worker تحلیلی با سامانهٔ کامل پایش تراکنش مشتری متفاوت است | watchlist، ثبت customer/transaction، rules/threshold، alert پایدار و webhook |
+| attribution، sanctions و intelligence | ثبت منبع، بازبینی و import چهار شبکه. نگاشت نمونه‌های snapshot رسمی OFAC و تفکیک آدرس BNB Beacon از BSC با آزمون قابل تکرار بررسی شده‌اند | مجموعهٔ عملیاتی مجاز و بازبینی‌شده، refresh و ارزیابی مستقل کیفیت انتساب |
+| خوشه‌بندی و entity | پاسخ مشترک سرنخ را از ارتباط بازبینی‌شده جدا می‌کند. سرنخ Bitcoin بعد از بازبینی هم در همان دسته می‌ماند و BSC سرنخ pending را در تحقیق نمایش می‌دهد | ارزیابی مستقل دقت خوشه‌بندی و پوشش ابهام و CoinJoin روی دادهٔ برچسب‌دار |
+| exposure مستقیم/غیرمستقیم و ریسک | جهت و ارجاع شواهد بومی در پاسخ مشترک. ارزیاب آفلاین خطا و پوشش سیاست را به تفکیک شبکه، تاریخچه و سیگنال می‌سنجد | اجرای ارزیاب روی مجموعهٔ مستقل پرونده‌های برچسب‌دار و تأیید آستانهٔ عملیاتی |
+| KYT پیوسته | Watchlist و بررسی دوره‌ای چهار شبکه، هشدار پایدار، واگذاری و رسیدگی، صف webhook و اتصال هشدار به پروندهٔ تحقیق | پذیرش عملیاتی روی VMها |
 | رسیدگی به alert و پرونده | ذخیرهٔ snapshot تحقیق وجود دارد؛ workflow کامل پرونده/alert نداریم | وضعیت، مسئول، یادداشت، شواهد، timeline، audit و export گزارش |
-| cross-chain و DeFi | برخی decoderها و correlation key موجودند | تطبیق دو طرف bridge/swap با شواهد؛ attribution پروتکل و پوشش نسخه‌دار |
+| cross-chain و DeFi | شواهد نسخه‌دار ABI، انتقال NFT و رخداد Seaport 1.6 در تحقیق اتریوم. تطبیق cBridge اتریوم و BSC، Allbridge Core برای مقصد USDT بین BSC و ترون، و شواهد ثبت، جمع‌آوری و صدور خوش‌بینانهٔ سپردهٔ استاندارد tBTC v2 از بیت‌کوین به اتریوم. شاهد هر دو شبکه در Neo4j ثبت می‌شود | تأیید صدور عادی و بازخرید tBTC، گسترش پل‌ها، بازارهای NFT و میکسر TRON با شواهد معتبر هر پروتکل |
 | تیم و عملیات | service auth و جداسازی تحقیق وجود دارد | RBAC، audit عملیات، TLS، پایش lag، backup/restore واقعی و آزمون ظرفیت |
 
 دیتاست attribution و کیفیت آن بخش مستقلی از محصول است؛ صرف افزودن جدول،

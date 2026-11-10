@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aml_warehouse = { path = "../warehouse" }
 num-bigint = "0.4.6"
 serde_json = { version = "1.0.145", features = ["arbitrary_precision"] }
 sha2 = "0.10"

@@ -33,6 +33,99 @@ pub struct Claim {
     pub reviewed_by: String,
     pub review_note: String,
 }
+
+/// A versioned source record is registered before a regulatory feed is imported.
+/// Claims remain pending until a reviewer separately accepts them.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Source {
+    pub network_id: String,
+    pub source_id: String,
+    pub source_name: String,
+    pub source_type: String,
+    pub trust_tier: String,
+    pub reference_url: String,
+    pub license: String,
+    pub is_active: bool,
+    pub created_by: String,
+    #[serde(default = "default_metadata")]
+    pub metadata_json: String,
+}
+
+fn default_metadata() -> String {
+    "{}".into()
+}
+
+impl Source {
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            self.network_id == BSC_NETWORK_ID,
+            "source belongs to another network"
+        );
+        for value in [
+            &self.source_id,
+            &self.source_name,
+            &self.source_type,
+            &self.trust_tier,
+            &self.reference_url,
+            &self.license,
+            &self.created_by,
+        ] {
+            ensure!(
+                !value.trim().is_empty()
+                    && value.len() <= 2000
+                    && !value.chars().any(char::is_control),
+                "invalid source provenance field"
+            );
+        }
+        ensure!(
+            self.source_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')),
+            "invalid source id"
+        );
+        ensure!(
+            matches!(
+                self.source_type.as_str(),
+                "ANALYST"
+                    | "LAW_ENFORCEMENT"
+                    | "REGULATORY"
+                    | "VENDOR"
+                    | "PUBLIC_RESEARCH"
+                    | "INTERNAL"
+            ),
+            "invalid source type"
+        );
+        ensure!(
+            matches!(
+                self.trust_tier.as_str(),
+                "VERIFIED" | "HIGH" | "MEDIUM" | "UNVERIFIED"
+            ),
+            "invalid source trust tier"
+        );
+        let url = reqwest::Url::parse(&self.reference_url)?;
+        ensure!(
+            matches!(url.scheme(), "https" | "http")
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none(),
+            "source reference must be credential-free HTTP(S)"
+        );
+        serde_json::from_str::<Value>(&self.metadata_json)
+            .map_err(|_| anyhow::anyhow!("source metadata must be JSON"))?;
+        Ok(())
+    }
+}
+
+pub async fn register_source(db: &Warehouse, source: Source, dry_run: bool) -> Result<()> {
+    source.validate()?;
+    if !dry_run {
+        db.insert("intelligence_sources", &[serde_json::to_value(source)?])
+            .await?;
+    }
+    Ok(())
+}
+
 impl Claim {
     pub fn validate(&mut self) -> Result<()> {
         ensure!(
@@ -135,6 +228,37 @@ pub async fn import(db: &Warehouse, mut claims: Vec<Claim>, dry_run: bool) -> Re
     Ok(rows.len())
 }
 
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    fn source() -> Source {
+        Source {
+            network_id: BSC_NETWORK_ID.into(),
+            source_id: "ofac-sdn".into(),
+            source_name: "OFAC SDN".into(),
+            source_type: "REGULATORY".into(),
+            trust_tier: "HIGH".into(),
+            reference_url: "https://ofac.treasury.gov/sanctions-list-service".into(),
+            license: "public record; operator reviewed permitted use".into(),
+            is_active: true,
+            created_by: "aml-operator".into(),
+            metadata_json: "{\"sha256\":\"abc\"}".into(),
+        }
+    }
+
+    #[test]
+    fn source_provenance_requires_license_and_valid_metadata() {
+        source().validate().unwrap();
+        let mut missing_license = source();
+        missing_license.license.clear();
+        assert!(missing_license.validate().is_err());
+        let mut invalid_metadata = source();
+        invalid_metadata.metadata_json = "not json".into();
+        assert!(invalid_metadata.validate().is_err());
+    }
+}
+
 pub async fn active(db: &Warehouse, address: &str) -> Result<Vec<Value>> {
     db.rows("SELECT claim_id,claim_kind,address,entity_id,entity_name,entity_type,address_role,confidence,
         risk_level,is_exposure_seed,seed_category,source_id,source_reference,evidence_refs,review_status,
@@ -144,19 +268,61 @@ pub async fn active(db: &Warehouse, address: &str) -> Result<Vec<Value>> {
 }
 
 pub async fn candidates(db: &Warehouse, address: &str) -> Result<Vec<Value>> {
-    // Shared destinations are leads for review, never automatic common ownership.
+    let snapshot = db.snapshot().await?;
+    let rows = candidates_at(
+        db,
+        address,
+        snapshot.state().last_block_number,
+        &SearchOptions::default(),
+    )
+    .await?;
+    db.unchanged(&snapshot).await?;
+    Ok(rows)
+}
+
+pub(crate) async fn candidates_at(
+    db: &Warehouse,
+    address: &str,
+    height: u64,
+    options: &SearchOptions,
+) -> Result<Vec<Value>> {
+    // The bounded sample supplies leads. Counts describe the sampled transfers only.
+    let scope = "network_id='eip155:56' AND block_number<={height:UInt64}
+        AND block_timestamp_unix_ms BETWEEN {start:UInt64} AND {end:UInt64}
+        AND ({asset:String}='' OR asset_id={asset:String}) AND amount>0
+        AND from_address NOT IN ('',{zero:String}) AND to_address NOT IN ('',{zero:String})
+        AND from_address!=to_address";
     db.rows(
-        "SELECT to_address AS destination, asset_id, uniqExact(from_address) AS distinct_senders,
-        count() AS transfers, groupUniqArray(20)(relationship_id) AS evidence_refs,
-        'shared_destination_lead' AS heuristic, 'pending' AS review_status
-        FROM bsc_relationships
-        WHERE to_address IN (SELECT to_address FROM bsc_relationships
-            WHERE from_address={address:String} LIMIT 100)
-        AND to_address!='0x0000000000000000000000000000000000000000'
-        AND from_address!=to_address AND from_address!='0x0000000000000000000000000000000000000000'
-        GROUP BY to_address,asset_id HAVING distinct_senders BETWEEN 3 AND 20
-        ORDER BY transfers DESC LIMIT 25",
-        &[("address", address)],
+        &format!(
+            "SELECT to_address AS destination, asset_id, token_id,
+            uniqExact(from_address) AS distinct_senders, count() AS transfers,
+            minIf(relationship_id,from_address={{address:String}}) AS subject_relationship_id,
+            arraySlice(arrayDistinct(arrayPushFront(arraySort(groupUniqArray(relationship_id)),
+                subject_relationship_id)),1,20) AS evidence_refs,
+            'shared_destination_lead' AS heuristic, 'pending' AS review_status,
+            false AS ownership_claimed, false AS score_eligible
+            FROM (
+                SELECT from_address,to_address,asset_id,token_id,relationship_id
+                FROM bsc_relationships WHERE {scope} AND (to_address,asset_id,token_id) IN (
+                    SELECT to_address,asset_id,token_id FROM bsc_relationships
+                    WHERE {scope} AND from_address={{address:String}}
+                    GROUP BY to_address,asset_id,token_id
+                    ORDER BY max(block_number) DESC,to_address,asset_id,token_id LIMIT 100
+                )
+                ORDER BY block_number DESC,relationship_id LIMIT 5000
+            )
+            GROUP BY to_address,asset_id,token_id
+            HAVING distinct_senders BETWEEN 3 AND 20 AND countIf(from_address={{address:String}})>0
+            ORDER BY transfers DESC,to_address,asset_id,token_id LIMIT 25"
+        ),
+        &[
+            ("address", address),
+            ("height", &height.to_string()),
+            ("start", &options.from_ms.to_string()),
+            ("end", &options.to_ms.to_string()),
+            ("asset", &options.asset_id),
+            ("zero", ZERO_ADDRESS),
+        ],
     )
     .await
 }

@@ -1,5 +1,5 @@
 ﻿pub const ALL_HISTORY_WINDOW_DAYS: u16 = 0;
-const MAX_BOUNDED_WINDOW_DAYS: u16 = 3_650;
+pub(crate) const MAX_BOUNDED_WINDOW_DAYS: u16 = 3_650;
 
 pub fn normalize_window_days(requested_days: Option<u16>) -> u16 {
     match requested_days {

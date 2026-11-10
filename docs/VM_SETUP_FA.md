@@ -128,6 +128,14 @@ IP bind را IP خصوصی همان VM بگذارید. bind دیتابیس در 
 `DOCKER_BIND_ADDRESS=127.0.0.1` محلی می‌ماند. Main به ClickHouse مستقیم وصل
 نمی‌شود؛ upstream آن API هر شبکه است.
 
+برای عملیات ING-2، image همین نسخه را با `bash scripts/vm.sh ROLE up --build`
+بسازید؛ binary قدیمی فرمان‌های maintenance جدید را ندارد. `ROLE` نام همان
+شبکه است. start تاریخچه را آگاهانه تنظیم و پیش از دریافت `probe` را اجرا کنید؛
+RPC باید همان start و قابلیت receipt/trace/prevout موردنیاز شبکه را فراهم کند.
+موفقیت نمونهٔ probe تضمین archive کامل نیست. بودجهٔ failure جدید اتریوم و
+ترون در `.env.example` با پیش‌فرض ۱۰ آمده؛ روش بازپردازش محدود و توقف writer
+در [راهنمای استفاده](USAGE_FA.md) است. روی VMها نود کامل نصب نمی‌کنیم.
+
 در TRON و Ethereum مقدار `AML_SERVICE_AUTH_REQUIRED=true` و در همهٔ شبکه‌ها
 service key صحیح را تنظیم کنید؛ BSC و Bitcoin نیز API محافظت‌شده دارند.
 همهٔ Composeها از `CLICKHOUSE_IMAGE` مشترک با پیش‌فرض نسخهٔ دقیق

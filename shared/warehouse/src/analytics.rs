@@ -3,6 +3,43 @@
 use crate::{Connection, Network, core, publication};
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
+
+/// Operational evidence used by investigation/metadata, separate from chain facts.
+/// Fingerprint complete latest rows, including updates sharing a revision millisecond.
+pub async fn operational_snapshot(
+    db: &impl Connection,
+    database: &str,
+    network: Network,
+) -> Result<Value> {
+    crate::contract::identifier(database)?;
+    let tables = [
+        "aml_asset_metadata",
+        "aml_intelligence_sources",
+        "aml_intelligence_claims",
+        "aml_intelligence_reviews",
+        "aml_cluster_claims",
+        "aml_cluster_memberships",
+        "aml_cluster_runs",
+        "aml_cluster_versions",
+        "aml_exposure_seeds",
+        "aml_exposure_runs",
+        "aml_exposure_paths",
+        "aml_address_exposures",
+    ];
+    let checksums=[1,9,17,25].map(|offset|format!("toString(groupBitXor(reinterpretAsUInt64(substring(SHA256(toJSONString(tuple(*))),{offset},8))))")).join(",");
+    let selections=tables.iter().map(|table|format!("(SELECT tuple(toString(count()),toString(max(revision)),{checksums}) FROM {database}.{table} FINAL WHERE network_id={})",publication::literal(network.id()))).collect::<Vec<_>>().join(",");
+    let rows = db
+        .query(&format!("SELECT toJSONString(tuple({selections}))"))
+        .await?;
+    let raw = rows.first().context("operational snapshot missing")?;
+    let versions: Value = serde_json::from_str(raw)?;
+    use sha2::{Digest, Sha256};
+    Ok(
+        serde_json::json!({"contract":"operational_v1","network_id":network.id(),
+        "snapshot_id":format!("{:x}",Sha256::digest(format!("{}:{raw}",network.id()).as_bytes())),
+        "tables":tables,"versions":versions}),
+    )
+}
 #[derive(Clone, Copy)]
 pub enum Mode {
     Current,

@@ -11,6 +11,82 @@ pub struct Warehouse {
 }
 
 impl Warehouse {
+    pub(crate) async fn bridge_lookup(
+        &self,
+        hash: &str,
+        lookup: aml_chain_api::bridge::Lookup,
+    ) -> std::result::Result<aml_chain_api::bridge::Observation, aml_chain_api::ApiError> {
+        aml_chain_api::bridge::lookup(
+            &self.shared,
+            self.config.database(),
+            aml_chain_api::Network::Bsc,
+            hash,
+            lookup,
+        )
+        .await
+    }
+
+    pub(crate) async fn bridge_snapshot(
+        &self,
+    ) -> std::result::Result<Value, aml_chain_api::ApiError> {
+        aml_chain_api::bridge::snapshot(
+            &self.shared,
+            self.config.database(),
+            aml_chain_api::Network::Bsc,
+        )
+        .await
+    }
+
+    pub(crate) async fn kyt_transaction(
+        &self,
+        hash: &str,
+    ) -> std::result::Result<aml_chain_api::kyt::TransactionObservation, aml_chain_api::ApiError>
+    {
+        aml_chain_api::kyt::transaction(
+            &self.shared,
+            self.config.database(),
+            aml_chain_api::Network::Bsc,
+            hash,
+        )
+        .await
+    }
+
+    pub async fn maintenance_read(
+        &self,
+        command: &aml_warehouse::maintenance::Command,
+        require_trace: bool,
+    ) -> Result<Value> {
+        aml_warehouse::maintenance::read(
+            &self.shared,
+            self.config.database(),
+            aml_warehouse::Network::Bsc,
+            command,
+            require_trace,
+        )
+        .await
+    }
+    pub(crate) async fn operational_snapshot(&self) -> Result<Value> {
+        aml_warehouse::analytics::operational_snapshot(
+            &self.shared,
+            self.config.database(),
+            aml_warehouse::Network::Bsc,
+        )
+        .await
+    }
+    pub async fn transfer_page(
+        &self,
+        subject: &aml_warehouse::relationships::Subject,
+        query: &aml_warehouse::relationships::PageQuery,
+    ) -> std::result::Result<Value, aml_warehouse::relationships::PageError> {
+        aml_warehouse::relationships::read_page(
+            &self.shared,
+            self.config.database(),
+            aml_warehouse::Network::Bsc,
+            subject,
+            query,
+        )
+        .await
+    }
     pub fn new(config: ClickHouseConfig) -> Result<Self> {
         Ok(Self {
             client: reqwest::Client::builder()

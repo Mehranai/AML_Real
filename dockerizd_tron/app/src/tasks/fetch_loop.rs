@@ -14,6 +14,7 @@ use crate::services::tron;
 use crate::services::tron::ingestion_state::FinalizedHashConflict;
 
 pub async fn run_tron_loop(config: AppConfig) -> Result<()> {
+    aml_warehouse::maintenance::failure_limit("TRON_FAILURE_MAX_ATTEMPTS")?;
     println!("[TRON] Starting ingestion");
 
     let admin_client = Client::default()
@@ -49,18 +50,20 @@ pub async fn run_tron_loop(config: AppConfig) -> Result<()> {
         return Ok(());
     }
 
-    let mut next_block = start_block;
     let mut retry_delay_seconds = 1_u64;
     let poll_interval_seconds = config.tron_poll_interval_seconds.max(1);
 
     // لوپ اجرای اصلی برنامه
     loop {
+        // A failed pass can already have published a prefix. Always resume from
+        // that prefix, including before the first successful complete pass.
+        let next_block = get_last_synced_block(&loader.clickhouse)
+            .await?
+            .map(|height| height.saturating_add(1))
+            .unwrap_or(start_block);
         match tron::fetcher::fetch_tron(loader.clone(), next_block, config.total_tron_txs).await {
             Ok(()) => {
                 retry_delay_seconds = 1;
-                if let Some(last_synced) = get_last_synced_block(&loader.clickhouse).await? {
-                    next_block = last_synced.saturating_add(1);
-                }
                 sleep(Duration::from_secs(poll_interval_seconds)).await;
             }
             Err(error) => {
@@ -68,7 +71,7 @@ pub async fn run_tron_loop(config: AppConfig) -> Result<()> {
                     || !tron::fetcher::classify_ingestion_error(&error).1
                 {
                     eprintln!(
-                        "[TRON] ingestion stopped because finalized block evidence conflicts: {error:#}"
+                        "[TRON] ingestion stopped on a permanent RPC or evidence error: {error:#}"
                     );
                     return Err(error);
                 }

@@ -1,5 +1,7 @@
 FROM rust:1.92-bookworm AS build
 COPY --from=risk_policy_source / /build/shared/risk_policy/
+COPY --from=warehouse_source / /build/shared/warehouse/
+COPY --from=chain_api_source / /build/shared/chain_api/
 WORKDIR /build/analytical_node
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src

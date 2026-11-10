@@ -100,7 +100,7 @@ GET /api/bitcoin/wallet/{address}/intelligence/snapshot
 تحقیق تغییر snapshot بین ابتدا و انتهای query را رد می‌کند. برای هر آدرس بیش از
 ۱۰۰ ادعای جاری به‌جای پاسخ ناقص، خطای روشن داده می‌شود.
 
-Analytical Node همان سیاست `aml_evidence_v2_verified_inputs` را اجرا می‌کند؛
+Analytical Node همان سیاست `aml_evidence_v3_receipt_proof` را اجرا می‌کند؛
 برچسب تأییدشده با designation ریسک صریح می‌تواند signal موجود
 `APPROVED_RISK_LABEL` بسازد. صرف exchange بودن، pending بودن، نداشتن شواهد یا
 زیادبودن تراکنش امتیاز ریسک تولید نمی‌کند. نبود signal در بیت‌کوین همچنان UNKNOWN

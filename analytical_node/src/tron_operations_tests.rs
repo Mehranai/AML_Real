@@ -16,6 +16,10 @@ async fn shared_tron_evidence_reaches_central_create_reopen_and_export() {
     )
     .unwrap();
     let direct = proof["direct"].clone();
+    assert_eq!(
+        direct["response_contract"], "chain_response_v1",
+        "regenerate TRON_OPERATIONS_PROOF with the current adapter"
+    );
     let address = direct["address"].as_str().unwrap().to_owned();
     let assessed = risk::assess("tron", &direct);
     assert!(

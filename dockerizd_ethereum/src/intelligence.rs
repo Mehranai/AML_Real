@@ -23,6 +23,7 @@ pub struct IntelligenceSourceRegistration {
     pub source_type: String,
     pub trust_tier: String,
     pub reference_url: String,
+    pub license: String,
     pub created_by: String,
 }
 
@@ -38,6 +39,7 @@ pub struct EntityLabelImportReport {
     pub submitted: u64,
     pub approved: u64,
     pub rejected: u64,
+    pub revoked: u64,
     pub pending: u64,
 }
 
@@ -69,6 +71,8 @@ struct EntityLabelCsvRow {
     reviewed_by: String,
     #[serde(default)]
     review_reason: String,
+    #[serde(default)]
+    expected_revision: String,
 }
 
 pub async fn import_entity_labels_csv(
@@ -82,25 +86,17 @@ pub async fn import_entity_labels_csv(
         "submitted_by must not be empty"
     );
 
+    let _operator_lock =
+        crate::storage::ingestion_lock(&format!("intelligence_{}", config.clickhouse_database))
+            .context("could not acquire the Ethereum intelligence writer lock")?;
     let client = database_client(config);
-    let now = unix_time_millis()?;
-    insert_one(
-        &client,
-        "intelligence_sources",
-        &IntelligenceSourceRow {
-            network_id: config.eth_network_id.clone(),
-            source_id: options.source.source_id.clone(),
-            source_name: options.source.source_name.trim().to_string(),
-            source_type: options.source.source_type.trim().to_ascii_uppercase(),
-            trust_tier: options.source.trust_tier.trim().to_ascii_uppercase(),
-            reference_url: options.source.reference_url.trim().to_string(),
-            is_active: 1,
-            created_by: options.source.created_by.trim().to_string(),
-            created_at_unix_ms: now,
-        },
-    )
-    .await?;
-
+    let active = client
+        .query("SELECT is_active FROM aml_intelligence_sources_current WHERE network_id=? AND source_id=?")
+        .bind(&config.eth_network_id)
+        .bind(&options.source.source_id)
+        .fetch_optional::<u8>()
+        .await?;
+    let mut source_written = false;
     let network = NetworkId::from_str(&config.eth_network_id)?;
     let mut reader = csv::ReaderBuilder::new()
         .trim(csv::Trim::All)
@@ -112,6 +108,7 @@ pub async fn import_entity_labels_csv(
         submitted: 0,
         approved: 0,
         rejected: 0,
+        revoked: 0,
         pending: 0,
     };
 
@@ -187,8 +184,8 @@ pub async fn import_entity_labels_csv(
         let review_status = normalize_review_status(&record.review_status)?;
         if review_status != "PENDING" {
             ensure!(
-                !record.reviewed_by.trim().is_empty(),
-                "reviewed_by is required for {} row {}",
+                !record.reviewed_by.trim().is_empty() && !record.review_reason.trim().is_empty(),
+                "reviewer and reason are required for {} row {}",
                 review_status,
                 index + 2
             );
@@ -205,6 +202,51 @@ pub async fn import_entity_labels_csv(
                 record.source_record_id.trim(),
             ],
         );
+        if review_status == "REVOKED" {
+            let expected_revision = record.expected_revision.parse::<u64>().with_context(|| {
+                format!("expected_revision is required on revoke row {}", index + 2)
+            })?;
+            ensure!(expected_revision > 0, "expected_revision must be positive");
+            let review_id = stable_id("eth_revoke", &[&label_id, &expected_revision.to_string()]);
+            crate::db::records::store(
+                &client,
+                "intelligence_reviews",
+                serde_json::json!({
+                    "review_id": review_id, "subject_id": label_id, "decision": "REVOKED",
+                    "reviewer": record.reviewed_by.trim(), "reason": record.review_reason.trim(),
+                    "evidence_refs": evidence_refs, "expected_revision": expected_revision,
+                    "expected_source_id": options.source.source_id,
+                }),
+            )
+            .await?;
+            report.revoked += 1;
+            continue;
+        }
+        ensure!(
+            record.expected_revision.is_empty(),
+            "expected_revision is only used for revocation"
+        );
+        ensure!(active != Some(0), "intelligence source is inactive");
+        if !source_written {
+            insert_one(
+                &client,
+                "intelligence_sources",
+                &IntelligenceSourceRow {
+                    network_id: config.eth_network_id.clone(),
+                    source_id: options.source.source_id.clone(),
+                    source_name: options.source.source_name.trim().to_string(),
+                    source_type: options.source.source_type.trim().to_ascii_uppercase(),
+                    trust_tier: options.source.trust_tier.trim().to_ascii_uppercase(),
+                    reference_url: options.source.reference_url.trim().to_string(),
+                    license: options.source.license.trim().to_string(),
+                    is_active: 1,
+                    created_by: options.source.created_by.trim().to_string(),
+                    created_at_unix_ms,
+                },
+            )
+            .await?;
+            source_written = true;
+        }
         let label = EntityLabelRow {
             label_id: label_id.clone(),
             network_id: config.eth_network_id.clone(),
@@ -344,6 +386,10 @@ fn validate_source(source: &IntelligenceSourceRegistration) -> anyhow::Result<()
         !source.created_by.trim().is_empty(),
         "created_by must not be empty"
     );
+    ensure!(
+        !source.license.trim().is_empty(),
+        "source license or permitted-use record must not be empty"
+    );
     let source_type = source.source_type.trim().to_ascii_uppercase();
     ensure!(
         matches!(
@@ -392,7 +438,10 @@ fn normalize_role(value: &str) -> anyhow::Result<String> {
 fn normalize_review_status(value: &str) -> anyhow::Result<String> {
     let status = value.trim().to_ascii_uppercase();
     ensure!(
-        matches!(status.as_str(), "PENDING" | "APPROVED" | "REJECTED"),
+        matches!(
+            status.as_str(),
+            "PENDING" | "APPROVED" | "REJECTED" | "REVOKED"
+        ),
         "unsupported review_status {status}"
     );
     Ok(status)

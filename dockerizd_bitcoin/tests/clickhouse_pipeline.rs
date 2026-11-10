@@ -58,7 +58,42 @@ async fn readiness(db: &Database) -> Result<axum::http::StatusCode> {
     .await?
     .status())
 }
+async fn transfer_page(db: &Database, address: &str, query: &str) -> Result<Value> {
+    let key = "fixture-service-key-0123456789abcdef";
+    let response = api::router(api::Api::new(db.clone(), key.into())?)
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/api/bitcoin/wallet/{address}/transfers?{query}"))
+                .header("x-aml-service-key", key)
+                .body(axum::body::Body::empty())?,
+        )
+        .await?;
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    Ok(serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1_048_576).await?,
+    )?)
+}
 
+async fn api_value(db: &Database, path: &str) -> Result<Value> {
+    let key = "fixture-service-key-0123456789abcdef";
+    let response = api::router(api::Api::new(db.clone(), key.into())?)
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(path)
+                .header("x-aml-service-key", key)
+                .body(axum::body::Body::empty())?,
+        )
+        .await?;
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 16_777_216).await?;
+    anyhow::ensure!(
+        status.is_success(),
+        "API {path}: {status}: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+    Ok(serde_json::from_slice(&bytes)?)
+}
 fn output(n: u64, amount: &str, hash: &str) -> Value {
     json!({"n":n,"value":amount,"scriptPubKey":{"hex":format!("76a914{hash}88ac"),"type":"pubkeyhash"}})
 }
@@ -103,6 +138,126 @@ fn rpc_reply(blocks: &[Value], request: &Value) -> Value {
     };
     json!({"id":request["id"],"result":result,"error":null})
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable ClickHouse with the Bitcoin fixture credentials"]
+async fn tbtc_funding_reads_only_published_bitcoin_outputs() -> Result<()> {
+    let evidence: Value = serde_json::from_str(include_str!(
+        "../../shared/chain_api/tests/fixtures/tbtc-mainnet.json"
+    ))?;
+    let btc = &evidence["btc"];
+    let db = Database::new(DatabaseConfig {
+        url: std::env::var("BITCOIN_TEST_CLICKHOUSE_URL")?.parse()?,
+        user: "bitcoin_test".into(),
+        password: "bitcoin-test-only".into(),
+        database: "bitcoin_tbtc_fixture".into(),
+    })?;
+    db.initialize().await?;
+    assert_eq!(db.state().await?.revision, 0, "requires an empty database");
+    let recipient = "1111111111111111111111111111111111111111";
+    let genesis = fixture(0, bitcoin_aml::GENESIS, "", recipient);
+    let mut one = fixture(1, &"a".repeat(64), bitcoin_aml::GENESIS, recipient);
+    let tx = &mut one["tx"][1];
+    tx["txid"] = btc["tx_hash"].clone();
+    tx["vout"].as_array_mut().unwrap().push(json!({
+        "n": 1, "value": "0.01000000", "scriptPubKey": {
+            "hex": btc["script_hex"], "type": "witness_v0_scripthash"
+        }
+    }));
+    tx["vout"][0]["value"] = json!("49.98000000");
+    let blocks = Arc::new(RwLock::new(vec![genesis.clone(), one]));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let url = format!("http://{}", listener.local_addr()?);
+    let mock = tokio::spawn(
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/", post(rpc))
+                .with_state(blocks.clone()),
+        )
+        .into_future(),
+    );
+    let funding = format!(
+        "/internal/bridge/tbtc/funding/{}?block_number=1",
+        btc["tx_hash"].as_str().unwrap()
+    );
+    assert_eq!(api_value(&db, &funding).await?["outputs"], json!([]));
+    let rpc = Rpc::new(&url, "test".into(), "test".into(), 5)?;
+    let config = IngestConfig {
+        start: 0,
+        end: None,
+        confirmations: 1,
+        reorg_depth: 10,
+        poll_seconds: 1,
+        verbosity: 3,
+    };
+    ingestion::run(db.clone(), rpc.clone(), config.clone(), true).await?;
+    let found = api_value(&db, &funding).await?;
+    assert_eq!(found["outputs"].as_array().unwrap().len(), 1);
+    assert_eq!(found["outputs"][0]["output_index"], 1);
+    assert_eq!(found["outputs"][0]["value_sats"], 1_000_000);
+    assert_eq!(found["outputs"][0]["script_hex"], btc["script_hex"]);
+    assert_eq!(
+        api_value(&db, &format!("{funding}&output_index=1")).await?,
+        found
+    );
+    assert_eq!(
+        api_value(&db, &format!("{funding}&output_index=0")).await?["outputs"],
+        json!([])
+    );
+    assert_eq!(
+        api_value(&db, "/internal/bridge/snapshot").await?,
+        found["source_snapshot"]
+    );
+    let root = model::ScriptOutput::from_rpc(&output(0, "1.0", recipient))?.address;
+    let graph = api::investigation(&db, &root, 40).await?;
+    assert!(
+        graph["graph"]["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edge| edge["tx_hash"] == btc["tx_hash"] && edge["block_number"] == 1)
+    );
+    let spend = format!(
+        "/internal/bridge/tbtc/spends/{}?block_number=1",
+        btc["tx_hash"].as_str().unwrap()
+    );
+    assert_eq!(
+        api_value(&db, &format!("{spend}&output_index=1")).await?["inputs"],
+        json!([])
+    );
+    let mut two = fixture(2, &"d".repeat(64), &"a".repeat(64), recipient);
+    let spend_tx = "e".repeat(64);
+    two["tx"].as_array_mut().unwrap().push(json!({
+        "txid":spend_tx, "vin":[{"txid":btc["tx_hash"],"vout":1}],
+        "vout":[output(0,"0.00990000",recipient)]
+    }));
+    blocks.write().unwrap().push(two);
+    ingestion::run(db.clone(), rpc.clone(), config.clone(), true).await?;
+    let spent = api_value(&db, &format!("{spend}&output_index=1")).await?;
+    assert_eq!(spent["inputs"].as_array().unwrap().len(), 1);
+    assert_eq!(spent["inputs"][0]["tx_hash"], spend_tx);
+    assert_eq!(spent["inputs"][0]["block_number"], 2);
+    assert_eq!(spent["inputs"][0]["input_index"], 0);
+    assert_eq!(spent["inputs"][0]["prev_output_index"], 1);
+    assert_eq!(
+        api_value(&db, &format!("{spend}&output_index=0")).await?["inputs"],
+        json!([])
+    );
+    let replacement = fixture(1, &"b".repeat(64), bitcoin_aml::GENESIS, recipient);
+    let replacement_tip = fixture(2, &"c".repeat(64), &"b".repeat(64), recipient);
+    *blocks.write().unwrap() = vec![genesis, replacement, replacement_tip];
+    ingestion::run(db.clone(), rpc, config, true).await?;
+    assert_eq!(db.state().await?.tip_height, 2);
+    assert_eq!(api_value(&db, &funding).await?["outputs"], json!([]));
+    assert_eq!(
+        api_value(&db, &format!("{spend}&output_index=1")).await?["inputs"],
+        json!([])
+    );
+    mock.abort();
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "requires a disposable ClickHouse 23.8 instance"]
 async fn pipeline_visibility_restart_utxos_paths_and_reorg() -> Result<()> {
@@ -156,10 +311,181 @@ async fn pipeline_visibility_restart_utxos_paths_and_reorg() -> Result<()> {
     };
     ingestion::run(db.clone(), rpc.clone(), config.clone(), true).await?;
     assert_eq!(readiness(&db).await?, axum::http::StatusCode::OK);
+    let root=db.rows::<Value>("SELECT address FROM aml_bitcoin_outputs_canonical WHERE address IS NOT NULL GROUP BY address HAVING count()>1 LIMIT 1",&[]).await?[0]["address"].as_str().unwrap().to_owned();
+    let first = transfer_page(&db, &root, "limit=1").await?;
+    let cursor = first["pagination"]["next_cursor"].as_str().unwrap();
+    let second = transfer_page(&db, &root, &format!("limit=1&cursor={cursor}")).await?;
+    assert_eq!(first["source_snapshot"], second["source_snapshot"]);
+    assert_ne!(first["items"][0]["id"], second["items"][0]["id"]);
+    assert_eq!(first["model"], "address_transaction_utxo");
+    let filtered = transfer_page(
+        &db,
+        &root,
+        "limit=100&from_block=1&to_block=1&asset_id=native:BTC",
+    )
+    .await?;
+    assert!(
+        filtered["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["block_number"] == 1 && r["amount"].is_string())
+    );
     let legs: Vec<Value> = db.rows("SELECT count() AS n,countIf(from_subject_type='address' AND to_subject_type='address') AS fabricated,countIf(amount_raw=4999999999) AS exact FROM aml_address_relationships_canonical",&[]).await?;
     assert_eq!(legs[0]["n"], 4);
     assert_eq!(legs[0]["fabricated"], 0);
     assert_eq!(legs[0]["exact"], 1);
+    async fn maintenance_cli(rpc_url: &str, args: &[&str]) -> Result<Value> {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_bitcoin_aml"));
+        command
+            .current_dir(std::env::temp_dir())
+            .env_clear()
+            .env(
+                "BITCOIN_CLICKHOUSE_URL",
+                std::env::var("BITCOIN_TEST_CLICKHOUSE_URL")?,
+            )
+            .env("BITCOIN_CLICKHOUSE_USER", "bitcoin_test")
+            .env("BITCOIN_CLICKHOUSE_PASSWORD", "bitcoin-test-only")
+            .env("BITCOIN_RPC_URL", rpc_url)
+            .env("BITCOIN_RPC_USER", "test")
+            .env("BITCOIN_RPC_PASSWORD", "test")
+            .env(
+                "BITCOIN_WRITER_LOCK_DIR",
+                std::env::var("BITCOIN_WRITER_LOCK_DIR")?,
+            )
+            .env("BITCOIN_START_BLOCK", "0")
+            .env("BITCOIN_CONFIRMATIONS", "1")
+            .args(["maintenance"])
+            .args(args);
+        let output = tokio::task::spawn_blocking(move || command.output()).await??;
+        anyhow::ensure!(
+            output.status.success(),
+            "operator CLI failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(serde_json::from_slice(&output.stdout)?)
+    }
+    let scan = maintenance_cli(
+        &rpc_url,
+        &[
+            "scan-gaps",
+            "--from-block",
+            "0",
+            "--to-block",
+            "1",
+            "--max-blocks",
+            "2",
+        ],
+    )
+    .await?;
+    assert_eq!(scan["gaps"], 0);
+    let snapshot = db.state().await?;
+    db.execute("ALTER TABLE aml_transactions DELETE WHERE block_number=1 AND transaction_index=1 SETTINGS mutations_sync=2").await?;
+    assert_eq!(
+        maintenance_cli(
+            &rpc_url,
+            &[
+                "scan-gaps",
+                "--from-block",
+                "0",
+                "--to-block",
+                "1",
+                "--max-blocks",
+                "2"
+            ]
+        )
+        .await?["gaps"],
+        1
+    );
+    assert_eq!(
+        maintenance_cli(
+            &rpc_url,
+            &[
+                "replay",
+                "--from-block",
+                "1",
+                "--to-block",
+                "1",
+                "--max-blocks",
+                "1"
+            ]
+        )
+        .await?["status"],
+        "complete"
+    );
+    assert_eq!(db.state().await?.tip_height, snapshot.tip_height);
+    assert_eq!(db.state().await?.tip_hash, snapshot.tip_hash);
+    assert!(db.state().await?.revision > snapshot.revision);
+    assert_eq!(
+        maintenance_cli(
+            &rpc_url,
+            &[
+                "scan-gaps",
+                "--from-block",
+                "0",
+                "--to-block",
+                "1",
+                "--max-blocks",
+                "2"
+            ]
+        )
+        .await?["gaps"],
+        0
+    );
+    if let Ok(path) = std::env::var("CHAIN_RESPONSE_PROOF") {
+        let target=db.rows::<Value>("SELECT address FROM aml_bitcoin_outputs_canonical WHERE address IS NOT NULL AND address!={root:String} LIMIT 1",&[("root",root.clone())]).await?[0]["address"].as_str().unwrap().to_owned();
+        let wallet = api_value(
+            &db,
+            &format!("/api/bitcoin/wallet/{root}/investigation?limit=40"),
+        )
+        .await?;
+        assert_eq!(
+            wallet["semantic_evidence"]["contract"],
+            "chain_semantic_evidence_v1"
+        );
+        assert_eq!(
+            wallet["semantic_evidence"]["coverage"]["nft_transfers"],
+            "not_applicable"
+        );
+        assert_eq!(
+            wallet["risk_engine"]["policy_version"],
+            aml_risk_policy::POLICY
+        );
+        let paths = api_value(
+            &db,
+            &format!("/api/bitcoin/wallet/{root}/paths/{target}?max_hops=3&max_nodes=200"),
+        )
+        .await?;
+        let mut receipts = serde_json::Map::new();
+        let mut routes = vec![
+            "/status".into(),
+            "/api/bitcoin/assets/native".into(),
+            "/api/bitcoin/semantics/config".into(),
+            "/api/bitcoin/clusters/config".into(),
+            format!("/api/bitcoin/wallet/{root}/intelligence/snapshot"),
+        ];
+        for (field, kind) in [
+            ("exposure_snapshot", "exposure"),
+            ("cluster_snapshot", "clusters"),
+            ("risk_snapshot", "risk"),
+        ] {
+            let key = if kind == "risk" {
+                "assessment_id"
+            } else {
+                "run_id"
+            };
+            if let Some(id) = wallet[field][key].as_str() {
+                routes.push(format!("/api/bitcoin/wallet/{root}/{kind}/{id}/snapshot"));
+            }
+        }
+        for route in routes {
+            receipts.insert(route.clone(), api_value(&db, &route).await?);
+        }
+        std::fs::write(
+            path,
+            serde_json::to_vec(&json!({"wallet":wallet,"paths":paths,"receipts":receipts}))?,
+        )?;
+    }
     let initial = db.state().await?;
     assert_eq!(initial.tip_height, 1);
     // Resuming at the head must not duplicate facts or change the checkpoint.

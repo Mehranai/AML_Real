@@ -50,6 +50,7 @@ x-ethereum-service: &ethereum-service
     dockerfile: Dockerfile
     additional_contexts:
       warehouse_source: ../shared/warehouse
+      chain_api_source: ../shared/chain_api
   restart: unless-stopped
   init: true
   read_only: true

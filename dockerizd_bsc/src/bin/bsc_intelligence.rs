@@ -10,7 +10,7 @@ async fn main() -> Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.is_empty() || args[0] == "--help" {
         println!(
-            "Usage: bsc_intelligence import-labels|import-metadata FILE.jsonl [--dry-run]\n       bsc_intelligence candidates|claims ADDRESS"
+            "Usage: bsc_intelligence source FILE.json [--dry-run]\n       bsc_intelligence import-labels|import-metadata FILE.jsonl [--dry-run]\n       bsc_intelligence candidates|claims ADDRESS"
         );
         return Ok(());
     }
@@ -19,6 +19,20 @@ async fn main() -> Result<()> {
     validate_bsc_schema(&config).await?;
     let db = Warehouse::new(config)?;
     match args[0].as_str() {
+        "source" => {
+            ensure!(
+                args.len() == 2 || args[2] == "--dry-run",
+                "expected --dry-run"
+            );
+            let file = std::fs::File::open(&args[1])?;
+            ensure!(file.metadata()?.len() <= 64 * 1024, "source file too large");
+            let source = serde_json::from_reader(std::io::BufReader::new(file))?;
+            intelligence::register_source(&db, source, args.len() == 3).await?;
+            println!(
+                "{}",
+                serde_json::json!({"validated":1,"written":args.len()==2})
+            );
+        }
         "import-labels" | "import-metadata" => {
             ensure!(
                 args.len() == 2 || args[2] == "--dry-run",

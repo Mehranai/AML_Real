@@ -68,6 +68,7 @@ impl SearchOptions {
 #[serde(default, deny_unknown_fields)]
 pub struct PathOptions {
     pub max_hops: usize,
+    #[serde(alias = "limit")]
     pub max_paths: usize,
     pub per_address_limit: usize,
     #[serde(deserialize_with = "read_direction")]

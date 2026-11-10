@@ -2,10 +2,12 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 {main|tron|ethereum|bsc|bitcoin} {up|down|ps|logs|check|check-runtime|check-schema|probe|failures|scan-gaps|repair|pause|pause-ingestion|resume|db} [--build] [--api-only] [--offline] [--pull-never] [--project NAME] [--query SQL]"
+  echo "Usage: $0 {main|tron|ethereum|bsc|bitcoin} {up|down|ps|logs|check|check-runtime|check-schema|probe|failures|scan-gaps|replay|repair|pause|pause-ingestion|resume|db} [--build] [--api-only] [--offline] [--pull-never] [--project NAME] [--query SQL]"
   echo "Bitcoin probe: read-only RPC diagnostics; no database or ingestion is started."
   echo "Bitcoin failures: [--status STATUS] [--from-block N] [--to-block N] [--after-block N] [--limit N]."
   echo "Bitcoin scan-gaps: --from-block N --to-block M --max-blocks N; repair: --failure-id bitcoin:block:N [--failure-id bitcoin:block:M] --max-blocks N. Pause ingestion first."
+  echo "Four-chain replay and range repair: --from-block N --to-block M --max-blocks 1..1000; repair permits --include-dead. Pause ingestion before mutations."
+  echo "TRON/Ethereum/BSC failures: [--status STATUS] [--limit 1..200] [--cursor CURSOR]; scan-gaps is read-only. Probe never starts dependencies."
   echo "Chain controls: pause stops apps only; pause-ingestion stops background workers; resume starts apps without touching database containers; db is read-only."
 }
 fail() { echo "$*" >&2; exit 2; }
@@ -35,10 +37,13 @@ while [[ $# -gt 0 ]]; do
     --project)
       [[ $# -ge 2 && $2 =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail "--project requires a valid Compose project name"
       project_override=$2; shift 2 ;;
-    --failure-id|--max-blocks|--from-block|--to-block|--after-block|--status|--limit)
+    --include-dead)
+      [[ $action == repair ]] || fail "--include-dead requires repair"
+      tool_args+=("$1"); shift ;;
+    --failure-id|--max-blocks|--from-block|--to-block|--after-block|--status|--limit|--cursor)
       [[ $# -ge 2 && -n $2 && $2 != --* ]] || fail "$1 requires a value"
       case "$action:$1" in
-        repair:--failure-id|repair:--max-blocks|scan-gaps:--from-block|scan-gaps:--to-block|scan-gaps:--max-blocks|failures:--from-block|failures:--to-block|failures:--after-block|failures:--status|failures:--limit) ;;
+        repair:--failure-id|repair:--from-block|repair:--to-block|repair:--max-blocks|replay:--from-block|replay:--to-block|replay:--max-blocks|scan-gaps:--from-block|scan-gaps:--to-block|scan-gaps:--max-blocks|failures:--from-block|failures:--to-block|failures:--after-block|failures:--status|failures:--limit|failures:--cursor) ;;
         *) fail "$1 is not valid with $action" ;;
       esac
       tool_args+=("$1" "$2"); shift 2 ;;
@@ -46,8 +51,25 @@ while [[ $# -gt 0 ]]; do
     *) fail "Unknown option: $1" ;;
   esac
 done
-case "$action" in up|down|ps|logs|check|check-runtime|check-schema|probe|failures|scan-gaps|repair|pause|pause-ingestion|resume|db) ;; *) fail "Unknown action: $action" ;; esac
-case "$action" in probe|failures|scan-gaps|repair) [[ $role == bitcoin ]] || fail "$action currently supports only bitcoin" ;; esac
+case "$action" in up|down|ps|logs|check|check-runtime|check-schema|probe|failures|scan-gaps|replay|repair|pause|pause-ingestion|resume|db) ;; *) fail "Unknown action: $action" ;; esac
+case "$action" in probe|failures|scan-gaps|replay|repair) [[ $role != main ]] || fail "$action requires a chain VM" ;; esac
+legacy_repair=false
+for flag in "${tool_args[@]}"; do
+  case "$flag" in
+    --failure-id) [[ $role == bitcoin ]] || fail "--failure-id is Bitcoin-only"; legacy_repair=true ;;
+    --after-block) [[ $role == bitcoin ]] || fail "Use the returned failure --cursor for this network" ;;
+    --cursor) [[ $role != bitcoin ]] || fail "Bitcoin uses --after-block" ;;
+  esac
+done
+case "$action" in
+  scan-gaps|replay|repair)
+    for required in --max-blocks; do [[ " ${tool_args[*]} " == *" $required "* ]] || fail "$required is required"; done
+    if ! $legacy_repair; then
+      for required in --from-block --to-block; do [[ " ${tool_args[*]} " == *" $required "* ]] || fail "$required is required"; done
+    else
+      for flag in "${tool_args[@]}"; do case "$flag" in --include-dead|--from-block|--to-block) fail "Do not mix selected Bitcoin failures with a range" ;; esac; done
+    fi ;;
+esac
 [[ $query_set == false || $action == db ]] || fail "--query is valid only with db"
 case "$action" in
   pause|pause-ingestion|resume|db|check-schema) [[ $role != main ]] || fail "$action requires a chain role" ;;
@@ -62,6 +84,7 @@ case "$role" in
     services=(gateway); probe_service=gateway
     probe=(wget -q -O - http://analytical-node:7001/ready) ;;
   tron)
+    tool_service=tron-ingestion; tool_binary=arz_axum_for_services
     directory=$root/dockerizd_tron/app; file=docker-compose.yml; project=aml-tron
     database=tron_db; workers=(tron-ingestion tron-token-metadata-worker tron-analytics)
     services=(tron-api tron-ingestion tron-token-metadata-worker tron-analytics); probe_service=tron-api
@@ -69,6 +92,7 @@ case "$role" in
     schema_check=(tron_schema --check)
     if $api_only; then services=(tron-api); fi ;;
   ethereum)
+    tool_service=ethereum-ingestion; tool_binary=ethereum_ingestor
     directory=$root/dockerizd_ethereum; file=docker-compose.yml; project=aml-ethereum
     database=ethereum_aml; workers=(ethereum-ingestion ethereum-token-metadata ethereum-analytics)
     services=(ethereum-api ethereum-ingestion ethereum-token-metadata ethereum-analytics); probe_service=ethereum-api
@@ -76,6 +100,7 @@ case "$role" in
     schema_check=(ethereum_init_schema --check)
     if $api_only; then services=(ethereum-api); fi ;;
   bsc)
+    tool_service=bsc-follow; tool_binary=bsc_ingest
     directory=$root/dockerizd_bsc; file=docker-compose.yml; project=aml-bsc
     database=bsc_aml; workers=(bsc-follow bsc-token-metadata)
     services=(bsc-api bsc-follow bsc-token-metadata); probe_service=bsc-api
@@ -83,6 +108,7 @@ case "$role" in
     schema_check=(bsc_schema --check)
     if $api_only; then services=(bsc-api); fi ;;
   bitcoin)
+    tool_service=bitcoin-ingestion; tool_binary=bitcoin_aml
     directory=$root/dockerizd_bitcoin; file=docker-compose.yml; project=aml-bitcoin
     database=bitcoin_aml; workers=(bitcoin-ingestion bitcoin-analytics)
     services=(bitcoin-api bitcoin-ingestion bitcoin-analytics); probe_service=bitcoin-api
@@ -99,7 +125,7 @@ env_file=$directory/.env
 command -v docker >/dev/null || fail "Docker with Compose v2 is required"
 compose=(docker compose --project-directory "$directory" --project-name "$project" --file "$directory/$file" --env-file "$env_file")
 if [[ $role == bsc ]]; then compose+=(--profile runtime); fi
-case "$action" in probe|failures|scan-gaps|repair) compose+=(--profile tools) ;; esac
+case "$action" in probe|failures|scan-gaps|replay|repair) compose+=(--profile tools) ;; esac
 if $offline; then compose+=(--file "$directory/docker-compose.offline.yml"); fi
 db_client() {
   local options=(exec)
@@ -134,9 +160,16 @@ case "$action" in
   db)
     if $query_set; then db_client --query "$query"; else db_client; fi ;;
   check-schema) "${compose[@]}" exec -T "$probe_service" "${schema_check[@]}" ;;
-  probe) "${compose[@]}" run --rm --no-deps --pull never bitcoin-rpc-probe ;;
-  failures) "${compose[@]}" run --rm --no-deps --pull never bitcoin-failures bitcoin_aml failures "${tool_args[@]}" ;;
-  repair|scan-gaps) "${compose[@]}" run --rm --no-deps --pull never bitcoin-repair bitcoin_aml "$action" "${tool_args[@]}" ;;
+  probe|failures|scan-gaps|replay|repair)
+    if [[ $role == bitcoin && $action == probe ]]; then
+      "${compose[@]}" run --rm --no-deps --pull never bitcoin-rpc-probe
+    elif [[ $role == bitcoin && $action == failures ]]; then
+      "${compose[@]}" run --rm --no-deps --pull never bitcoin-failures bitcoin_aml failures "${tool_args[@]}"
+    elif [[ $role == bitcoin && $action == scan-gaps ]] || $legacy_repair; then
+      "${compose[@]}" run --rm --no-deps --pull never bitcoin-repair bitcoin_aml "$action" "${tool_args[@]}"
+    else
+      "${compose[@]}" run --rm --no-deps --pull never "$tool_service" "$tool_binary" maintenance "$action" "${tool_args[@]}"
+    fi ;;
   ps) "${compose[@]}" ps -a ;;
   logs) "${compose[@]}" logs --tail 150 ;;
   check|check-runtime)

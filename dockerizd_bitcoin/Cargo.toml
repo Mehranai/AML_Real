@@ -5,6 +5,7 @@ edition = "2024"
 default-run = "bitcoin_aml"
 
 [dependencies]
+aml_chain_api = { path = "../shared/chain_api" }
 aml_warehouse = { path = "../shared/warehouse" }
 aml_risk_policy = { path = "../shared/risk_policy" }
 anyhow = "1.0"
